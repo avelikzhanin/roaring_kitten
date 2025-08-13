@@ -93,7 +93,18 @@ def check_signal():
 
     return entry, exit_
 
-# ==== Цикл сигналов ====
+# ==== Функция для команды /signal ====
+async def signal_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global in_position
+    entry, exit_ = await asyncio.to_thread(check_signal)
+    if not in_position and entry:
+        await update.message.reply_text("📈 Сейчас есть сигнал на ВХОД в сделку!")
+    elif in_position and exit_:
+        await update.message.reply_text("📉 Сейчас есть сигнал на ВЫХОД из сделки!")
+    else:
+        await update.message.reply_text("⚪ Сейчас сигналов нет.")
+
+# ==== Цикл авто-сигналов ====
 async def signal_loop(app):
     global in_position
     while True:
@@ -104,7 +115,7 @@ async def signal_loop(app):
         elif in_position and exit_:
             await app.bot.send_message(CHAT_ID, "📉 Сигнал на ВЫХОД из сделки по Сберу!")
             in_position = False
-        await asyncio.sleep(300)  # проверка каждые 5 минут
+        await asyncio.sleep(300)  # каждые 5 минут
 
 # ==== Telegram команды ====
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -114,6 +125,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     app = Application.builder().token(TOKEN_TELEGRAM).build()
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("signal", signal_command))
 
     # === Запуск цикла сигналов после инициализации приложения ===
     loop = asyncio.get_event_loop()
