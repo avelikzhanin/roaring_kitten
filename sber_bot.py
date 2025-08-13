@@ -2,6 +2,8 @@ import os
 import asyncio
 import pandas as pd
 import numpy as np
+import matplotlib.pyplot as plt
+from io import BytesIO
 from tinkoff.invest import Client, CandleInterval
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
@@ -91,31 +93,61 @@ def check_signal():
         last["close"] < last["EMA100"]
     )
 
-    return entry, exit_
+    return entry, exit_, df
+
+# ==== Построение графика ====
+def plot_chart(df):
+    plt.figure(figsize=(10,5))
+    plt.plot(df["time"], df["close"], label="Close", color="blue")
+    plt.plot(df["time"], df["EMA100"], label="EMA100", color="orange")
+    plt.title("Сбербанк — свечи с EMA100")
+    plt.xlabel("Время")
+    plt.ylabel("Цена")
+    plt.legend()
+    plt.grid(True)
+    buf = BytesIO()
+    plt.savefig(buf, format="png")
+    buf.seek(0)
+    plt.close()
+    return buf
 
 # ==== Функция для команды /signal ====
 async def signal_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global in_position
-    entry, exit_ = await asyncio.to_thread(check_signal)
+    entry, exit_, df = await asyncio.to_thread(check_signal)
+    last = df.iloc[-1]
+
+    # Текстовый сигнал
     if not in_position and entry:
-        await update.message.reply_text("📈 Сейчас есть сигнал на ВХОД в сделку!")
+        text = "📈 Сейчас есть сигнал на ВХОД в сделку!"
     elif in_position and exit_:
-        await update.message.reply_text("📉 Сейчас есть сигнал на ВЫХОД из сделки!")
+        text = "📉 Сейчас есть сигнал на ВЫХОД из сделки!"
     else:
-        await update.message.reply_text("⚪ Сейчас сигналов нет.")
+        text = "⚪ Сейчас сигналов нет."
+
+    # Отправка текста
+    await update.message.reply_text(
+        f"{text}\nDEBUG: ADX={last['ADX']:.2f}, +DI={last['+DI']:.2f}, -DI={last['-DI']:.2f}, "
+        f"EMA100={last['EMA100']:.2f}, close={last['close']:.2f}"
+    )
+
+    # Отправка графика
+    chart = await asyncio.to_thread(plot_chart, df)
+    await update.message.reply_photo(photo=chart)
 
 # ==== Цикл авто-сигналов ====
 async def signal_loop(app):
     global in_position
     while True:
-        entry, exit_ = await asyncio.to_thread(check_signal)
+        entry, exit_, df = await asyncio.to_thread(check_signal)
+        last = df.iloc[-1]
         if not in_position and entry:
-            await app.bot.send_message(CHAT_ID, "📈 Сигнал на ВХОД в сделку по Сберу!")
+            await app.bot.send_message(CHAT_ID, f"📈 Сигнал на ВХОД по Сберу! Цена={last['close']:.2f}")
             in_position = True
         elif in_position and exit_:
-            await app.bot.send_message(CHAT_ID, "📉 Сигнал на ВЫХОД из сделки по Сберу!")
+            await app.bot.send_message(CHAT_ID, f"📉 Сигнал на ВЫХОД по Сберу! Цена={last['close']:.2f}")
             in_position = False
-        await asyncio.sleep(300)  # каждые 5 минут
+        await asyncio.sleep(300)
 
 # ==== Telegram команды ====
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
