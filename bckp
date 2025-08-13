@@ -1,11 +1,12 @@
 import os
 import logging
-import asyncio
+import time
 import pandas as pd
 from tinkoff.invest import Client
 from tinkoff.invest.schemas import CandleInterval
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+import requests
 
 # --- Логирование ---
 logging.basicConfig(level=logging.INFO)
@@ -18,25 +19,36 @@ FIGI = "BBG004730N88"  # SBER
 INTERVAL = CandleInterval.CANDLE_INTERVAL_HOUR
 HISTORY_HOURS = 200
 
-# --- Хранилище chat_id ---
-chat_ids = set()
+CHAT_ID_FILE = "chat_id.txt"
 
 # --- Сохранение chat_id ---
+def save_chat_id(chat_id):
+    with open(CHAT_ID_FILE, "w") as f:
+        f.write(str(chat_id))
+    logging.info(f"Chat ID сохранён: {chat_id}")
+
+def load_chat_id():
+    if os.path.exists(CHAT_ID_FILE):
+        with open(CHAT_ID_FILE, "r") as f:
+            return f.read().strip()
+    return None
+
+# --- /start ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    chat_ids.add(chat_id)
+    save_chat_id(chat_id)
     await context.bot.send_message(chat_id=chat_id, text="✅ Chat ID сохранён! Теперь буду присылать сигналы.")
 
-# --- Индикаторы ---
+# --- EMA ---
 def ema(series, period):
     return series.ewm(span=period, adjust=False).mean()
 
+# --- ADX ---
 def adx(high, low, close, period=14):
     plus_dm = high.diff()
     minus_dm = low.diff()
-
     plus_dm[plus_dm < 0] = 0
-    minus_dm[minus_dm > 0] = 0  # исправлено
+    minus_dm[minus_dm > 0] = 0
 
     tr1 = high - low
     tr2 = (high - close.shift()).abs()
@@ -50,7 +62,6 @@ def adx(high, low, close, period=14):
 
     dx = (abs(plus_di - minus_di) / (plus_di + minus_di)) * 100
     adx_val = dx.rolling(window=period).mean()
-
     return adx_val, plus_di, minus_di
 
 # --- Получение свечей ---
@@ -74,52 +85,50 @@ def get_candles():
         } for c in candles])
     return df
 
-# --- Логика сигналов ---
+# --- Проверка сигналов ---
 def check_signal():
     df = get_candles()
     df["ema100"] = ema(df["close"], 100)
     df["ADX"], df["+DI"], df["-DI"] = adx(df["high"], df["low"], df["close"])
-
     vol_ma = df["volume"].rolling(window=20).mean()
     last = df.iloc[-1]
 
-    if last["ADX"] > 23 and last["+DI"] > last["-DI"] and last["volume"] > vol_ma.iloc[-1] and last["close"] > last["ema100"]:
+    if last["ADX"] > 23 and last["+DI"] > last["-DI"] and last["volume"] > vol_ma.iloc[-1] and last["close"] > df["ema100"].iloc[-1]:
         return f"📈 BUY сигнал — ADX={last['ADX']:.2f}, цена={last['close']:.2f}"
-    elif last["ADX"] < 20 or last["close"] < last["ema100"]:
+    elif last["ADX"] < 20 or last["close"] < df["ema100"].iloc[-1]:
         return f"📉 SELL сигнал — ADX={last['ADX']:.2f}, цена={last['close']:.2f}"
     else:
-        return None
+        return "⚪ Сигнал отсутствует"
 
-# --- Отправка сообщений ---
-async def send_telegram_message(bot, text):
-    if not chat_ids:
+# --- Отправка в Telegram ---
+def send_telegram_message(text):
+    chat_id = load_chat_id()
+    if not chat_id:
         logging.warning("❌ Chat ID не найден — напиши /start боту")
         return
-    for chat_id in chat_ids:
-        await bot.send_message(chat_id=chat_id, text=text)
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    requests.post(url, json={"chat_id": chat_id, "text": text})
 
-# --- Асинхронный цикл сигналов ---
-async def main_loop(bot):
+# --- Команда /signal ---
+async def signal_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    signal = check_signal()
+    await context.bot.send_message(chat_id=update.effective_chat.id, text=signal)
+
+# --- Основной цикл ---
+def main_loop():
     while True:
-        try:
-            signal = check_signal()
-            if signal:
-                logging.info(f"Отправка сигнала: {signal}")
-                await send_telegram_message(bot, signal)
-        except Exception as e:
-            logging.error(f"Ошибка в main_loop: {e}")
-        await asyncio.sleep(300)  # каждые 5 минут
+        signal = check_signal()
+        if signal != "⚪ Сигнал отсутствует":
+            send_telegram_message(signal)
+        time.sleep(300)  # каждые 5 минут
 
-# --- Запуск бота ---
+# --- Запуск ---
 if __name__ == "__main__":
+    from threading import Thread
+
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("signal", signal_command))  # кнопка /signal
 
-    # Запуск цикла сигналов
-    async def run():
-        asyncio.create_task(main_loop(app.bot))
-        await app.start()
-        await app.updater.start_polling()
-        await app.idle()
-
-    asyncio.run(run())
+    Thread(target=main_loop, daemon=True).start()
+    app.run_polling()
