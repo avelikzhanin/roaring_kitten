@@ -1,192 +1,96 @@
-import os
-import logging
 import asyncio
-from datetime import datetime
-import pandas as pd
-from tinkoff.invest import Client
-from tinkoff.invest.schemas import CandleInterval
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+from datetime import datetime
 
-# --- Логирование ---
-logging.basicConfig(level=logging.INFO)
+# Токен Telegram
+TELEGRAM_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
 
-# --- Переменные окружения ---
-TOKEN = os.getenv("TINKOFF_TOKEN")
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-FIGI = "BBG004730N88"  # SBER
-INTERVAL = CandleInterval.CANDLE_INTERVAL_HOUR
-HISTORY_HOURS = 200
-CHAT_ID_FILE = "chat_id.txt"
-DEAL_HISTORY_FILE = "deal_history.csv"
+# Словарь для хранения открытых сделок
+open_trades = {
+    "long": None,
+    "short": None
+}
 
-# --- Chat ID ---
-def save_chat_id(chat_id):
-    with open(CHAT_ID_FILE, "w") as f:
-        f.write(str(chat_id))
-    logging.info(f"Chat ID saved: {chat_id}")
+# История сделок
+trade_history = []
 
-def load_chat_id():
-    if os.path.exists(CHAT_ID_FILE):
-        with open(CHAT_ID_FILE, "r") as f:
-            return f.read().strip()
-    return None
-
-# --- EMA и ADX ---
-def ema(series, period):
-    return series.ewm(span=period, adjust=False).mean()
-
-def adx(high, low, close, period=14):
-    plus_dm = high.diff()
-    minus_dm = low.diff()
-
-    plus_dm[plus_dm < 0] = 0
-    minus_dm[minus_dm > 0] = 0
-
-    tr1 = high - low
-    tr2 = (high - close.shift()).abs()
-    tr3 = (low - close.shift()).abs()
-    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-
-    atr = tr.rolling(window=period).mean()
-    plus_di = 100 * (plus_dm.rolling(window=period).mean() / atr)
-    minus_di = 100 * (minus_dm.rolling(window=period).mean() / atr)
-    dx = (abs(plus_di - minus_di) / (plus_di + minus_di)) * 100
-    adx = dx.rolling(window=period).mean()
-    return adx, plus_di, minus_di
-
-# --- Получение свечей ---
-def get_candles():
-    with Client(TOKEN) as client:
-        now = pd.Timestamp.now(tz="Europe/Moscow")
-        candles = client.market_data.get_candles(
-            figi=FIGI,
-            from_=now - pd.Timedelta(hours=HISTORY_HOURS),
-            to=now,
-            interval=INTERVAL
-        ).candles
-
-        df = pd.DataFrame([{
-            "time": c.time,
-            "open": c.open.units + c.open.nano / 1e9,
-            "high": c.high.units + c.high.nano / 1e9,
-            "low": c.low.units + c.low.nano / 1e9,
-            "close": c.close.units + c.close.nano / 1e9,
-            "volume": c.volume
-        } for c in candles])
-    return df
-
-# --- История сделок ---
-def load_history():
-    if os.path.exists(DEAL_HISTORY_FILE):
-        return pd.read_csv(DEAL_HISTORY_FILE)
-    return pd.DataFrame(columns=["type","entry_price","exit_price","profit_pct","time_entry","time_exit"])
-
-def save_history(df):
-    df.to_csv(DEAL_HISTORY_FILE, index=False)
-
-# --- Проверка сигналов ---
-current_position = None  # None, "LONG", "SHORT"
-
-def check_signal():
-    global current_position
-    df = get_candles()
-    df["ema100"] = ema(df["close"], 100)
-    df["ADX"], df["+DI"], df["-DI"] = adx(df["high"], df["low"], df["close"])
-    vol_ma = df["volume"].rolling(window=20).mean()
-    last = df.iloc[-1]
-
-    entry_signal = None
-    exit_signal = None
-
-    if current_position is None:
-        # Вход
-        if last["ADX"] > 23 and last["+DI"] > last["-DI"] and last["close"] > last["ema100"] and last["volume"] > vol_ma.iloc[-1]:
-            entry_signal = ("LONG", last["close"], last["time"])
-            current_position = "LONG"
-        elif last["ADX"] > 23 and last["+DI"] < last["-DI"] and last["close"] < last["ema100"] and last["volume"] > vol_ma.iloc[-1]:
-            entry_signal = ("SHORT", last["close"], last["time"])
-            current_position = "SHORT"
-    else:
-        # Выход
-        if current_position == "LONG":
-            if last["ADX"] < 20 or last["close"] < last["ema100"]:
-                exit_signal = ("LONG", last["close"], last["time"])
-                current_position = None
-        elif current_position == "SHORT":
-            if last["ADX"] < 20 or last["close"] > last["ema100"]:
-                exit_signal = ("SHORT", last["close"], last["time"])
-                current_position = None
-
-    return entry_signal, exit_signal
-
-# --- Отправка сообщений ---
-async def send_telegram_message(text):
-    chat_id = load_chat_id()
-    if not chat_id:
-        logging.warning("❌ Chat ID не найден — напиши /start боту")
-        return
-    from telegram import Bot
-    bot = Bot(TELEGRAM_TOKEN)
-    await bot.send_message(chat_id=chat_id, text=text)
-
-# --- Команды Telegram ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-    save_chat_id(chat_id)
-    await update.message.reply_text("✅ Chat ID сохранён! Теперь бот будет присылать сигналы.")
+    await update.message.reply_text("Бот запущен! Используй /signal для проверки сигналов.")
 
 async def signal_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    entry, exit_ = await asyncio.to_thread(check_signal)
-    msg = ""
-    if entry:
-        msg += f"📈 Вход {entry[0]} — цена {entry[1]:.2f}\n"
-    if exit_:
-        msg += f"📉 Выход {exit_[0]} — цена {exit_[1]:.2f}\n"
-    if not msg:
-        msg = "Нет активных сигналов сейчас."
-    await update.message.reply_text(msg)
+    messages = []
+    for direction in ["long", "short"]:
+        trade = open_trades[direction]
+        if trade is None:
+            messages.append(f"No open {direction.upper()} trades.")
+        else:
+            messages.append(f"{direction.upper()} trade open since {trade['entry_time']}, entry price: {trade['entry_price']:.2f}")
+    await update.message.reply_text("\n".join(messages))
 
-# --- Цикл сигналов ---
 async def signal_loop(app):
+    """
+    Цикл, который проверяет сигналы и отправляет их в чат.
+    """
+    chat_id = "YOUR_CHAT_ID"
     while True:
-        entry, exit_ = await asyncio.to_thread(check_signal)
-        history = load_history()
+        # Здесь нужно подключить ваш метод проверки сигналов
+        signal_long, price_long = check_long_signal()
+        signal_short, price_short = check_short_signal()
 
-        if entry:
-            msg = f"📈 Вход {entry[0]} — цена {entry[1]:.2f}"
-            await send_telegram_message(msg)
-            history = history.append({
-                "type": entry[0],
-                "entry_price": entry[1],
-                "exit_price": None,
-                "profit_pct": None,
-                "time_entry": entry[2],
-                "time_exit": None
-            }, ignore_index=True)
-            save_history(history)
+        # Обрабатываем Long
+        if signal_long and open_trades["long"] is None:
+            # Вход в сделку
+            open_trades["long"] = {"entry_time": datetime.now(), "entry_price": price_long}
+            await app.bot.send_message(chat_id=chat_id, text=f"📈 LONG вход — цена {price_long:.2f}")
+        elif signal_long is False and open_trades["long"]:
+            # Выход из сделки
+            entry_price = open_trades["long"]["entry_price"]
+            profit = (price_long - entry_price) / entry_price * 100
+            trade_history.append({"type": "long", "entry": entry_price, "exit": price_long, "profit_pct": profit})
+            await app.bot.send_message(chat_id=chat_id, text=f"📉 LONG выход — цена {price_long:.2f}, профит {profit:.2f}%")
+            open_trades["long"] = None
 
-        if exit_:
-            last_idx = history[(history["type"]==exit_[0]) & (history["exit_price"].isna())].index[-1]
-            history.at[last_idx,"exit_price"] = exit_[1]
-            history.at[last_idx,"time_exit"] = exit_[2]
-            entry_price = history.at[last_idx,"entry_price"]
-            profit_pct = (exit_[1]-entry_price)/entry_price*100
-            if exit_[0]=="SHORT":
-                profit_pct = -profit_pct
-            history.at[last_idx,"profit_pct"] = profit_pct
-            save_history(history)
-            msg = f"📉 Выход {exit_[0]} — цена {exit_[1]:.2f}, P/L {profit_pct:.2f}%"
-            await send_telegram_message(msg)
+        # Обрабатываем Short
+        if signal_short and open_trades["short"] is None:
+            open_trades["short"] = {"entry_time": datetime.now(), "entry_price": price_short}
+            await app.bot.send_message(chat_id=chat_id, text=f"📉 SHORT вход — цена {price_short:.2f}")
+        elif signal_short is False and open_trades["short"]:
+            entry_price = open_trades["short"]["entry_price"]
+            profit = (entry_price - price_short) / entry_price * 100
+            trade_history.append({"type": "short", "entry": entry_price, "exit": price_short, "profit_pct": profit})
+            await app.bot.send_message(chat_id=chat_id, text=f"📈 SHORT выход — цена {price_short:.2f}, профит {profit:.2f}%")
+            open_trades["short"] = None
 
-        await asyncio.sleep(300)
+        await asyncio.sleep(60)  # Проверяем сигналы каждую минуту
 
-# --- Main ---
+def check_long_signal():
+    """
+    Здесь подключается ваша логика сигналов на Long.
+    Возвращает (True = вход, False = выход, None = нет действия) и текущую цену.
+    """
+    # Заглушка
+    from random import random
+    price = 318.0 + random()
+    return random() > 0.7, price
+
+def check_short_signal():
+    """
+    Здесь подключается ваша логика сигналов на Short.
+    """
+    from random import random
+    price = 318.0 + random()
+    return random() > 0.7, price
+
 async def main():
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("signal", signal_command))
-    app.post_init(lambda _: asyncio.create_task(signal_loop(app)))
+
+    # Запуск цикла сигналов
+    asyncio.create_task(signal_loop(app))
+
+    # Старт polling
     await app.run_polling()
 
 if __name__ == "__main__":
