@@ -3,7 +3,6 @@ import asyncio
 import pandas as pd
 import numpy as np
 from tinkoff.invest import Client, CandleInterval
-from datetime import datetime, timedelta, timezone
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
@@ -115,8 +114,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     app = Application.builder().token(TOKEN_TELEGRAM).build()
     app.add_handler(CommandHandler("start", start))
-    # Запуск авто-сигналов после инициализации
-    app.post_init(lambda _: asyncio.create_task(signal_loop(app)))
+
+    # === Запуск цикла сигналов после инициализации приложения ===
+    loop = asyncio.get_event_loop()
+    loop.create_task(signal_loop(app))
+
     app.run_polling()
 
 if __name__ == "__main__":
