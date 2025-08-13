@@ -1,5 +1,5 @@
 tinkoff-investments
 pandas
-ta
+numpy
+python-telegram-bot==20.3
 requests
-python-dotenv
