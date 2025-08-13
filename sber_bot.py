@@ -85,20 +85,19 @@ def get_candles():
         } for c in candles])
     return df
 
-# --- Проверка сигналов ---
-def check_signal():
-    df = get_candles()
+# --- Проверка сигнала ---
+def get_signal(df):
     df["ema100"] = ema(df["close"], 100)
     df["ADX"], df["+DI"], df["-DI"] = adx(df["high"], df["low"], df["close"])
     vol_ma = df["volume"].rolling(window=20).mean()
     last = df.iloc[-1]
 
     if last["ADX"] > 23 and last["+DI"] > last["-DI"] and last["volume"] > vol_ma.iloc[-1] and last["close"] > df["ema100"].iloc[-1]:
-        return f"📈 BUY сигнал — ADX={last['ADX']:.2f}, цена={last['close']:.2f}"
+        return "BUY", last["close"]
     elif last["ADX"] < 20 or last["close"] < df["ema100"].iloc[-1]:
-        return f"📉 SELL сигнал — ADX={last['ADX']:.2f}, цена={last['close']:.2f}"
+        return "SELL", last["close"]
     else:
-        return "⚪ Сигнал отсутствует"
+        return None, last["close"]
 
 # --- Отправка в Telegram ---
 def send_telegram_message(text):
@@ -111,15 +110,36 @@ def send_telegram_message(text):
 
 # --- Команда /signal ---
 async def signal_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    signal = check_signal()
-    await context.bot.send_message(chat_id=update.effective_chat.id, text=signal)
+    df = get_candles()
+    sig, price = get_signal(df)
+    if sig is None:
+        sig_text = "⚪ Сигнал отсутствует"
+    elif sig == "BUY":
+        sig_text = f"📈 BUY сигнал — цена={price:.2f}"
+    else:
+        sig_text = f"📉 SELL сигнал — цена={price:.2f}"
+    await context.bot.send_message(chat_id=update.effective_chat.id, text=sig_text)
 
-# --- Основной цикл ---
+# --- Основной цикл с отслеживанием позиции ---
 def main_loop():
+    position = None
+    entry_price = None
+
     while True:
-        signal = check_signal()
-        if signal != "⚪ Сигнал отсутствует":
-            send_telegram_message(signal)
+        df = get_candles()
+        sig, price = get_signal(df)
+
+        if sig == "BUY" and position is None:
+            position = "long"
+            entry_price = price
+            send_telegram_message(f"📈 Открываем сделку: BUY по цене {price:.2f}")
+        elif sig == "SELL" and position == "long":
+            exit_price = price
+            profit_percent = (exit_price - entry_price) / entry_price * 100
+            send_telegram_message(f"📉 Закрываем сделку: SELL по цене {exit_price:.2f}\n💰 Результат: {profit_percent:.2f}%")
+            position = None
+            entry_price = None
+
         time.sleep(300)  # каждые 5 минут
 
 # --- Запуск ---
@@ -128,7 +148,7 @@ if __name__ == "__main__":
 
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("signal", signal_command))  # кнопка /signal
+    app.add_handler(CommandHandler("signal", signal_command))
 
     Thread(target=main_loop, daemon=True).start()
     app.run_polling()
