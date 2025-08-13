@@ -1,97 +1,92 @@
 import asyncio
+import nest_asyncio
+import datetime
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
-from datetime import datetime
 
-# Токен Telegram
-TELEGRAM_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
+# Применяем patch для уже существующего event loop
+nest_asyncio.apply()
 
-# Словарь для хранения открытых сделок
-open_trades = {
-    "long": None,
-    "short": None
-}
+# --- Настройки ---
+TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
 
-# История сделок
-trade_history = []
+# Хранилище сигналов и истории сделок
+current_signal = None  # "LONG" / "SHORT" / None
+entry_price = None
+trades_history = []  # список словарей: {'type': ..., 'entry': ..., 'exit': ..., 'profit': ...}
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Бот запущен! Используй /signal для проверки сигналов.")
-
-async def signal_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    messages = []
-    for direction in ["long", "short"]:
-        trade = open_trades[direction]
-        if trade is None:
-            messages.append(f"No open {direction.upper()} trades.")
-        else:
-            messages.append(f"{direction.upper()} trade open since {trade['entry_time']}, entry price: {trade['entry_price']:.2f}")
-    await update.message.reply_text("\n".join(messages))
+# --- Логика сигналов ---
+async def check_signal_logic():
+    """
+    Тут должна быть логика расчёта сигнала по стратегии.
+    Для примера — случайный сигнал каждые 10 секунд.
+    """
+    import random
+    await asyncio.sleep(1)  # эмуляция вычислений
+    price = 318.0 + random.uniform(-1, 1)  # пример текущей цены
+    signal_type = random.choice(["LONG", "SHORT", None])
+    return signal_type, price
 
 async def signal_loop(app):
-    """
-    Цикл, который проверяет сигналы и отправляет их в чат.
-    """
-    chat_id = "YOUR_CHAT_ID"
+    global current_signal, entry_price, trades_history
     while True:
-        # Здесь нужно подключить ваш метод проверки сигналов
-        signal_long, price_long = check_long_signal()
-        signal_short, price_short = check_short_signal()
+        signal, price = await check_signal_logic()
+        if signal:
+            # Если нет открытой сделки
+            if current_signal is None:
+                current_signal = signal
+                entry_price = price
+                text = f"📈 {signal} сигнал на вход: {price:.2f}"
+                await app.bot.send_message(chat_id="YOUR_CHAT_ID", text=text)
+            # Если сигнал на закрытие текущей сделки
+            elif current_signal and signal != current_signal:
+                exit_price = price
+                profit = ((exit_price - entry_price)/entry_price*100 
+                          if current_signal=="LONG" else (entry_price - exit_price)/entry_price*100)
+                trades_history.append({
+                    "type": current_signal,
+                    "entry": entry_price,
+                    "exit": exit_price,
+                    "profit": profit,
+                    "date": datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+                })
+                text = f"✅ Закрыта {current_signal} сделка\nВход: {entry_price:.2f}, Выход: {exit_price:.2f}\nПрибыль: {profit:.2f}%"
+                await app.bot.send_message(chat_id="YOUR_CHAT_ID", text=text)
+                current_signal = None
+                entry_price = None
+        await asyncio.sleep(10)  # периодичность проверки
 
-        # Обрабатываем Long
-        if signal_long and open_trades["long"] is None:
-            # Вход в сделку
-            open_trades["long"] = {"entry_time": datetime.now(), "entry_price": price_long}
-            await app.bot.send_message(chat_id=chat_id, text=f"📈 LONG вход — цена {price_long:.2f}")
-        elif signal_long is False and open_trades["long"]:
-            # Выход из сделки
-            entry_price = open_trades["long"]["entry_price"]
-            profit = (price_long - entry_price) / entry_price * 100
-            trade_history.append({"type": "long", "entry": entry_price, "exit": price_long, "profit_pct": profit})
-            await app.bot.send_message(chat_id=chat_id, text=f"📉 LONG выход — цена {price_long:.2f}, профит {profit:.2f}%")
-            open_trades["long"] = None
+# --- Команды Telegram ---
+async def signal_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Отправка текущего сигнала по запросу /signal"""
+    if current_signal:
+        text = f"Текущий сигнал: {current_signal}\nВход по цене: {entry_price:.2f}"
+    else:
+        text = "Сигналов на данный момент нет"
+    await update.message.reply_text(text)
 
-        # Обрабатываем Short
-        if signal_short and open_trades["short"] is None:
-            open_trades["short"] = {"entry_time": datetime.now(), "entry_price": price_short}
-            await app.bot.send_message(chat_id=chat_id, text=f"📉 SHORT вход — цена {price_short:.2f}")
-        elif signal_short is False and open_trades["short"]:
-            entry_price = open_trades["short"]["entry_price"]
-            profit = (entry_price - price_short) / entry_price * 100
-            trade_history.append({"type": "short", "entry": entry_price, "exit": price_short, "profit_pct": profit})
-            await app.bot.send_message(chat_id=chat_id, text=f"📈 SHORT выход — цена {price_short:.2f}, профит {profit:.2f}%")
-            open_trades["short"] = None
+async def history_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Отправка истории сделок и общей прибыли"""
+    if not trades_history:
+        await update.message.reply_text("История сделок пуста")
+        return
+    total_profit = sum(trade["profit"] for trade in trades_history)
+    lines = [f"{t['date']} | {t['type']} | Вход: {t['entry']:.2f} | Выход: {t['exit']:.2f} | Прибыль: {t['profit']:.2f}%" 
+             for t in trades_history]
+    text = "\n".join(lines) + f"\n\n💰 Общая прибыль: {total_profit:.2f}%"
+    await update.message.reply_text(text)
 
-        await asyncio.sleep(60)  # Проверяем сигналы каждую минуту
-
-def check_long_signal():
-    """
-    Здесь подключается ваша логика сигналов на Long.
-    Возвращает (True = вход, False = выход, None = нет действия) и текущую цену.
-    """
-    # Заглушка
-    from random import random
-    price = 318.0 + random()
-    return random() > 0.7, price
-
-def check_short_signal():
-    """
-    Здесь подключается ваша логика сигналов на Short.
-    """
-    from random import random
-    price = 318.0 + random()
-    return random() > 0.7, price
-
+# --- Main ---
 async def main():
-    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
+    app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("signal", signal_command))
+    app.add_handler(CommandHandler("history", history_command))
 
-    # Запуск цикла сигналов
+    # Запуск loop сигналов
     asyncio.create_task(signal_loop(app))
 
-    # Старт polling
+    # Запуск бота
     await app.run_polling()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.get_event_loop().run_until_complete(main())
