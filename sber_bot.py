@@ -1,13 +1,9 @@
 import os
 import logging
-import time
-import json
-from tinkoff.invest import Client
-from tinkoff.invest.services import InstrumentsService
-from tinkoff.invest.schemas import CandleInterval
+import asyncio
 import pandas as pd
-import numpy as np
-import requests
+from tinkoff.invest import Client
+from tinkoff.invest.schemas import CandleInterval
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
@@ -15,30 +11,20 @@ from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 logging.basicConfig(level=logging.INFO)
 
 # --- Переменные окружения ---
-TOKEN = os.getenv("TINKOFF_API_TOKEN")
+TINKOFF_TOKEN = os.getenv("TINKOFF_API_TOKEN")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 
 FIGI = "BBG004730N88"  # SBER
 INTERVAL = CandleInterval.CANDLE_INTERVAL_HOUR
 HISTORY_HOURS = 200
 
-CHAT_ID_FILE = "chat_id.txt"
+# --- Хранилище chat_id ---
+chat_ids = set()
 
-def save_chat_id(chat_id):
-    with open(CHAT_ID_FILE, "w") as f:
-        f.write(str(chat_id))
-    logging.info(f"Chat ID saved: {chat_id}")
-
-def load_chat_id():
-    if os.path.exists(CHAT_ID_FILE):
-        with open(CHAT_ID_FILE, "r") as f:
-            return f.read().strip()
-    return None
-
-# --- Telegram /start ---
+# --- Сохранение chat_id ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    save_chat_id(chat_id)
+    chat_ids.add(chat_id)
     await context.bot.send_message(chat_id=chat_id, text="✅ Chat ID сохранён! Теперь буду присылать сигналы.")
 
 # --- Индикаторы ---
@@ -50,11 +36,11 @@ def adx(high, low, close, period=14):
     minus_dm = low.diff()
 
     plus_dm[plus_dm < 0] = 0
-    minus_dm[minus_dm > 0] = 0
+    minus_dm[minus_dm > 0] = 0  # исправлено
 
-    tr1 = pd.DataFrame(high - low)
-    tr2 = pd.DataFrame(abs(high - close.shift()))
-    tr3 = pd.DataFrame(abs(low - close.shift()))
+    tr1 = high - low
+    tr2 = (high - close.shift()).abs()
+    tr3 = (low - close.shift()).abs()
     tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
 
     atr = tr.rolling(window=period).mean()
@@ -63,13 +49,13 @@ def adx(high, low, close, period=14):
     minus_di = abs(100 * (minus_dm.rolling(window=period).mean() / atr))
 
     dx = (abs(plus_di - minus_di) / (plus_di + minus_di)) * 100
-    adx = dx.rolling(window=period).mean()
+    adx_val = dx.rolling(window=period).mean()
 
-    return adx, plus_di, minus_di
+    return adx_val, plus_di, minus_di
 
-# --- Получение данных ---
+# --- Получение свечей ---
 def get_candles():
-    with Client(TOKEN) as client:
+    with Client(TINKOFF_TOKEN) as client:
         now = pd.Timestamp.now(tz="Europe/Moscow")
         candles = client.market_data.get_candles(
             figi=FIGI,
@@ -97,45 +83,43 @@ def check_signal():
     vol_ma = df["volume"].rolling(window=20).mean()
     last = df.iloc[-1]
 
-    if (
-        last["ADX"] > 23 and
-        last["+DI"] > last["-DI"] and
-        last["volume"] > vol_ma.iloc[-1] and
-        last["close"] > last["ema100"]
-    ):
+    if last["ADX"] > 23 and last["+DI"] > last["-DI"] and last["volume"] > vol_ma.iloc[-1] and last["close"] > last["ema100"]:
         return f"📈 BUY сигнал — ADX={last['ADX']:.2f}, цена={last['close']:.2f}"
     elif last["ADX"] < 20 or last["close"] < last["ema100"]:
         return f"📉 SELL сигнал — ADX={last['ADX']:.2f}, цена={last['close']:.2f}"
     else:
         return None
 
-# --- Отправка в Telegram ---
-def send_telegram_message(text):
-    chat_id = load_chat_id()
-    if not chat_id:
+# --- Отправка сообщений ---
+async def send_telegram_message(bot, text):
+    if not chat_ids:
         logging.warning("❌ Chat ID не найден — напиши /start боту")
         return
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    requests.post(url, json={"chat_id": chat_id, "text": text})
+    for chat_id in chat_ids:
+        await bot.send_message(chat_id=chat_id, text=text)
 
-# --- Основной цикл ---
-def main_loop():
+# --- Асинхронный цикл сигналов ---
+async def main_loop(bot):
     while True:
-        signal = check_signal()
-        if signal:
-            send_telegram_message(signal)
-        time.sleep(300)  # каждые 5 минут
+        try:
+            signal = check_signal()
+            if signal:
+                logging.info(f"Отправка сигнала: {signal}")
+                await send_telegram_message(bot, signal)
+        except Exception as e:
+            logging.error(f"Ошибка в main_loop: {e}")
+        await asyncio.sleep(300)  # каждые 5 минут
 
+# --- Запуск бота ---
 if __name__ == "__main__":
-    from threading import Thread
-    from telegram.ext import Application
-
-    # Telegram-бот
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
 
-    # Запуск цикла сигналов в отдельном потоке
-    Thread(target=main_loop, daemon=True).start()
+    # Запуск цикла сигналов
+    async def run():
+        asyncio.create_task(main_loop(app.bot))
+        await app.start()
+        await app.updater.start_polling()
+        await app.idle()
 
-    # Запуск Telegram-поллинга
-    app.run_polling()
+    asyncio.run(run())
