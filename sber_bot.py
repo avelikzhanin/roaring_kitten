@@ -83,12 +83,12 @@ def check_signal():
     vol_ma = df["volume"].rolling(window=20).mean()
     last = df.iloc[-1]
 
-    if last["ADX"] > 23 and last["+DI"] > last["-DI"] and last["volume"] > vol_ma.iloc[-1] and last["close"] > last["ema100"]:
+    if last["ADX"] > 23 and last["+DI"] > last["-DI"] and last["volume"] > vol_ma.iloc[-1] and last["close"] > df["ema100"].iloc[-1]:
         return f"📈 BUY сигнал — ADX={last['ADX']:.2f}, цена={last['close']:.2f}"
-    elif last["ADX"] < 20 or last["close"] < last["ema100"]:
+    elif last["ADX"] < 20 or last["close"] < df["ema100"].iloc[-1]:
         return f"📉 SELL сигнал — ADX={last['ADX']:.2f}, цена={last['close']:.2f}"
     else:
-        return None
+        return "⚪ Сигнал отсутствует"
 
 # --- Отправка сообщений ---
 async def send_telegram_message(bot, text):
@@ -98,12 +98,17 @@ async def send_telegram_message(bot, text):
     for chat_id in chat_ids:
         await bot.send_message(chat_id=chat_id, text=text)
 
+# --- Команда /signal ---
+async def signal_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    signal = check_signal()
+    await context.bot.send_message(chat_id=update.effective_chat.id, text=signal)
+
 # --- Асинхронный цикл сигналов ---
 async def main_loop(bot):
     while True:
         try:
             signal = check_signal()
-            if signal:
+            if signal != "⚪ Сигнал отсутствует":
                 logging.info(f"Отправка сигнала: {signal}")
                 await send_telegram_message(bot, signal)
         except Exception as e:
@@ -114,6 +119,7 @@ async def main_loop(bot):
 if __name__ == "__main__":
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("signal", signal_command))  # добавлена команда /signal
 
     # Запуск цикла сигналов
     async def run():
