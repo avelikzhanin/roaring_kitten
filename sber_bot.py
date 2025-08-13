@@ -11,6 +11,7 @@ from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 # ------------------- Настройки -------------------
 TINKOFF_TOKEN = "ТВОЙ_TINKOFF_TOKEN"
 TELEGRAM_TOKEN = "ТВОЙ_TELEGRAM_BOT_TOKEN"
+CHAT_ID = "ТВОЙ_CHAT_ID"  # ID чата для уведомлений
 FIGI = "BBG004730N88"  # SBER
 CHECK_INTERVAL = 10 * 60  # каждые 10 минут
 
@@ -116,18 +117,18 @@ async def signal_loop(app):
         try:
             df = get_candles()
             signal = get_signal(df)
-
             now = datetime.now()
             last_trade = trades[-1] if trades else None
 
-            # Если есть открытая сделка и сигнал противоположный -> закрыть
+            # Закрытие открытой сделки, если появился противоположный сигнал
             if last_trade and last_trade['status'] == 'OPEN':
                 if (last_trade['type'] == 'LONG' and signal == 'SHORT') or (last_trade['type'] == 'SHORT' and signal == 'LONG'):
                     last_trade['status'] = 'CLOSED'
                     last_trade['exit_price'] = df.iloc[-1]['close']
-                    await app.bot.send_message(chat_id=app.chat_id, text=f"Закрыта сделка {last_trade['type']} @ {last_trade['exit_price']:.2f}")
+                    await app.bot.send_message(chat_id=CHAT_ID,
+                                               text=f"Закрыта сделка {last_trade['type']} @ {last_trade['exit_price']:.2f}")
 
-            # Если нет открытой сделки и есть сигнал -> открыть
+            # Открытие новой сделки при наличии сигнала
             if (not last_trade) or (last_trade['status'] == 'CLOSED'):
                 if signal in ['LONG', 'SHORT']:
                     trades.append({
@@ -136,7 +137,8 @@ async def signal_loop(app):
                         "time": now,
                         "status": "OPEN"
                     })
-                    await app.bot.send_message(chat_id=app.chat_id, text=f"Открыта сделка {signal} @ {df.iloc[-1]['close']:.2f}")
+                    await app.bot.send_message(chat_id=CHAT_ID,
+                                               text=f"Открыта сделка {signal} @ {df.iloc[-1]['close']:.2f}")
 
         except Exception as e:
             logger.error(f"Ошибка в signal_loop: {e}")
@@ -146,15 +148,13 @@ async def signal_loop(app):
 # ------------------- Запуск бота -------------------
 async def main():
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-    app.chat_id = "ТВОЙ_CHAT_ID"  # ID Telegram чата для уведомлений
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("stats", stats))
 
-    # Запуск цикла сигналов
-    asyncio.create_task(signal_loop(app))
+    # Запуск цикла сигналов как фоновая задача
+    app.job_queue.run_repeating(lambda _: asyncio.create_task(signal_loop(app)), interval=CHECK_INTERVAL, first=5)
 
-    # Запуск Telegram polling
     await app.run_polling()
 
 if __name__ == "__main__":
