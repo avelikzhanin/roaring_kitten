@@ -4,7 +4,7 @@ import asyncio
 import pandas as pd
 from tinkoff.invest import Client
 from tinkoff.invest.schemas import CandleInterval
-from telegram import Update, BotCommand
+from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
 # --- Логирование ---
@@ -21,15 +21,7 @@ HISTORY_HOURS = 200
 # --- Хранилище chat_id ---
 chat_ids = set()
 
-# --- Команды Telegram ---
-async def set_commands(app):
-    commands = [
-        BotCommand("start", "Запустить бота и сохранить Chat ID"),
-        BotCommand("signal", "Получить текущий торговый сигнал")
-    ]
-    await app.bot.set_my_commands(commands)
-
-# --- /start ---
+# --- Сохранение chat_id ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     chat_ids.add(chat_id)
@@ -42,6 +34,7 @@ def ema(series, period):
 def adx(high, low, close, period=14):
     plus_dm = high.diff()
     minus_dm = low.diff()
+
     plus_dm[plus_dm < 0] = 0
     minus_dm[minus_dm > 0] = 0  # исправлено
 
@@ -57,6 +50,7 @@ def adx(high, low, close, period=14):
 
     dx = (abs(plus_di - minus_di) / (plus_di + minus_di)) * 100
     adx_val = dx.rolling(window=period).mean()
+
     return adx_val, plus_di, minus_di
 
 # --- Получение свечей ---
@@ -80,20 +74,21 @@ def get_candles():
         } for c in candles])
     return df
 
-# --- Проверка сигналов ---
+# --- Логика сигналов ---
 def check_signal():
     df = get_candles()
     df["ema100"] = ema(df["close"], 100)
     df["ADX"], df["+DI"], df["-DI"] = adx(df["high"], df["low"], df["close"])
+
     vol_ma = df["volume"].rolling(window=20).mean()
     last = df.iloc[-1]
 
-    if last["ADX"] > 23 and last["+DI"] > last["-DI"] and last["volume"] > vol_ma.iloc[-1] and last["close"] > df["ema100"].iloc[-1]:
+    if last["ADX"] > 23 and last["+DI"] > last["-DI"] and last["volume"] > vol_ma.iloc[-1] and last["close"] > last["ema100"]:
         return f"📈 BUY сигнал — ADX={last['ADX']:.2f}, цена={last['close']:.2f}"
-    elif last["ADX"] < 20 or last["close"] < df["ema100"].iloc[-1]:
+    elif last["ADX"] < 20 or last["close"] < last["ema100"]:
         return f"📉 SELL сигнал — ADX={last['ADX']:.2f}, цена={last['close']:.2f}"
     else:
-        return "⚪ Сигнал отсутствует"
+        return None
 
 # --- Отправка сообщений ---
 async def send_telegram_message(bot, text):
@@ -103,17 +98,12 @@ async def send_telegram_message(bot, text):
     for chat_id in chat_ids:
         await bot.send_message(chat_id=chat_id, text=text)
 
-# --- Команда /signal ---
-async def signal_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    signal = check_signal()
-    await context.bot.send_message(chat_id=update.effective_chat.id, text=signal)
-
 # --- Асинхронный цикл сигналов ---
 async def main_loop(bot):
     while True:
         try:
             signal = check_signal()
-            if signal != "⚪ Сигнал отсутствует":
+            if signal:
                 logging.info(f"Отправка сигнала: {signal}")
                 await send_telegram_message(bot, signal)
         except Exception as e:
@@ -124,10 +114,9 @@ async def main_loop(bot):
 if __name__ == "__main__":
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("signal", signal_command))
 
+    # Запуск цикла сигналов
     async def run():
-        await set_commands(app)  # команды будут видны в Telegram
         asyncio.create_task(main_loop(app.bot))
         await app.start()
         await app.updater.start_polling()
