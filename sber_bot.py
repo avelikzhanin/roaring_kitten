@@ -11,18 +11,18 @@ from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 # ------------------- Настройки -------------------
 TINKOFF_TOKEN = "ТВОЙ_TINKOFF_TOKEN"
 TELEGRAM_TOKEN = "ТВОЙ_TELEGRAM_BOT_TOKEN"
-CHAT_ID = "ТВОЙ_CHAT_ID"  # ID чата для уведомлений
+CHAT_ID = "ТВОЙ_CHAT_ID"
 FIGI = "BBG004730N88"  # SBER
-CHECK_INTERVAL = 10 * 60  # каждые 10 минут
+CHECK_INTERVAL = 10 * 60  # 10 минут
 
 # ------------------- Логирование -------------------
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # ------------------- История сделок -------------------
-trades = []  # {"type": "LONG/SHORT", "price": float, "time": datetime, "status": "OPEN/CLOSED"}
+trades = []
 
-# ------------------- Функции работы с данными -------------------
+# ------------------- Работа с данными -------------------
 def get_candles():
     with Client(TINKOFF_TOKEN) as client:
         to_time = datetime.now(timezone.utc)
@@ -42,7 +42,6 @@ def get_candles():
         "close": c.close,
         "volume": c.volume
     } for c in candles])
-
     return data
 
 def ema100(df):
@@ -58,10 +57,8 @@ def adx(df, period=14):
     df['TR'] = true_range(df)
     df['+DM'] = df['high'].diff()
     df['-DM'] = df['low'].diff() * -1
-
     df['+DM'] = np.where((df['+DM'] > df['-DM']) & (df['+DM'] > 0), df['+DM'], 0.0)
     df['-DM'] = np.where((df['-DM'] > df['+DM']) & (df['-DM'] > 0), df['-DM'], 0.0)
-
     df['+DI'] = 100 * df['+DM'].rolling(period).sum() / df['TR'].rolling(period).sum()
     df['-DI'] = 100 * df['-DM'].rolling(period).sum() / df['TR'].rolling(period).sum()
     df['DX'] = 100 * abs(df['+DI'] - df['-DI']) / (df['+DI'] + df['-DI'])
@@ -72,15 +69,12 @@ def get_signal(df):
     df = df.copy()
     df['EMA100'] = ema100(df)
     df = adx(df)
-
     last = df.iloc[-1]
     volume_avg = df['volume'].rolling(14).mean().iloc[-1]
     strong_candle = abs(last['close'] - last['open']) > (df['high'] - df['low']).rolling(14).mean().iloc[-1]
 
-    # Long
     if last['close'] > last['EMA100'] and last['+DI'] > last['-DI'] and last['ADX'] > 23 and last['volume'] > volume_avg and strong_candle:
         return "LONG"
-    # Short
     elif last['close'] < last['EMA100'] and last['-DI'] > last['+DI'] and last['ADX'] > 23 and last['volume'] > volume_avg and strong_candle:
         return "SHORT"
     return None
@@ -91,7 +85,7 @@ def calculate_profit():
         if trade['status'] == 'CLOSED':
             if trade['type'] == 'LONG':
                 profit += (trade['exit_price'] - trade['price']) / trade['price'] * 100
-            else:  # SHORT
+            else:
                 profit += (trade['price'] - trade['exit_price']) / trade['price'] * 100
     return profit
 
@@ -120,7 +114,6 @@ async def signal_loop(app):
             now = datetime.now()
             last_trade = trades[-1] if trades else None
 
-            # Закрытие открытой сделки, если появился противоположный сигнал
             if last_trade and last_trade['status'] == 'OPEN':
                 if (last_trade['type'] == 'LONG' and signal == 'SHORT') or (last_trade['type'] == 'SHORT' and signal == 'LONG'):
                     last_trade['status'] = 'CLOSED'
@@ -128,7 +121,6 @@ async def signal_loop(app):
                     await app.bot.send_message(chat_id=CHAT_ID,
                                                text=f"Закрыта сделка {last_trade['type']} @ {last_trade['exit_price']:.2f}")
 
-            # Открытие новой сделки при наличии сигнала
             if (not last_trade) or (last_trade['status'] == 'CLOSED'):
                 if signal in ['LONG', 'SHORT']:
                     trades.append({
@@ -148,12 +140,11 @@ async def signal_loop(app):
 # ------------------- Запуск бота -------------------
 async def main():
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("stats", stats))
 
-    # Запуск цикла сигналов как фоновая задача
-    app.job_queue.run_repeating(lambda _: asyncio.create_task(signal_loop(app)), interval=CHECK_INTERVAL, first=5)
+    # Запуск цикла сигналов параллельно с ботом
+    asyncio.create_task(signal_loop(app))
 
     await app.run_polling()
 
