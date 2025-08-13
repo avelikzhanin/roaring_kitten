@@ -22,7 +22,7 @@ HISTORY_HOURS = 200
 CHAT_ID_FILE = "chat_id.txt"
 
 # --- Храним состояние позиции ---
-position = None
+position = None  # None / "long" / "short"
 entry_price = None
 
 # --- Сохранение chat_id ---
@@ -118,46 +118,51 @@ async def signal_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     df = get_candles()
     sig, price = get_signal(df)
 
-    if sig == "BUY":
-        if position is None:
-            profit_text = "Позиция ещё не открыта"
-            entry_price_text = "-"
-        else:
-            profit_percent = (price - entry_price) / entry_price * 100
-            profit_text = f"{profit_percent:.2f}%"
-            entry_price_text = f"{entry_price:.2f}"
-        sig_text = f"📈 BUY сигнал\nТекущая цена: {price:.2f}\nЦена открытия: {entry_price_text}\nТекущая прибыль: {profit_text}"
-    elif sig == "SELL":
-        if position == "long":
-            profit_percent = (price - entry_price) / entry_price * 100
-            profit_text = f"{profit_percent:.2f}%"
-            entry_price_text = f"{entry_price:.2f}"
-        else:
-            profit_text = "-"
-            entry_price_text = "-"
-        sig_text = f"📉 SELL сигнал\nТекущая цена: {price:.2f}\nЦена открытия: {entry_price_text}\nТекущая прибыль: {profit_text}"
+    if position == "long":
+        profit_percent = (price - entry_price) / entry_price * 100
+    elif position == "short":
+        profit_percent = (entry_price - price) / entry_price * 100
     else:
-        sig_text = "⚪ Сигнал отсутствует"
+        profit_percent = None
 
+    entry_price_text = f"{entry_price:.2f}" if entry_price else "-"
+    profit_text = f"{profit_percent:.2f}%" if profit_percent is not None else "-"
+
+    sig_text = f"{sig or '⚪ Сигнал отсутствует'}\nТекущая цена: {price:.2f}\nТип позиции: {position or '-'}\nЦена открытия: {entry_price_text}\nТекущая прибыль: {profit_text}"
     await context.bot.send_message(chat_id=update.effective_chat.id, text=sig_text)
 
-# --- Основной цикл с отслеживанием позиции ---
+# --- Основной цикл с long/short ---
 def main_loop():
     global position, entry_price
     while True:
         df = get_candles()
         sig, price = get_signal(df)
 
-        if sig == "BUY" and position is None:
-            position = "long"
-            entry_price = price
-            send_telegram_message(f"📈 Открываем сделку: BUY по цене {price:.2f}")
-        elif sig == "SELL" and position == "long":
-            exit_price = price
-            profit_percent = (exit_price - entry_price) / entry_price * 100
-            send_telegram_message(f"📉 Закрываем сделку: SELL по цене {exit_price:.2f}\n💰 Результат: {profit_percent:.2f}%")
-            position = None
-            entry_price = None
+        if sig == "BUY":
+            if position == "short":
+                # закрываем short
+                profit_percent = (entry_price - price) / entry_price * 100
+                send_telegram_message(f"📉 Закрываем short: цена {price:.2f}\n💰 Результат: {profit_percent:.2f}%")
+                position = None
+                entry_price = None
+            if position is None:
+                # открываем long
+                position = "long"
+                entry_price = price
+                send_telegram_message(f"📈 Открываем long: цена {price:.2f}")
+
+        elif sig == "SELL":
+            if position == "long":
+                # закрываем long
+                profit_percent = (price - entry_price) / entry_price * 100
+                send_telegram_message(f"📉 Закрываем long: цена {price:.2f}\n💰 Результат: {profit_percent:.2f}%")
+                position = None
+                entry_price = None
+            if position is None:
+                # открываем short
+                position = "short"
+                entry_price = price
+                send_telegram_message(f"📉 Открываем short: цена {price:.2f}")
 
         time.sleep(300)  # каждые 5 минут
 
