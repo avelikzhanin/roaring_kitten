@@ -1,119 +1,119 @@
-import os
-import logging
 import asyncio
+from telegram import Update
+from telegram.ext import Application, CommandHandler, ContextTypes
 import pandas as pd
+import talib
 from tinkoff.invest import Client
-from tinkoff.invest.schemas import CandleInterval
-from telegram import Update, BotCommand
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+from tinkoff.invest.services import InstrumentsService
+from datetime import datetime, timedelta, timezone
 
-logging.basicConfig(level=logging.INFO)
+# === НАСТРОЙКИ ===
+TOKEN_TG = "ТВОЙ_ТОКЕН_ТЕЛЕГРАМ"
+CHAT_ID = 215592311
+TOKEN_TINKOFF = "ТВОЙ_ТОКЕН_ТИНЬКОФФ"
+FIGI = "BBG004730N88"  # Сбербанк
+TIMEFRAME_MINUTES = 60
 
-TINKOFF_TOKEN = os.getenv("TINKOFF_API_TOKEN")
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+# === ГЛОБАЛЬНОЕ СОСТОЯНИЕ ===
+in_position = False
+last_signal = None
 
-FIGI = "BBG004730N88"  # SBER
-INTERVAL = CandleInterval.CANDLE_INTERVAL_HOUR
-HISTORY_HOURS = 200
-
-chat_ids = set()
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-    chat_ids.add(chat_id)
-    await context.bot.send_message(chat_id=chat_id, text="✅ Chat ID сохранён! Теперь буду присылать сигналы.")
-
-def ema(series, period):
-    return series.ewm(span=period, adjust=False).mean()
-
-def adx(high, low, close, period=14):
-    plus_dm = high.diff()
-    minus_dm = low.diff()
-    plus_dm[plus_dm < 0] = 0
-    minus_dm[minus_dm > 0] = 0
-    tr1 = high - low
-    tr2 = (high - close.shift()).abs()
-    tr3 = (low - close.shift()).abs()
-    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-    atr = tr.rolling(window=period).mean()
-    plus_di = 100 * (plus_dm.rolling(window=period).mean() / atr)
-    minus_di = abs(100 * (minus_dm.rolling(window=period).mean() / atr))
-    dx = (abs(plus_di - minus_di) / (plus_di + minus_di)) * 100
-    adx_val = dx.rolling(window=period).mean()
-    return adx_val, plus_di, minus_di
-
-def get_candles():
-    with Client(TINKOFF_TOKEN) as client:
-        now = pd.Timestamp.now(tz="Europe/Moscow")
+# === ФУНКЦИЯ ЗАГРУЗКИ ДАННЫХ ===
+async def get_candles():
+    with Client(TOKEN_TINKOFF) as client:
+        now = datetime.now(timezone.utc)
+        from_ = now - timedelta(days=5)
+        to = now
         candles = client.market_data.get_candles(
             figi=FIGI,
-            from_=now - pd.Timedelta(hours=HISTORY_HOURS),
-            to=now,
-            interval=INTERVAL
+            from_=from_,
+            to=to,
+            interval=client.market_data.CandleInterval.CANDLE_INTERVAL_HOUR
         ).candles
-        df = pd.DataFrame([{
+
+        data = pd.DataFrame([{
             "time": c.time,
-            "open": c.open.units + c.open.nano / 1e9,
-            "high": c.high.units + c.high.nano / 1e9,
-            "low": c.low.units + c.low.nano / 1e9,
-            "close": c.close.units + c.close.nano / 1e9,
+            "open": float(c.open.units + c.open.nano / 1e9),
+            "high": float(c.high.units + c.high.nano / 1e9),
+            "low": float(c.low.units + c.low.nano / 1e9),
+            "close": float(c.close.units + c.close.nano / 1e9),
             "volume": c.volume
         } for c in candles])
-    return df
 
-def check_signal():
-    df = get_candles()
-    df["ema100"] = ema(df["close"], 100)
-    df["ADX"], df["+DI"], df["-DI"] = adx(df["high"], df["low"], df["close"])
-    vol_ma = df["volume"].rolling(window=20).mean()
-    last = df.iloc[-1]
-    if last["ADX"] > 23 and last["+DI"] > last["-DI"] and last["volume"] > vol_ma.iloc[-1] and last["close"] > df["ema100"].iloc[-1]:
-        return f"📈 BUY сигнал — ADX={last['ADX']:.2f}, цена={last['close']:.2f}"
-    elif last["ADX"] < 20 or last["close"] < df["ema100"].iloc[-1]:
-        return f"📉 SELL сигнал — ADX={last['ADX']:.2f}, цена={last['close']:.2f}"
+        return data
+
+# === РАСЧЁТ ИНДИКАТОРОВ ===
+async def get_signal():
+    df = await get_candles()
+
+    if df.empty or len(df) < 100:
+        return None, None, None
+
+    close = df["close"].values
+    high = df["high"].values
+    low = df["low"].values
+    volume = df["volume"].values
+
+    ema100 = talib.EMA(close, timeperiod=100)
+    adx = talib.ADX(high, low, close, timeperiod=14)
+    plus_di = talib.PLUS_DI(high, low, close, timeperiod=14)
+    minus_di = talib.MINUS_DI(high, low, close, timeperiod=14)
+    avg_volume = df["volume"].rolling(20).mean()
+
+    last_idx = -1
+    price = close[last_idx]
+
+    # Условия входа в лонг
+    long_cond = (adx[last_idx] > 23 and
+                 plus_di[last_idx] > minus_di[last_idx] and
+                 volume[last_idx] > avg_volume.iloc[last_idx] and
+                 price > ema100[last_idx])
+
+    # Условия выхода из лонга
+    exit_long = (adx[last_idx] < 23 or
+                 plus_di[last_idx] < minus_di[last_idx] or
+                 price < ema100[last_idx])
+
+    if long_cond:
+        return "buy", adx[last_idx], price
+    elif exit_long:
+        return "exit", adx[last_idx], price
     else:
-        return "⚪ Сигнал отсутствует"
+        return None, adx[last_idx], price
 
-async def send_telegram_message(bot, text):
-    if not chat_ids:
-        logging.warning("❌ Chat ID не найден — напиши /start боту")
-        return
-    for chat_id in chat_ids:
-        await bot.send_message(chat_id=chat_id, text=text)
+# === ОБРАБОТКА КОМАНД ===
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Привет! Я бот сигналов по Сбербанку. Команда /signal покажет текущий сигнал.")
 
-async def signal_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    signal = check_signal()
-    await context.bot.send_message(chat_id=update.effective_chat.id, text=signal)
+async def signal(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    direction, adx, price = await get_signal()
+    if direction:
+        await update.message.reply_text(f"Сигнал: {direction.upper()} — ADX={adx:.2f}, цена={price:.2f}")
+    else:
+        await update.message.reply_text("Сигнала нет.")
 
-async def main_loop(bot):
+# === АВТОМАТИЧЕСКАЯ ПРОВЕРКА ===
+async def auto_check(app: Application):
+    global in_position, last_signal
     while True:
-        try:
-            signal = check_signal()
-            if signal != "⚪ Сигнал отсутствует":
-                logging.info(f"Отправка сигнала: {signal}")
-                await send_telegram_message(bot, signal)
-        except Exception as e:
-            logging.error(f"Ошибка в main_loop: {e}")
-        await asyncio.sleep(300)
+        direction, adx, price = await get_signal()
+        if not in_position and direction == "buy":
+            in_position = True
+            last_signal = "buy"
+            await app.bot.send_message(chat_id=CHAT_ID, text=f"📈 BUY сигнал — ADX={adx:.2f}, цена={price:.2f}")
+        elif in_position and direction == "exit":
+            in_position = False
+            last_signal = "exit"
+            await app.bot.send_message(chat_id=CHAT_ID, text=f"📤 Выход из сделки — ADX={adx:.2f}, цена={price:.2f}")
+        await asyncio.sleep(300)  # каждые 5 минут
+
+# === ЗАПУСК ===
+def main():
+    app = Application.builder().token(TOKEN_TG).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("signal", signal))
+    app.job_queue.run_once(lambda _: asyncio.create_task(auto_check(app)), when=1)
+    app.run_polling()
 
 if __name__ == "__main__":
-    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("signal", signal_command))
-
-    # Устанавливаем команды Telegram
-    async def set_commands(app):
-        from telegram import BotCommand
-        commands = [
-            BotCommand("start", "Запустить бота и сохранить Chat ID"),
-            BotCommand("signal", "Получить текущий сигнал")
-        ]
-        await app.bot.set_my_commands(commands)
-
-    # Запуск авто-сигналов перед polling
-    async def start_loop(app):
-        asyncio.create_task(main_loop(app.bot))
-        await set_commands(app)
-
-    app.post_init = start_loop  # запускаем после инициализации
-    app.run_polling()  # правильный способ запускать бот
+    main()
