@@ -21,6 +21,10 @@ HISTORY_HOURS = 200
 
 CHAT_ID_FILE = "chat_id.txt"
 
+# --- Храним состояние позиции ---
+position = None
+entry_price = None
+
 # --- Сохранение chat_id ---
 def save_chat_id(chat_id):
     with open(CHAT_ID_FILE, "w") as f:
@@ -110,21 +114,36 @@ def send_telegram_message(text):
 
 # --- Команда /signal ---
 async def signal_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global position, entry_price
     df = get_candles()
     sig, price = get_signal(df)
-    if sig is None:
-        sig_text = "⚪ Сигнал отсутствует"
-    elif sig == "BUY":
-        sig_text = f"📈 BUY сигнал — цена={price:.2f}"
+
+    if sig == "BUY":
+        if position is None:
+            profit_text = "Позиция ещё не открыта"
+            entry_price_text = "-"
+        else:
+            profit_percent = (price - entry_price) / entry_price * 100
+            profit_text = f"{profit_percent:.2f}%"
+            entry_price_text = f"{entry_price:.2f}"
+        sig_text = f"📈 BUY сигнал\nТекущая цена: {price:.2f}\nЦена открытия: {entry_price_text}\nТекущая прибыль: {profit_text}"
+    elif sig == "SELL":
+        if position == "long":
+            profit_percent = (price - entry_price) / entry_price * 100
+            profit_text = f"{profit_percent:.2f}%"
+            entry_price_text = f"{entry_price:.2f}"
+        else:
+            profit_text = "-"
+            entry_price_text = "-"
+        sig_text = f"📉 SELL сигнал\nТекущая цена: {price:.2f}\nЦена открытия: {entry_price_text}\nТекущая прибыль: {profit_text}"
     else:
-        sig_text = f"📉 SELL сигнал — цена={price:.2f}"
+        sig_text = "⚪ Сигнал отсутствует"
+
     await context.bot.send_message(chat_id=update.effective_chat.id, text=sig_text)
 
 # --- Основной цикл с отслеживанием позиции ---
 def main_loop():
-    position = None
-    entry_price = None
-
+    global position, entry_price
     while True:
         df = get_candles()
         sig, price = get_signal(df)
