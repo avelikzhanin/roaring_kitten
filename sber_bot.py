@@ -1,152 +1,136 @@
-import asyncio
+import os
 import logging
-from datetime import datetime, timezone, timedelta
-
+import asyncio
 import pandas as pd
-import numpy as np
-from tinkoff.invest import Client, CandleInterval
-from telegram import Update
+from tinkoff.invest import Client
+from tinkoff.invest.schemas import CandleInterval
+from telegram import Update, BotCommand
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
-# ------------------- Настройки -------------------
-TINKOFF_TOKEN = "ТВОЙ_TINKOFF_TOKEN"
-TELEGRAM_TOKEN = "ТВОЙ_TELEGRAM_BOT_TOKEN"
-CHAT_ID = "ТВОЙ_CHAT_ID"
-FIGI = "BBG004730N88"  # SBER
-CHECK_INTERVAL = 10 * 60  # 10 минут
-
-# ------------------- Логирование -------------------
+# --- Логирование ---
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
-# ------------------- История сделок -------------------
-trades = []
+# --- Переменные окружения ---
+TINKOFF_TOKEN = os.getenv("TINKOFF_API_TOKEN")
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 
-# ------------------- Работа с данными -------------------
+FIGI = "BBG004730N88"  # SBER
+INTERVAL = CandleInterval.CANDLE_INTERVAL_HOUR
+HISTORY_HOURS = 200
+
+# --- Хранилище chat_id ---
+chat_ids = set()
+
+# --- Команды Telegram ---
+async def set_commands(app):
+    commands = [
+        BotCommand("start", "Запустить бота и сохранить Chat ID"),
+        BotCommand("signal", "Получить текущий торговый сигнал")
+    ]
+    await app.bot.set_my_commands(commands)
+
+# --- /start ---
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    chat_ids.add(chat_id)
+    await context.bot.send_message(chat_id=chat_id, text="✅ Chat ID сохранён! Теперь буду присылать сигналы.")
+
+# --- Индикаторы ---
+def ema(series, period):
+    return series.ewm(span=period, adjust=False).mean()
+
+def adx(high, low, close, period=14):
+    plus_dm = high.diff()
+    minus_dm = low.diff()
+    plus_dm[plus_dm < 0] = 0
+    minus_dm[minus_dm > 0] = 0  # исправлено
+
+    tr1 = high - low
+    tr2 = (high - close.shift()).abs()
+    tr3 = (low - close.shift()).abs()
+    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+
+    atr = tr.rolling(window=period).mean()
+
+    plus_di = 100 * (plus_dm.rolling(window=period).mean() / atr)
+    minus_di = abs(100 * (minus_dm.rolling(window=period).mean() / atr))
+
+    dx = (abs(plus_di - minus_di) / (plus_di + minus_di)) * 100
+    adx_val = dx.rolling(window=period).mean()
+    return adx_val, plus_di, minus_di
+
+# --- Получение свечей ---
 def get_candles():
     with Client(TINKOFF_TOKEN) as client:
-        to_time = datetime.now(timezone.utc)
-        from_time = to_time - timedelta(days=30)
+        now = pd.Timestamp.now(tz="Europe/Moscow")
         candles = client.market_data.get_candles(
             figi=FIGI,
-            from_=from_time,
-            to=to_time,
-            interval=CandleInterval.CANDLE_INTERVAL_H1
+            from_=now - pd.Timedelta(hours=HISTORY_HOURS),
+            to=now,
+            interval=INTERVAL
         ).candles
 
-    data = pd.DataFrame([{
-        "time": c.time,
-        "open": c.open,
-        "high": c.high,
-        "low": c.low,
-        "close": c.close,
-        "volume": c.volume
-    } for c in candles])
-    return data
-
-def ema100(df):
-    return df['close'].ewm(span=100, adjust=False).mean()
-
-def true_range(df):
-    tr1 = df['high'] - df['low']
-    tr2 = abs(df['high'] - df['close'].shift())
-    tr3 = abs(df['low'] - df['close'].shift())
-    return pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-
-def adx(df, period=14):
-    df['TR'] = true_range(df)
-    df['+DM'] = df['high'].diff()
-    df['-DM'] = df['low'].diff() * -1
-    df['+DM'] = np.where((df['+DM'] > df['-DM']) & (df['+DM'] > 0), df['+DM'], 0.0)
-    df['-DM'] = np.where((df['-DM'] > df['+DM']) & (df['-DM'] > 0), df['-DM'], 0.0)
-    df['+DI'] = 100 * df['+DM'].rolling(period).sum() / df['TR'].rolling(period).sum()
-    df['-DI'] = 100 * df['-DM'].rolling(period).sum() / df['TR'].rolling(period).sum()
-    df['DX'] = 100 * abs(df['+DI'] - df['-DI']) / (df['+DI'] + df['-DI'])
-    df['ADX'] = df['DX'].rolling(period).mean()
+        df = pd.DataFrame([{
+            "time": c.time,
+            "open": c.open.units + c.open.nano / 1e9,
+            "high": c.high.units + c.high.nano / 1e9,
+            "low": c.low.units + c.low.nano / 1e9,
+            "close": c.close.units + c.close.nano / 1e9,
+            "volume": c.volume
+        } for c in candles])
     return df
 
-def get_signal(df):
-    df = df.copy()
-    df['EMA100'] = ema100(df)
-    df = adx(df)
+# --- Проверка сигналов ---
+def check_signal():
+    df = get_candles()
+    df["ema100"] = ema(df["close"], 100)
+    df["ADX"], df["+DI"], df["-DI"] = adx(df["high"], df["low"], df["close"])
+    vol_ma = df["volume"].rolling(window=20).mean()
     last = df.iloc[-1]
-    volume_avg = df['volume'].rolling(14).mean().iloc[-1]
-    strong_candle = abs(last['close'] - last['open']) > (df['high'] - df['low']).rolling(14).mean().iloc[-1]
 
-    if last['close'] > last['EMA100'] and last['+DI'] > last['-DI'] and last['ADX'] > 23 and last['volume'] > volume_avg and strong_candle:
-        return "LONG"
-    elif last['close'] < last['EMA100'] and last['-DI'] > last['+DI'] and last['ADX'] > 23 and last['volume'] > volume_avg and strong_candle:
-        return "SHORT"
-    return None
+    if last["ADX"] > 23 and last["+DI"] > last["-DI"] and last["volume"] > vol_ma.iloc[-1] and last["close"] > df["ema100"].iloc[-1]:
+        return f"📈 BUY сигнал — ADX={last['ADX']:.2f}, цена={last['close']:.2f}"
+    elif last["ADX"] < 20 or last["close"] < df["ema100"].iloc[-1]:
+        return f"📉 SELL сигнал — ADX={last['ADX']:.2f}, цена={last['close']:.2f}"
+    else:
+        return "⚪ Сигнал отсутствует"
 
-def calculate_profit():
-    profit = 0.0
-    for trade in trades:
-        if trade['status'] == 'CLOSED':
-            if trade['type'] == 'LONG':
-                profit += (trade['exit_price'] - trade['price']) / trade['price'] * 100
-            else:
-                profit += (trade['price'] - trade['exit_price']) / trade['price'] * 100
-    return profit
+# --- Отправка сообщений ---
+async def send_telegram_message(bot, text):
+    if not chat_ids:
+        logging.warning("❌ Chat ID не найден — напиши /start боту")
+        return
+    for chat_id in chat_ids:
+        await bot.send_message(chat_id=chat_id, text=text)
 
-def format_trades():
-    lines = []
-    for t in trades:
-        if t['status'] == 'OPEN':
-            lines.append(f"{t['time']:%Y-%m-%d %H:%M} | {t['type']} | OPEN @ {t['price']:.2f}")
-        else:
-            lines.append(f"{t['time']:%Y-%m-%d %H:%M} | {t['type']} | CLOSED @ {t['exit_price']:.2f}")
-    return "\n".join(lines)
+# --- Команда /signal ---
+async def signal_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    signal = check_signal()
+    await context.bot.send_message(chat_id=update.effective_chat.id, text=signal)
 
-# ------------------- Telegram команды -------------------
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Бот запущен и отслеживает сигналы Long/Short для SBER.")
-
-async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(f"История сделок:\n{format_trades()}\n\nОбщая прибыль: {calculate_profit():.2f}%")
-
-# ------------------- Основной цикл сигналов -------------------
-async def signal_loop(app):
+# --- Асинхронный цикл сигналов ---
+async def main_loop(bot):
     while True:
         try:
-            df = get_candles()
-            signal = get_signal(df)
-            now = datetime.now()
-            last_trade = trades[-1] if trades else None
-
-            if last_trade and last_trade['status'] == 'OPEN':
-                if (last_trade['type'] == 'LONG' and signal == 'SHORT') or (last_trade['type'] == 'SHORT' and signal == 'LONG'):
-                    last_trade['status'] = 'CLOSED'
-                    last_trade['exit_price'] = df.iloc[-1]['close']
-                    await app.bot.send_message(chat_id=CHAT_ID,
-                                               text=f"Закрыта сделка {last_trade['type']} @ {last_trade['exit_price']:.2f}")
-
-            if (not last_trade) or (last_trade['status'] == 'CLOSED'):
-                if signal in ['LONG', 'SHORT']:
-                    trades.append({
-                        "type": signal,
-                        "price": df.iloc[-1]['close'],
-                        "time": now,
-                        "status": "OPEN"
-                    })
-                    await app.bot.send_message(chat_id=CHAT_ID,
-                                               text=f"Открыта сделка {signal} @ {df.iloc[-1]['close']:.2f}")
-
+            signal = check_signal()
+            if signal != "⚪ Сигнал отсутствует":
+                logging.info(f"Отправка сигнала: {signal}")
+                await send_telegram_message(bot, signal)
         except Exception as e:
-            logger.error(f"Ошибка в signal_loop: {e}")
+            logging.error(f"Ошибка в main_loop: {e}")
+        await asyncio.sleep(300)  # каждые 5 минут
 
-        await asyncio.sleep(CHECK_INTERVAL)
-
-# ------------------- Запуск бота -------------------
-async def main():
+# --- Запуск бота ---
+if __name__ == "__main__":
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("stats", stats))
+    app.add_handler(CommandHandler("signal", signal_command))
 
-    # Запуск цикла сигналов параллельно с ботом
-    asyncio.create_task(signal_loop(app))
+    async def run():
+        await set_commands(app)  # команды будут видны в Telegram
+        asyncio.create_task(main_loop(app.bot))
+        await app.start()
+        await app.updater.start_polling()
+        await app.idle()
 
-    await app.run_polling()
-
-if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(run())
