@@ -4,7 +4,7 @@ import asyncio
 import pandas as pd
 from tinkoff.invest import Client
 from tinkoff.invest.schemas import CandleInterval
-from telegram import Update
+from telegram import Update, BotCommand
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
 # --- Логирование ---
@@ -36,7 +36,7 @@ def adx(high, low, close, period=14):
     minus_dm = low.diff()
 
     plus_dm[plus_dm < 0] = 0
-    minus_dm[minus_dm > 0] = 0  # исправлено
+    minus_dm[minus_dm > 0] = 0
 
     tr1 = high - low
     tr2 = (high - close.shift()).abs()
@@ -103,6 +103,14 @@ async def signal_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     signal = check_signal()
     await context.bot.send_message(chat_id=update.effective_chat.id, text=signal)
 
+# --- Установка команд в Telegram ---
+async def set_commands(app):
+    commands = [
+        BotCommand("start", "Запустить бота и сохранить Chat ID"),
+        BotCommand("signal", "Получить текущий торговый сигнал")
+    ]
+    await app.bot.set_my_commands(commands)
+
 # --- Асинхронный цикл сигналов ---
 async def main_loop(bot):
     while True:
@@ -119,11 +127,11 @@ async def main_loop(bot):
 if __name__ == "__main__":
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("signal", signal_command))  # добавлена команда /signal
+    app.add_handler(CommandHandler("signal", signal_command))
 
-    # Запуск цикла сигналов
     async def run():
-        asyncio.create_task(main_loop(app.bot))
+        await set_commands(app)              # добавляем команды в меню
+        asyncio.create_task(main_loop(app.bot))  # запускаем авто-сигналы
         await app.start()
         await app.updater.start_polling()
         await app.idle()
