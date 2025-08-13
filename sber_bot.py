@@ -2,27 +2,29 @@ import os
 import asyncio
 import pandas as pd
 import numpy as np
-import yfinance as yf
+from tinkoff.invest import Client, CandleInterval
+from datetime import datetime, timedelta, timezone
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
-# === Настройки ===
-TOKEN = os.getenv("TELEGRAM_TOKEN")  # токен Telegram-бота
-CHAT_ID = int(os.getenv("TELEGRAM_CHAT_ID", "215592311"))  # твой chat_id
-SYMBOL = "SBER.ME"
-INTERVAL = "1h"
+# ==== Настройки ====
+TOKEN_TINKOFF = os.getenv("TINKOFF_TOKEN")
+TOKEN_TELEGRAM = os.getenv("TELEGRAM_TOKEN")
+CHAT_ID = int(os.getenv("TELEGRAM_CHAT_ID", "215592311"))
+FIGI_SBER = "BBG004730N88"  # FIGI Сбера
+INTERVAL = CandleInterval.CANDLE_INTERVAL_HOUR
 
-# Флаг позиции
-in_position = False
+# ==== Позиция ====
+in_position = False  # Флаг открытой позиции
 
-# === Расчёт индикаторов ===
+# ==== Индикаторы ====
 def ema(series, period):
     return series.ewm(span=period, adjust=False).mean()
 
-def calculate_adx(df, period=14):
-    high = df["High"]
-    low = df["Low"]
-    close = df["Close"]
+def adx(df, period=14):
+    high = df["high"]
+    low = df["low"]
+    close = df["close"]
 
     plus_dm = high.diff()
     minus_dm = low.diff()
@@ -33,7 +35,7 @@ def calculate_adx(df, period=14):
     tr1 = high - low
     tr2 = abs(high - close.shift())
     tr3 = abs(low - close.shift())
-    tr = pd.DataFrame({"tr1": tr1, "tr2": tr2, "tr3": tr3}).max(axis=1)
+    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
 
     atr = tr.rolling(period).mean()
 
@@ -41,60 +43,81 @@ def calculate_adx(df, period=14):
     minus_di = 100 * (pd.Series(abs(minus_dm)).rolling(period).mean() / atr)
 
     dx = (abs(plus_di - minus_di) / (plus_di + minus_di)) * 100
-    adx = dx.rolling(period).mean()
+    adx_val = dx.rolling(period).mean()
 
     df["+DI"] = plus_di
     df["-DI"] = minus_di
-    df["ADX"] = adx
+    df["ADX"] = adx_val
     return df
 
-# === Получение данных ===
-async def fetch_data():
-    df = yf.download(SYMBOL, period="5d", interval=INTERVAL)
-    df.dropna(inplace=True)
-    df["EMA100"] = ema(df["Close"], 100)
-    df = calculate_adx(df)
-    df["Volume_Mean"] = df["Volume"].rolling(window=20).mean()
-    df.dropna(inplace=True)
+# ==== Получение данных ====
+def get_candles(hours_back=200):
+    now = pd.Timestamp.now(tz="Europe/Moscow")
+    with Client(TOKEN_TINKOFF) as client:
+        candles = client.market_data.get_candles(
+            figi=FIGI_SBER,
+            from_=now - pd.Timedelta(hours=hours_back),
+            to=now,
+            interval=INTERVAL
+        ).candles
+
+    df = pd.DataFrame([{
+        "time": c.time,
+        "open": c.open.units + c.open.nano / 1e9,
+        "high": c.high.units + c.high.nano / 1e9,
+        "low": c.low.units + c.low.nano / 1e9,
+        "close": c.close.units + c.close.nano / 1e9,
+        "volume": c.volume
+    } for c in candles])
     return df
 
-# === Логика сигналов ===
-def check_entry(df):
+# ==== Логика сигналов ====
+def check_signal():
+    df = get_candles()
+    df["EMA100"] = ema(df["close"], 100)
+    df = adx(df)
+    df["Volume_MA"] = df["volume"].rolling(20).mean()
+    df.dropna(inplace=True)
     last = df.iloc[-1]
-    return (
+
+    entry = (
         last["ADX"] > 23 and
         last["+DI"] > last["-DI"] and
-        last["Close"] > last["EMA100"] and
-        last["Volume"] > last["Volume_Mean"]
+        last["close"] > last["EMA100"] and
+        last["volume"] > last["Volume_MA"]
     )
 
-def check_exit(df):
-    last = df.iloc[-1]
-    return (
+    exit_ = (
         last["+DI"] < last["-DI"] or
-        last["Close"] < last["EMA100"]
+        last["close"] < last["EMA100"]
     )
 
-# === Цикл проверки сигналов ===
+    return entry, exit_
+
+# ==== Цикл сигналов ====
 async def signal_loop(app):
     global in_position
     while True:
-        df = await asyncio.to_thread(fetch_data)
-        if not in_position and check_entry(df):
+        entry, exit_ = await asyncio.to_thread(check_signal)
+        if not in_position and entry:
             await app.bot.send_message(CHAT_ID, "📈 Сигнал на ВХОД в сделку по Сберу!")
             in_position = True
-        elif in_position and check_exit(df):
+        elif in_position and exit_:
             await app.bot.send_message(CHAT_ID, "📉 Сигнал на ВЫХОД из сделки по Сберу!")
             in_position = False
-        await asyncio.sleep(60 * 5)  # каждые 5 минут
+        await asyncio.sleep(300)  # проверка каждые 5 минут
 
-# === Команды ===
+# ==== Telegram команды ====
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Бот запущен. Автоматические сигналы включены.")
 
-# === Запуск ===
-if __name__ == "__main__":
-    app = Application.builder().token(TOKEN).build()
+# ==== Запуск ====
+def main():
+    app = Application.builder().token(TOKEN_TELEGRAM).build()
     app.add_handler(CommandHandler("start", start))
+    # Запуск авто-сигналов после инициализации
     app.post_init(lambda _: asyncio.create_task(signal_loop(app)))
     app.run_polling()
+
+if __name__ == "__main__":
+    main()
