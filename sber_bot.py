@@ -127,16 +127,18 @@ def get_current_price():
     df = get_candles()
     return df["close"].iloc[-1]
 
-# --- Сигнал стратегии ---
+# --- Сигнал стратегии (новая логика) ---
 def check_signal(df):
     df["ema100"] = ema(df["close"], 100)
     df["ADX"], df["+DI"], df["-DI"] = adx(df["high"], df["low"], df["close"])
     vol_ma = df["volume"].rolling(20).mean()
     last = df.iloc[-1]
 
+    # BUY: сильный восходящий тренд
     if last["ADX"] > 23 and last["+DI"] > last["-DI"] and last["close"] > last["ema100"] and last["volume"] > vol_ma.iloc[-1]:
         return "BUY"
-    elif last["ADX"] < 20 or last["close"] < last["ema100"]:
+    # SELL: сильный нисходящий тренд или слабый/падающий тренд
+    elif (last["ADX"] > 23 and last["+DI"] < last["-DI"] and last["close"] < last["ema100"]) or (last["ADX"] < 20 or last["close"] < last["ema100"]):
         return "SELL"
     else:
         return None
