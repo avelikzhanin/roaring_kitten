@@ -3,7 +3,6 @@ import logging
 import time
 import requests
 import pandas as pd
-from datetime import datetime, timedelta
 from tinkoff.invest import Client
 from tinkoff.invest.schemas import CandleInterval
 from telegram import Update
@@ -114,7 +113,7 @@ def update_trailing(curr_price):
         best_price = min(best_price, curr_price)
         trailing_stop = best_price * (1 + TRAIL_PCT)
 
-# --- Генерация сообщения с параметрами стратегии ---
+# --- Генерация сообщения с параметрами стратегии и позицией ---
 def generate_signal_message():
     global position_type, entry_price, trailing_stop, best_price
     df = get_candles()
@@ -128,6 +127,7 @@ def generate_signal_message():
     minus_di = last["-DI"]
     vol_val = last["volume"]
     ema_val = last["ema100"]
+    last_price = last["close"]
 
     text = (
         f"📊 Параметры стратегии:\n"
@@ -135,20 +135,33 @@ def generate_signal_message():
         f"+DI: {plus_di:.2f} (цель > -DI)\n"
         f"-DI: {minus_di:.2f}\n"
         f"Объём: {vol_val:.0f} (цель > средний за 20 свечей {vol_ma.iloc[-1]:.0f})\n"
-        f"EMA100: {ema_val:.2f} (цель < текущая цена {last['close']:.2f})\n"
+        f"EMA100: {ema_val:.2f} (цель < текущая цена {last_price:.2f})\n"
     )
 
-    raw_signal = check_signal()
+    signal = check_signal()
 
-    if raw_signal:
-        text += f"\n✅ Сигнал стратегии: {raw_signal}"
-        if not position_type:
-            text += f"\nТип позиции: {'long' if raw_signal=='BUY' else 'short'}"
-        else:
-            pnl = (last["close"]-entry_price)/entry_price*100 if position_type=="long" else (entry_price-last["close"])/entry_price*100
-            text += f"\nТекущая позиция: {position_type}, PnL: {pnl:.2f}%"
+    if signal:
+        text += f"\n✅ Сигнал стратегии: {signal}"
     else:
         text += "\n❌ Сейчас нет сигнала для открытия позиции."
+
+    # Добавляем информацию по позиции
+    if position_type:
+        pnl = (last_price - entry_price)/entry_price*100 if position_type=="long" else (entry_price - last_price)/entry_price*100
+        ts_text = f"{trailing_stop:.2f}" if trailing_stop else "-"
+        text += (
+            f"\n\nТекущая цена: {last_price:.2f}"
+            f"\nЦена входа: {entry_price if entry_price else '-'}"
+            f"\nТрейлинг-стоп: {ts_text}"
+            f"\nТекущая прибыль: {pnl:.2f}%"
+        )
+    else:
+        text += (
+            f"\n\nТекущая цена: {last_price:.2f}"
+            f"\nЦена входа: -"
+            f"\nТрейлинг-стоп: -"
+            f"\nТекущая прибыль: -"
+        )
 
     return text
 
