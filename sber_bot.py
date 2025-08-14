@@ -19,6 +19,7 @@ CHAT_ID_FILE = "chat_id.txt"
 
 # --- Логирование ---
 logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # --- Состояние стратегии ---
 position_type = None  # None / 'long' / 'short'
@@ -52,7 +53,7 @@ def send_telegram_message(text):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     save_chat_id(chat_id)
-    await context.bot.send_message(chat_id=chat_id, text="😺 Ревущий котёнок на связи! Ожидаем сигналы.")
+    await context.bot.send_message(chat_id=chat_id, text="😺 Бот активирован. Ожидаем сигналы.")
 
 async def signal_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     current_price = get_current_price()
@@ -157,17 +158,31 @@ def main_loop():
             curr_price = df["close"].iloc[-1]
             signal = check_signal(df)
 
-            # Если позиция открыта, проверяем трейлинг
+            # Если позиция открыта, проверяем трейлинг и обратный сигнал
             if position_type:
                 update_trailing(curr_price)
+                
+                # Закрытие по трейлинг-стопу
                 if should_close(curr_price):
                     pnl = (curr_price - entry_price)/entry_price*100 if position_type=="long" else (entry_price - curr_price)/entry_price*100
-                    send_telegram_message(f"🔔 Закрытие {position_type} по {curr_price:.2f}\nPnL: {pnl:.2f}%")
+                    send_telegram_message(f"🔔 Закрытие {position_type} по трейлинг-стопу {curr_price:.2f}\nPnL: {pnl:.2f}%")
                     position_type = None
                     entry_price = None
                     trailing_stop = None
                     best_price = None
                     signal_sent = False
+                    continue
+
+                # Закрытие по обратному сигналу
+                if (position_type == "long" and signal == "SELL") or (position_type == "short" and signal == "BUY"):
+                    pnl = (curr_price - entry_price)/entry_price*100 if position_type=="long" else (entry_price - curr_price)/entry_price*100
+                    send_telegram_message(f"🔔 Закрытие {position_type} по обратному сигналу {signal}\nЦена: {curr_price:.2f}\nPnL: {pnl:.2f}%")
+                    position_type = None
+                    entry_price = None
+                    trailing_stop = None
+                    best_price = None
+                    signal_sent = False
+                    continue
 
             # Открытие новой позиции
             if not position_type and signal and not signal_sent:
@@ -184,7 +199,6 @@ def main_loop():
 
 # --- Запуск Telegram ---
 if __name__ == "__main__":
-    from telegram.ext import ApplicationBuilder, CommandHandler
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("signal", signal_command))
