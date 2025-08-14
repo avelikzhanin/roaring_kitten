@@ -52,7 +52,7 @@ def send_telegram_message(text):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     save_chat_id(chat_id)
-    await context.bot.send_message(chat_id=chat_id, text="😺 Бот активирован. Ожидаем сигналы.")
+    await context.bot.send_message(chat_id=chat_id, text="😺 Ревущий котёнок на связи! Ожидаем сигналы.")
 
 async def signal_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     current_price = get_current_price()
