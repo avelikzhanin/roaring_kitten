@@ -15,14 +15,14 @@ import requests
 # =========================
 # Конфиг
 # =========================
-BOT_VERSION = "v0.17 — auto-check every 15min"
+BOT_VERSION = "v0.18 — auto-check every 15min"
 TINKOFF_API_TOKEN = os.getenv("TINKOFF_API_TOKEN")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 
 FIGI = "BBG004730N88"             # SBER
 TF = CandleInterval.CANDLE_INTERVAL_HOUR
 LOOKBACK_HOURS = 200
-CHECK_INTERVAL = 900  # 15 минут в секундах
+CHECK_INTERVAL = 900  # 15 минут
 TRAIL_PCT = 0.015
 
 CHAT_ID_FILE = "chat_id.txt"
@@ -175,8 +175,9 @@ def build_message(last: pd.Series, conds: dict) -> str:
 
     lines = []
     lines.append("📊 Параметры стратегии:")
-    lines.append(f"ADX: {adx:.2f} {emoji(conds['adx_cond'])} (порог > 23)")
-    lines.append(f"Объём: {int(vol)} {emoji(conds['vol_cond'])} (MA20 = {int(vol_ma20)})")
+
+    lines.append(f"ADX: {adx:.2f} | BUY: {emoji(conds['adx_cond'])} | SELL: {emoji(conds['adx_cond'])} (порог > 23)")
+    lines.append(f"Объём: {int(vol)} | BUY: {emoji(conds['vol_cond'])} | SELL: {emoji(conds['vol_cond'])} (MA20={int(vol_ma20)})")
     lines.append(f"EMA100: {ema100:.2f} | BUY: {emoji(conds['ema_buy'])} | SELL: {emoji(conds['ema_sell'])}")
     lines.append(f"+DI / -DI: {plus_di:.2f} / {minus_di:.2f} | BUY: {emoji(conds['di_buy'])} | SELL: {emoji(conds['di_sell'])}")
 
@@ -237,12 +238,9 @@ def auto_check(app):
             price = last["close"]
             chat_id = load_chat_id()
 
-            # --------------------
             # Обновляем трейлинг-стоп
-            # --------------------
             if position_type:
                 update_trailing(price)
-                # Проверка выхода
                 exit_pos = False
                 if position_type=="long" and price <= trailing_stop:
                     exit_pos = True
@@ -258,9 +256,7 @@ def auto_check(app):
                     best_price = None
                     trailing_stop = None
 
-            # --------------------
             # Новый сигнал — открываем позицию
-            # --------------------
             if current_signal and current_signal != last_signal_sent and not position_type:
                 position_type = "long" if current_signal=="BUY" else "short"
                 entry_price = price
