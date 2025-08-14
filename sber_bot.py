@@ -1,38 +1,59 @@
-# -*- coding: utf-8 -*-
 import os
 import logging
 import pandas as pd
 import numpy as np
-from datetime import timedelta
+from datetime import timedelta, datetime
+from threading import Thread
+import time
+
 from tinkoff.invest import Client
 from tinkoff.invest.schemas import CandleInterval
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+import requests
 
 # =========================
 # Конфиг
 # =========================
-BOT_VERSION = "v0.14 — strict BUY/SELL + directional DI emojis"
+BOT_VERSION = "v0.16 — auto-check every 15min"
 TINKOFF_API_TOKEN = os.getenv("TINKOFF_API_TOKEN")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 
 FIGI = "BBG004730N88"             # SBER
 TF = CandleInterval.CANDLE_INTERVAL_HOUR
 LOOKBACK_HOURS = 200
+CHECK_INTERVAL = 900  # 15 минут в секундах
 TRAIL_PCT = 0.015
 
-# Глобальное состояние позиции (если используешь)
+CHAT_ID_FILE = "chat_id.txt"
+
+# Глобальное состояние позиции
 position_type = None   # "long" / "short" / None
 entry_price = None
 best_price = None
 trailing_stop = None
+last_signal_sent = None
 
 # Логирование
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("sber-bot")
 
 # =========================
-# Индикаторы (Wilder ADX)
+# Работа с chat_id
+# =========================
+def save_chat_id(chat_id):
+    with open(CHAT_ID_FILE, "w") as f:
+        f.write(str(chat_id))
+    log.info(f"Chat ID сохранён: {chat_id}")
+
+def load_chat_id():
+    if os.path.exists(CHAT_ID_FILE):
+        with open(CHAT_ID_FILE, "r") as f:
+            return f.read().strip()
+    return None
+
+# =========================
+# Индикаторы
 # =========================
 def ema(series: pd.Series, period: int) -> pd.Series:
     return series.ewm(span=period, adjust=False).mean()
@@ -40,7 +61,7 @@ def ema(series: pd.Series, period: int) -> pd.Series:
 def compute_adx(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14):
     prev_close = close.shift(1)
     up_move = high.diff()
-    down_move = low.shift(1) - low  # положительное значение = движение вниз
+    down_move = low.shift(1) - low
 
     plus_dm = np.where((up_move > down_move) & (up_move > 0), up_move, 0.0)
     minus_dm = np.where((down_move > up_move) & (down_move > 0), down_move, 0.0)
@@ -51,7 +72,6 @@ def compute_adx(high: pd.Series, low: pd.Series, close: pd.Series, period: int =
         (low - prev_close).abs()
     ], axis=1).max(axis=1)
 
-    # Wilder smoothing через EWM с alpha=1/period
     atr = tr.ewm(alpha=1/period, adjust=False).mean()
     plus_di = 100 * (pd.Series(plus_dm, index=high.index).ewm(alpha=1/period, adjust=False).mean() / atr)
     minus_di = 100 * (pd.Series(minus_dm, index=high.index).ewm(alpha=1/period, adjust=False).mean() / atr)
@@ -64,8 +84,6 @@ def compute_adx(high: pd.Series, low: pd.Series, close: pd.Series, period: int =
 # Данные
 # =========================
 def get_candles() -> pd.DataFrame:
-    if not TINKOFF_API_TOKEN:
-        raise RuntimeError("Переменная окружения TINKOFF_API_TOKEN не задана.")
     with Client(TINKOFF_API_TOKEN) as client:
         now = pd.Timestamp.now(tz="Europe/Moscow")
         candles = client.market_data.get_candles(
@@ -99,11 +117,9 @@ def evaluate_signal(df: pd.DataFrame):
     adx_cond = last["ADX"] > 23
     vol_cond = last["volume"] > last["vol_ma20"]
 
-    # Направление BUY
     di_buy = last["+DI"] > last["-DI"]
     ema_buy = last["close"] > last["ema100"]
 
-    # Направление SELL
     di_sell = last["-DI"] > last["+DI"]
     ema_sell = last["close"] < last["ema100"]
 
@@ -129,7 +145,7 @@ def evaluate_signal(df: pd.DataFrame):
     }, df
 
 # =========================
-# Трейлинг (если надо)
+# Трейлинг
 # =========================
 def update_trailing(curr_price: float):
     global trailing_stop, best_price, position_type
@@ -141,7 +157,7 @@ def update_trailing(curr_price: float):
         trailing_stop = best_price * (1 + TRAIL_PCT)
 
 # =========================
-# Формирование текста
+# Сообщение
 # =========================
 def emoji(ok: bool) -> str:
     return "✅" if ok else "❌"
@@ -157,32 +173,20 @@ def build_message(last: pd.Series, conds: dict) -> str:
     vol = last["volume"]
     vol_ma20 = conds["vol_ma20"]
 
-    # Параметры + пороги
     lines = []
     lines.append("📊 Параметры стратегии:")
     lines.append(f"ADX: {adx:.2f} {emoji(conds['adx_cond'])} (порог > 23)")
     lines.append(f"Объём: {int(vol)} {emoji(conds['vol_cond'])} (MA20 = {int(vol_ma20)})")
+    lines.append(f"EMA100: {ema100:.2f} | BUY: {emoji(conds['ema_buy'])} | SELL: {emoji(conds['ema_sell'])}")
+    lines.append(f"+DI / -DI: {plus_di:.2f} / {minus_di:.2f} | BUY: {emoji(conds['di_buy'])} | SELL: {emoji(conds['di_sell'])}")
 
-    # EMA — в зависимости от направления (покажем обе стороны)
-    lines.append(f"EMA100: {ema100:.2f} | BUY: {emoji(conds['ema_buy'])} (цена {price:.2f} > EMA) | SELL: {emoji(conds['ema_sell'])} (цена {price:.2f} < EMA)")
-
-    # DI — тоже в обе стороны
-    lines.append(f"+DI / -DI: {plus_di:.2f} / {minus_di:.2f} | BUY: {emoji(conds['di_buy'])} (+DI > -DI) | SELL: {emoji(conds['di_sell'])} (-DI > +DI)")
-
-    # Итоговый сигнал
-    if conds["signal"] == "BUY":
-        lines.append("\n✅ Сигнал стратегии: BUY")
-    elif conds["signal"] == "SELL":
-        lines.append("\n✅ Сигнал стратегии: SELL")
+    if conds["signal"]:
+        lines.append(f"\n📢 Сигнал стратегии: {conds['signal']}")
     else:
         lines.append("\n❌ Сигналов по стратегии нет")
 
-    # Блок по позиции
     if position_type and entry_price:
-        if position_type == "long":
-            pnl = (price - entry_price) / entry_price * 100
-        else:  # short
-            pnl = (entry_price - price) / entry_price * 100
+        pnl = (price - entry_price) / entry_price * 100 if position_type=="long" else (entry_price - price)/entry_price*100
         ts_text = f"{trailing_stop:.2f}" if trailing_stop else "-"
         lines.append(f"\nТекущая цена: {price:.2f}")
         lines.append(f"Тип позиции: {position_type}")
@@ -203,8 +207,10 @@ def build_message(last: pd.Series, conds: dict) -> str:
 # Telegram Handlers
 # =========================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    save_chat_id(chat_id)
     await context.bot.send_message(
-        chat_id=update.effective_chat.id,
+        chat_id=chat_id,
         text=f"😺 Ревущий котёнок на связи! Буду присылать сигналы по SBER\nВерсия: {BOT_VERSION}"
     )
 
@@ -219,14 +225,33 @@ async def signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(chat_id=update.effective_chat.id, text=f"Ошибка: {e}")
 
 # =========================
+# Авто-проверка каждые 15 минут
+# =========================
+def auto_check(app):
+    global last_signal_sent
+    while True:
+        try:
+            df = get_candles()
+            last, conds, _ = evaluate_signal(df)
+            current_signal = conds["signal"]
+            chat_id = load_chat_id()
+            if current_signal and current_signal != last_signal_sent and chat_id:
+                msg = build_message(last, conds)
+                app.bot.send_message(chat_id=chat_id, text=msg)
+                last_signal_sent = current_signal
+        except Exception as e:
+            log.exception("Ошибка в авто-проверке сигналов")
+        time.sleep(CHECK_INTERVAL)
+
+# =========================
 # Main
 # =========================
 def main():
-    if not TELEGRAM_TOKEN:
-        raise RuntimeError("Переменная окружения TELEGRAM_TOKEN не задана.")
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("signal", signal_cmd))
+
+    Thread(target=auto_check, args=(app,), daemon=True).start()
     app.run_polling()
 
 if __name__ == "__main__":
