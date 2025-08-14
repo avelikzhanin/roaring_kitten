@@ -36,8 +36,7 @@ def save_chat_id(chat_id):
 
 def load_chat_id():
     if os.path.exists(CHAT_ID_FILE):
-        with open(CHAT_ID_FILE, "r") as f:
-            return int(f.read().strip())
+        return int(open(CHAT_ID_FILE).read().strip())
     return None
 
 def send_telegram_message(text):
@@ -53,23 +52,34 @@ def send_telegram_message(text):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     save_chat_id(chat_id)
-    await context.bot.send_message(chat_id=chat_id, text="😺 Бот активирован. Ожидаем сигналы.")
+    await context.bot.send_message(
+        chat_id=chat_id,
+        text="😺 Ревущий котёнок на связи! Буду присылать сигналы по SBER"
+    )
 
 async def signal_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     current_price = get_current_price()
     pnl_text = "-"
+    pnl_emoji = ""
+    
     if position_type and entry_price:
         pnl = (current_price - entry_price) / entry_price * 100
         if position_type == "short":
             pnl = -pnl
         pnl_text = f"{pnl:.2f}%"
-
+        if pnl > 0:
+            pnl_emoji = "📈"
+        elif pnl < 0:
+            pnl_emoji = "📉"
+        else:
+            pnl_emoji = "➡️"
+    
     text = (
         f"Текущая цена: {current_price:.2f}\n"
         f"Тип позиции: {position_type or '-'}\n"
         f"Цена входа: {entry_price if entry_price else '-'}\n"
         f"Трейлинг-стоп: {trailing_stop if trailing_stop else '-'}\n"
-        f"Текущая прибыль: {pnl_text}"
+        f"Текущая прибыль: {pnl_text} {pnl_emoji}"
     )
     await context.bot.send_message(chat_id=update.effective_chat.id, text=text)
 
