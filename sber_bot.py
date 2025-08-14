@@ -61,8 +61,10 @@ async def signal_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     current_price = get_current_price()
     pnl_text = "-"
     pnl_emoji = ""
+    type_emoji = ""
     
-    if position_type and entry_price:
+    if position_type:
+        type_emoji = "🟢" if position_type == "long" else "🔴"
         pnl = (current_price - entry_price) / entry_price * 100
         if position_type == "short":
             pnl = -pnl
@@ -73,10 +75,9 @@ async def signal_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pnl_emoji = "📉"
         else:
             pnl_emoji = "➡️"
-    
     text = (
+        f"{type_emoji} {position_type or '-'}\n"
         f"Текущая цена: {current_price:.2f}\n"
-        f"Тип позиции: {position_type or '-'}\n"
         f"Цена входа: {entry_price if entry_price else '-'}\n"
         f"Трейлинг-стоп: {trailing_stop if trailing_stop else '-'}\n"
         f"Текущая прибыль: {pnl_text} {pnl_emoji}"
@@ -127,7 +128,7 @@ def get_current_price():
     df = get_candles()
     return df["close"].iloc[-1]
 
-# --- Сигнал стратегии (новая логика) ---
+# --- Сигнал стратегии ---
 def check_signal(df):
     df["ema100"] = ema(df["close"], 100)
     df["ADX"], df["+DI"], df["-DI"] = adx(df["high"], df["low"], df["close"])
