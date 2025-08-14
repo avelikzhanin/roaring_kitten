@@ -24,7 +24,7 @@ TF = CandleInterval.CANDLE_INTERVAL_HOUR
 LOOKBACK_HOURS = 200
 CHECK_INTERVAL = 900  # 15 минут
 TRAIL_PCT = 0.015
-ADX_THRESHOLD = 20  # порог для сигналов
+ADX_THRESHOLD = 23  # порог для сигналов
 
 CHAT_ID_FILE = "chat_id.txt"
 
