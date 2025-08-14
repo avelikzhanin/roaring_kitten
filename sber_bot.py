@@ -41,7 +41,7 @@ def load_chat_id():
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     save_chat_id(chat_id)
-    await context.bot.send_message(chat_id=chat_id, text="✅ Chat ID сохранён! Теперь буду присылать сигналы.")
+    await context.bot.send_message(chat_id=chat_id, text="🐱 Ревущий котёнок на связи! Теперь буду присылать сигналы на покупку и продажу акций SBER 🚀")
 
 # --- EMA ---
 def ema(series, period):
