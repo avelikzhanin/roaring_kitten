@@ -15,7 +15,7 @@ import requests
 # =========================
 # Конфиг
 # =========================
-BOT_VERSION = "v0.19 — TV v4 ADX"
+BOT_VERSION = "v0.20 — проверенный ADX"
 TINKOFF_API_TOKEN = os.getenv("TINKOFF_API_TOKEN")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 
@@ -54,31 +54,30 @@ def load_chat_id():
     return None
 
 # =========================
-# Индикаторы (TV v4)
+# Индикаторы (старый вариант)
 # =========================
 def ema(series: pd.Series, period: int) -> pd.Series:
     return series.ewm(span=period, adjust=False).mean()
 
-def compute_adx_tv(high, low, close, length=14):
-    prev_close = close.shift(1)
-    up_move = high.diff()
-    down_move = prev_close - low
+def adx(high, low, close, period=14):
+    plus_dm = high.diff()
+    minus_dm = low.diff()
 
-    plus_dm = np.where((up_move > down_move) & (up_move > 0), up_move, 0.0)
-    minus_dm = np.where((down_move > up_move) & (down_move > 0), down_move, 0.0)
+    plus_dm[plus_dm < 0] = 0
+    minus_dm[minus_dm > 0] = 0
 
-    tr = pd.concat([
-        (high - low),
-        (high - prev_close).abs(),
-        (low - prev_close).abs()
-    ], axis=1).max(axis=1)
+    tr1 = pd.DataFrame(high - low)
+    tr2 = pd.DataFrame(abs(high - close.shift()))
+    tr3 = pd.DataFrame(abs(low - close.shift()))
+    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
 
-    atr = tr.ewm(span=length, adjust=False).mean()
-    plus_di = 100 * (pd.Series(plus_dm, index=high.index).ewm(span=length, adjust=False).mean() / atr)
-    minus_di = 100 * (pd.Series(minus_dm, index=high.index).ewm(span=length, adjust=False).mean() / atr)
+    atr = tr.rolling(window=period).mean()
 
-    dx = 100 * (abs(plus_di - minus_di) / (plus_di + minus_di))
-    adx = dx.ewm(span=length, adjust=False).mean()
+    plus_di = 100 * (plus_dm.rolling(window=period).mean() / atr)
+    minus_di = abs(100 * (minus_dm.rolling(window=period).mean() / atr))
+
+    dx = (abs(plus_di - minus_di) / (plus_di + minus_di)) * 100
+    adx = dx.rolling(window=period).mean()
 
     return adx, plus_di, minus_di
 
@@ -111,7 +110,7 @@ def get_candles() -> pd.DataFrame:
 def evaluate_signal(df: pd.DataFrame):
     df = df.copy()
     df["ema100"] = ema(df["close"], 100)
-    df["ADX"], df["+DI"], df["-DI"] = compute_adx_tv(df["high"], df["low"], df["close"], length=14)
+    df["ADX"], df["+DI"], df["-DI"] = adx(df["high"], df["low"], df["close"], period=14)
     df["vol_ma20"] = df["volume"].rolling(20).mean()
 
     last = df.iloc[-1]
@@ -203,7 +202,7 @@ def build_message(last: pd.Series, conds: dict) -> str:
         lines.append("Трейлинг-стоп: -")
         lines.append("Текущая прибыль: -")
 
-    lines.append(f"\n🧩 Версия бота: {BOT_VERSION}")
+    lines.append(f"\n😺 Версия бота: {BOT_VERSION}")
     return "\n".join(lines)
 
 # =========================
