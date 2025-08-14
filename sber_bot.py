@@ -122,30 +122,30 @@ def generate_signal_message():
     vol_ma = df["volume"].rolling(20).mean()
     last = df.iloc[-1]
 
-    adx_val = last["ADX"]
-    plus_di = last["+DI"]
-    minus_di = last["-DI"]
-    vol_val = last["volume"]
-    ema_val = last["ema100"]
     last_price = last["close"]
+
+    # Эмодзи по условиям
+    adx_ok = "✅" if last["ADX"] > 23 else "❌"
+    plus_di_ok = "✅" if last["+DI"] > last["-DI"] else "❌"
+    vol_ok = "✅" if last["volume"] > vol_ma.iloc[-1] else "❌"
+    ema_ok = "✅" if last_price > last["ema100"] else "❌"
 
     text = (
         f"📊 Параметры стратегии:\n"
-        f"ADX: {adx_val:.2f} (цель > 23)\n"
-        f"+DI: {plus_di:.2f} (цель > -DI)\n"
-        f"-DI: {minus_di:.2f}\n"
-        f"Объём: {vol_val:.0f} (цель > средний за 20 свечей {vol_ma.iloc[-1]:.0f})\n"
-        f"EMA100: {ema_val:.2f} (цель < текущая цена {last_price:.2f})\n"
+        f"ADX: {last['ADX']:.2f} {adx_ok} (цель > 23)\n"
+        f"+DI: {last['+DI']:.2f} {plus_di_ok} (цель > -DI)\n"
+        f"-DI: {last['-DI']:.2f}\n"
+        f"Объём: {last['volume']:.0f} {vol_ok} (среднее за 20 свечей {vol_ma.iloc[-1]:.0f})\n"
+        f"EMA100: {last['ema100']:.2f} {ema_ok} (цель < текущая цена {last_price:.2f})\n"
     )
 
     signal = check_signal()
-
     if signal:
         text += f"\n✅ Сигнал стратегии: {signal}"
     else:
         text += "\n❌ Сейчас нет сигнала для открытия позиции."
 
-    # Добавляем информацию по позиции
+    # Информация по позиции
     if position_type:
         pnl = (last_price - entry_price)/entry_price*100 if position_type=="long" else (entry_price - last_price)/entry_price*100
         ts_text = f"{trailing_stop:.2f}" if trailing_stop else "-"
@@ -164,6 +164,7 @@ def generate_signal_message():
         )
 
     return text
+
 
 # --- Отправка в Telegram ---
 def send_telegram_message(text):
