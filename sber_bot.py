@@ -2,7 +2,7 @@ import os
 import logging
 import pandas as pd
 import numpy as np
-from datetime import timedelta, datetime
+from datetime import timedelta
 from threading import Thread
 import time
 
@@ -15,7 +15,7 @@ import requests
 # =========================
 # Конфиг
 # =========================
-BOT_VERSION = "v0.16 — auto-check every 15min"
+BOT_VERSION = "v0.17 — auto-check every 15min"
 TINKOFF_API_TOKEN = os.getenv("TINKOFF_API_TOKEN")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 
@@ -225,20 +225,52 @@ async def signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(chat_id=update.effective_chat.id, text=f"Ошибка: {e}")
 
 # =========================
-# Авто-проверка каждые 15 минут
+# Авто-проверка и управление позицией
 # =========================
 def auto_check(app):
-    global last_signal_sent
+    global last_signal_sent, position_type, entry_price, best_price, trailing_stop
     while True:
         try:
             df = get_candles()
             last, conds, _ = evaluate_signal(df)
             current_signal = conds["signal"]
+            price = last["close"]
             chat_id = load_chat_id()
-            if current_signal and current_signal != last_signal_sent and chat_id:
-                msg = build_message(last, conds)
-                app.bot.send_message(chat_id=chat_id, text=msg)
+
+            # --------------------
+            # Обновляем трейлинг-стоп
+            # --------------------
+            if position_type:
+                update_trailing(price)
+                # Проверка выхода
+                exit_pos = False
+                if position_type=="long" and price <= trailing_stop:
+                    exit_pos = True
+                elif position_type=="short" and price >= trailing_stop:
+                    exit_pos = True
+                if exit_pos:
+                    pnl = (price - entry_price)/entry_price*100 if position_type=="long" else (entry_price - price)/entry_price*100
+                    msg = f"❌ Закрытие позиции {position_type.upper()}!\nЦена: {price:.2f}\nПрибыль: {pnl:.2f}%"
+                    if chat_id:
+                        app.bot.send_message(chat_id=chat_id, text=msg)
+                    position_type = None
+                    entry_price = None
+                    best_price = None
+                    trailing_stop = None
+
+            # --------------------
+            # Новый сигнал — открываем позицию
+            # --------------------
+            if current_signal and current_signal != last_signal_sent and not position_type:
+                position_type = "long" if current_signal=="BUY" else "short"
+                entry_price = price
+                best_price = price
+                trailing_stop = price*(1-TRAIL_PCT) if position_type=="long" else price*(1+TRAIL_PCT)
+                if chat_id:
+                    msg = build_message(last, conds)
+                    app.bot.send_message(chat_id=chat_id, text=msg)
                 last_signal_sent = current_signal
+
         except Exception as e:
             log.exception("Ошибка в авто-проверке сигналов")
         time.sleep(CHECK_INTERVAL)
