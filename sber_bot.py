@@ -15,7 +15,7 @@ import requests
 # =========================
 # Конфиг
 # =========================
-BOT_VERSION = "v0.18 — auto-check every 15min"
+BOT_VERSION = "v0.19 — TV v4 ADX"
 TINKOFF_API_TOKEN = os.getenv("TINKOFF_API_TOKEN")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 
@@ -24,6 +24,7 @@ TF = CandleInterval.CANDLE_INTERVAL_HOUR
 LOOKBACK_HOURS = 200
 CHECK_INTERVAL = 900  # 15 минут
 TRAIL_PCT = 0.015
+ADX_THRESHOLD = 20  # порог для сигналов
 
 CHAT_ID_FILE = "chat_id.txt"
 
@@ -53,15 +54,15 @@ def load_chat_id():
     return None
 
 # =========================
-# Индикаторы
+# Индикаторы (TV v4)
 # =========================
 def ema(series: pd.Series, period: int) -> pd.Series:
     return series.ewm(span=period, adjust=False).mean()
 
-def compute_adx(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14):
+def compute_adx_tv(high, low, close, length=14):
     prev_close = close.shift(1)
     up_move = high.diff()
-    down_move = low.shift(1) - low
+    down_move = prev_close - low
 
     plus_dm = np.where((up_move > down_move) & (up_move > 0), up_move, 0.0)
     minus_dm = np.where((down_move > up_move) & (down_move > 0), down_move, 0.0)
@@ -72,12 +73,13 @@ def compute_adx(high: pd.Series, low: pd.Series, close: pd.Series, period: int =
         (low - prev_close).abs()
     ], axis=1).max(axis=1)
 
-    atr = tr.ewm(alpha=1/period, adjust=False).mean()
-    plus_di = 100 * (pd.Series(plus_dm, index=high.index).ewm(alpha=1/period, adjust=False).mean() / atr)
-    minus_di = 100 * (pd.Series(minus_dm, index=high.index).ewm(alpha=1/period, adjust=False).mean() / atr)
+    atr = tr.ewm(span=length, adjust=False).mean()
+    plus_di = 100 * (pd.Series(plus_dm, index=high.index).ewm(span=length, adjust=False).mean() / atr)
+    minus_di = 100 * (pd.Series(minus_dm, index=high.index).ewm(span=length, adjust=False).mean() / atr)
 
-    dx = 100 * (plus_di.subtract(minus_di).abs() / (plus_di + minus_di))
-    adx = dx.ewm(alpha=1/period, adjust=False).mean()
+    dx = 100 * (abs(plus_di - minus_di) / (plus_di + minus_di))
+    adx = dx.ewm(span=length, adjust=False).mean()
+
     return adx, plus_di, minus_di
 
 # =========================
@@ -109,12 +111,12 @@ def get_candles() -> pd.DataFrame:
 def evaluate_signal(df: pd.DataFrame):
     df = df.copy()
     df["ema100"] = ema(df["close"], 100)
-    df["ADX"], df["+DI"], df["-DI"] = compute_adx(df["high"], df["low"], df["close"], period=14)
+    df["ADX"], df["+DI"], df["-DI"] = compute_adx_tv(df["high"], df["low"], df["close"], length=14)
     df["vol_ma20"] = df["volume"].rolling(20).mean()
 
     last = df.iloc[-1]
 
-    adx_cond = last["ADX"] > 23
+    adx_cond = last["ADX"] > ADX_THRESHOLD
     vol_cond = last["volume"] > last["vol_ma20"]
 
     di_buy = last["+DI"] > last["-DI"]
@@ -176,7 +178,7 @@ def build_message(last: pd.Series, conds: dict) -> str:
     lines = []
     lines.append("📊 Параметры стратегии:")
 
-    lines.append(f"ADX: {adx:.2f} | BUY: {emoji(conds['adx_cond'])} | SELL: {emoji(conds['adx_cond'])} (порог > 23)")
+    lines.append(f"ADX: {adx:.2f} | BUY: {emoji(conds['adx_cond'])} | SELL: {emoji(conds['adx_cond'])} (порог > {ADX_THRESHOLD})")
     lines.append(f"Объём: {int(vol)} | BUY: {emoji(conds['vol_cond'])} | SELL: {emoji(conds['vol_cond'])} (MA20={int(vol_ma20)})")
     lines.append(f"EMA100: {ema100:.2f} | BUY: {emoji(conds['ema_buy'])} | SELL: {emoji(conds['ema_sell'])}")
     lines.append(f"+DI / -DI: {plus_di:.2f} / {minus_di:.2f} | BUY: {emoji(conds['di_buy'])} | SELL: {emoji(conds['di_sell'])}")
