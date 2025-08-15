@@ -299,25 +299,31 @@ async def auto_check(app):
 # =========================
 # Main
 # =========================
-async def main():
+def main():
+    from telegram.ext import ApplicationBuilder, CommandHandler
+    import asyncio
+    from threading import Thread
+
+    # Создаём приложение
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+
+    # Регистрируем команды
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("signal", signal_cmd))
 
-    # Запуск авто-проверки
-    asyncio.create_task(auto_check(app))
+    # Запускаем авто-проверку сигналов в отдельном потоке
+    Thread(target=auto_check, args=(app,), daemon=True).start()
 
-    # Запуск бота
-    await app.initialize()
-    await app.start()
-    await app.updater.start_polling()
-    await asyncio.Event().wait()  # держим процесс живым
+    # Проверяем, есть ли уже запущенный loop
+    try:
+        loop = asyncio.get_running_loop()
+        # Если loop есть, запускаем polling как корутину
+        loop.create_task(app.run_polling())
+        loop.run_forever()
+    except RuntimeError:
+        # Если loop нет, запускаем polling в новом loop
+        asyncio.run(app.run_polling())
 
-# =========================
-# Запуск
-# =========================
-try:
-    loop = asyncio.get_running_loop()
-    loop.create_task(main())
-except RuntimeError:
-    asyncio.run(main())
+if __name__ == "__main__":
+    main()
+
