@@ -1,10 +1,8 @@
-matplotlib
 tinkoff-investments
 pandas
 ta
 nest_asyncio
 httpx
-pandas_ta
 numpy
 python-telegram-bot
 requests
