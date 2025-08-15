@@ -1,8 +1,4 @@
-tinkoff-investments
-pandas
-ta
-nest_asyncio
-httpx
-numpy
-python-telegram-bot
-requests
+pandas>=1.5.0
+python-telegram-bot[job-queue]>=20.0
+tinkoff-investments>=0.2.0
+numpy>=1.21.0
