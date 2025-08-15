@@ -13,7 +13,7 @@ from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 # =========================
 # Конфиг
 # =========================
-BOT_VERSION = "v0.25 — полностью асинхронный"
+BOT_VERSION = "v0.25 — Railway-ready + автосигналы"
 TINKOFF_API_TOKEN = os.getenv("TINKOFF_API_TOKEN")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 
@@ -302,14 +302,22 @@ async def auto_check(app):
 async def main():
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
+    # Регистрируем команды
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("signal", signal_cmd))
 
-    # Запускаем авто-проверку сигналов как асинхронную задачу
+    # Запускаем авто-проверку сигналов как отдельную корутину
     asyncio.create_task(auto_check(app))
 
     # Запуск polling
     await app.run_polling()
 
-if __name__ == "__main__":
+# Railway-ready запуск
+try:
+    loop = asyncio.get_running_loop()
+    if loop.is_running():
+        asyncio.create_task(main())
+    else:
+        asyncio.run(main())
+except RuntimeError:
     asyncio.run(main())
