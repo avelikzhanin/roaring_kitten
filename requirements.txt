@@ -1,5 +1,5 @@
 python-telegram-bot==20.6
-tinkoff-invest
+tinkoff-investments==2.16.2
 pandas==2.1.1
 ta==0.10.2
 numpy==1.26.1
