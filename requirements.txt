@@ -1,6 +1,7 @@
 matplotlib
 tinkoff-investments
 pandas
+pandas_ta
 numpy
 python-telegram-bot==20.3
 requests
