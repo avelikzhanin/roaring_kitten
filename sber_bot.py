@@ -120,7 +120,7 @@ def main_loop():
         signal = check_signal()
         if signal != "⚪ Сигнал отсутствует":
             send_telegram_message(signal)
-        time.sleep(300)  # каждые 5 минут
+        time.sleep(30)  # каждые 5 минут
 
 # --- Запуск ---
 if __name__ == "__main__":
