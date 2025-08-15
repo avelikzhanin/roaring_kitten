@@ -12,8 +12,8 @@ import json
 import os
 
 # === Конфигурация ===
-TOKEN_TINKOFF = "ТВОЙ_TINKOFF_API_ТОКЕН"
-TOKEN_TELEGRAM = "ТВОЙ_TELEGRAM_BOT_TOKEN"
+TOKEN_TINKOFF = os.getenv('TOKEN_TINKOFF', "ТВОЙ_TINKOFF_API_ТОКЕН")
+TOKEN_TELEGRAM = os.getenv('TOKEN_TELEGRAM', "ТВОЙ_TELEGRAM_BOT_TOKEN")
 FIGI = "BBG004730RP0"  # FIGI для SBER
 CANDLE_INTERVAL = CandleInterval.CANDLE_INTERVAL_15_MIN
 
