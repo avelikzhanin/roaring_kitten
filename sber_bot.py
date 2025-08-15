@@ -1,7 +1,6 @@
 import os
 import logging
 import pandas as pd
-import numpy as np
 from datetime import timedelta
 import asyncio
 
@@ -13,11 +12,11 @@ from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 # =========================
 # Конфиг
 # =========================
-BOT_VERSION = "v0.25 — Railway-ready async bot"
+BOT_VERSION = "v0.25 — Railway-ready, асинхронные сделки + автосигналы"
 TINKOFF_API_TOKEN = os.getenv("TINKOFF_API_TOKEN")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 
-FIGI = "BBG004730N88"             # SBER
+FIGI = "BBG004730N88"  # SBER
 TF = CandleInterval.CANDLE_INTERVAL_HOUR
 LOOKBACK_HOURS = 200
 CHECK_INTERVAL = 60  # секунд
@@ -29,7 +28,7 @@ CHAT_ID_FILE = "chat_id.txt"
 # =========================
 # Глобальное состояние позиции
 # =========================
-position_type = None   # "long" / "short" / None
+position_type = None  # "long" / "short" / None
 entry_price = None
 best_price = None
 trailing_stop = None
@@ -78,9 +77,9 @@ def adx(high, low, close, period=14):
     minus_di = abs(100 * (minus_dm.rolling(window=period).mean() / atr))
 
     dx = (abs(plus_di - minus_di) / (plus_di + minus_di)) * 100
-    adx_val = dx.rolling(window=period).mean()
+    adx_series = dx.rolling(window=period).mean()
 
-    return adx_val, plus_di, minus_di
+    return adx_series, plus_di, minus_di
 
 # =========================
 # Данные
@@ -168,7 +167,7 @@ def build_message(last: pd.Series, conds: dict) -> str:
     global position_type, entry_price, trailing_stop
 
     price = last["close"]
-    adx_val = last["ADX"]
+    adx = last["ADX"]
     plus_di = last["+DI"]
     minus_di = last["-DI"]
     ema100 = last["ema100"]
@@ -177,7 +176,7 @@ def build_message(last: pd.Series, conds: dict) -> str:
 
     lines = []
     lines.append("📊 Параметры стратегии:")
-    lines.append(f"ADX: {adx_val:.2f} | BUY: {emoji(conds['adx_cond'])} | SELL: {emoji(conds['adx_cond'])} (порог > {ADX_THRESHOLD})")
+    lines.append(f"ADX: {adx:.2f} | BUY: {emoji(conds['adx_cond'])} | SELL: {emoji(conds['adx_cond'])} (порог > {ADX_THRESHOLD})")
     lines.append(f"Объём: {int(vol)} | BUY: {emoji(conds['vol_cond'])} | SELL: {emoji(conds['vol_cond'])} (MA20={int(vol_ma20)})")
     lines.append(f"EMA100: {ema100:.2f} | BUY: {emoji(conds['ema_buy'])} | SELL: {emoji(conds['ema_sell'])}")
     lines.append(f"+DI / -DI: {plus_di:.2f} / {minus_di:.2f} | BUY: {emoji(conds['di_buy'])} | SELL: {emoji(conds['di_sell'])}")
@@ -291,7 +290,7 @@ async def auto_check(app):
                     msg = build_message(last, conds)
                     await app.bot.send_message(chat_id=chat_id, text=msg)
 
-        except Exception as e:
+        except Exception:
             log.exception("Ошибка в авто-проверке сигналов")
 
         await asyncio.sleep(CHECK_INTERVAL)
@@ -300,18 +299,20 @@ async def auto_check(app):
 # Main
 # =========================
 async def main():
+    # Создаём приложение
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
+    # Регистрируем команды
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("signal", signal_cmd))
 
-    # Запускаем авто-проверку сигналов параллельно
+    # Запускаем авто-проверку сигналов
     asyncio.create_task(auto_check(app))
 
     # Запуск polling (Railway-ready)
     await app.run_polling()
 
-if __name__ == "__main__":
-    # Railway-ready: просто берём существующий loop
-    loop = asyncio.get_event_loop()
-    loop.create_task(main())
+# =========================
+# Запуск
+# =========================
+asyncio.run(main())
