@@ -272,11 +272,15 @@ async def main():
     await app.updater.start_polling()
     await asyncio.Event().wait()  # держим процесс живым
 
+
+
 # =========================
-# Запуск
+# Запуск бота
 # =========================
-try:
-    loop = asyncio.get_running_loop()
-    loop.create_task(main())
-except RuntimeError:
-    asyncio.run(main())
+if __name__ == "__main__":
+    try:
+        # asyncio.run создаёт новый цикл и запускает main
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        log.info("Бот остановлен вручную")
+
