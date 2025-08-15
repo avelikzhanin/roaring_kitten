@@ -1,23 +1,21 @@
 import os
 import logging
 import pandas as pd
-import numpy as np
-from datetime import timedelta
 import asyncio
 
 from tinkoff.invest import Client
 from tinkoff.invest.schemas import CandleInterval
 from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, Application
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
 # =========================
 # Конфиг
 # =========================
-BOT_VERSION = "v0.26 — Railway-fixed async bot"
+BOT_VERSION = "v0.25 — асинхронные сделки + автосигналы + апдейты"
 TINKOFF_API_TOKEN = os.getenv("TINKOFF_API_TOKEN")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 
-FIGI = "BBG004730N88"              # SBER
+FIGI = "BBG004730N88"  # SBER
 TF = CandleInterval.CANDLE_INTERVAL_HOUR
 LOOKBACK_HOURS = 200
 CHECK_INTERVAL = 60  # секунд
@@ -37,9 +35,7 @@ trailing_stop = None
 # =========================
 # Логирование
 # =========================
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
-)
+logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("sber-bot")
 
 # =========================
@@ -231,7 +227,7 @@ async def signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # =========================
 # Авто-проверка сигналов
 # =========================
-async def auto_check(app: Application):
+async def auto_check(app):
     global position_type, entry_price, best_price, trailing_stop
     while True:
         try:
@@ -271,18 +267,17 @@ async def auto_check(app: Application):
                     best_price = None
                     trailing_stop = None
                 else:
-                    # Регулярный апдейт (можно убрать, чтобы не спамить)
-                    # if chat_id and entry_price:
-                    #     pnl = (price - entry_price)/entry_price*100 if position_type=="long" else (entry_price - price)/entry_price*100
-                    #     ts_text = f"{trailing_stop:.2f}" if trailing_stop else "-"
-                    #     msg = (
-                    #         f"📈 Обновление позиции {position_type.upper()}\n"
-                    #         f"Текущая цена: {price:.2f}\n"
-                    #         f"Трейлинг-стоп: {ts_text}\n"
-                    #         f"Прибыль: {pnl:.2f}%"
-                    #     )
-                    #     await app.bot.send_message(chat_id=chat_id, text=msg)
-                    pass
+                    # Регулярный апдейт
+                    if chat_id and entry_price:
+                        pnl = (price - entry_price)/entry_price*100 if position_type=="long" else (entry_price - price)/entry_price*100
+                        ts_text = f"{trailing_stop:.2f}" if trailing_stop else "-"
+                        msg = (
+                            f"📈 Обновление позиции {position_type.upper()}\n"
+                            f"Текущая цена: {price:.2f}\n"
+                            f"Трейлинг-стоп: {ts_text}\n"
+                            f"Прибыль: {pnl:.2f}%"
+                        )
+                        await app.bot.send_message(chat_id=chat_id, text=msg)
 
             # Новый сигнал — открываем позицию
             if current_signal and not position_type:
@@ -300,28 +295,20 @@ async def auto_check(app: Application):
         await asyncio.sleep(CHECK_INTERVAL)
 
 # =========================
-# Main (ИСПРАВЛЕННАЯ ВЕРСИЯ)
+# Main
 # =========================
-def main() -> None:
-    """Основная функция для запуска бота."""
-    
-    # Мы передаём нашу фоновую задачу auto_check в post_init
-    # Библиотека сама позаботится о её правильном асинхронном запуске
-    app = (
-        ApplicationBuilder()
-        .token(TELEGRAM_TOKEN)
-        .post_init(auto_check)
-        .build()
-    )
+async def main():
+    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
-    # Добавляем обработчики команд
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("signal", signal_cmd))
 
-    # Запускаем бота в режиме polling.
-    # Эта функция будет работать, пока вы не остановите бота (например, Ctrl+C)
-    app.run_polling()
+    # Запускаем авто-проверку как фоновую задачу
+    app.create_task(auto_check(app))
 
+    await app.run_polling()
 
 if __name__ == "__main__":
-    main()
+    # На Railway просто запускаем main через asyncio
+    asyncio.get_event_loop().create_task(main())
+    asyncio.get_event_loop().run_forever()
