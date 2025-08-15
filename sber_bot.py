@@ -5,23 +5,25 @@ import numpy as np
 from datetime import timedelta
 from threading import Thread
 import time
+import asyncio
 
 from tinkoff.invest import Client
 from tinkoff.invest.schemas import CandleInterval
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+import requests
 
 # =========================
 # Конфиг
 # =========================
-BOT_VERSION = "v0.23 — сделки + автосигналы"
+BOT_VERSION = "v0.23 — сделки + автосигналы + апдейты"
 TINKOFF_API_TOKEN = os.getenv("TINKOFF_API_TOKEN")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 
-FIGI = "BBG004730N88"  # SBER
+FIGI = "BBG004730N88"             # SBER
 TF = CandleInterval.CANDLE_INTERVAL_HOUR
 LOOKBACK_HOURS = 200
-CHECK_INTERVAL = 60  # 1 минута для теста
+CHECK_INTERVAL = 60  # для теста — 1 минута
 TRAIL_PCT = 0.015
 ADX_THRESHOLD = 23  # порог для сигналов
 
@@ -52,7 +54,7 @@ def load_chat_id():
     return None
 
 # =========================
-# Индикаторы
+# Индикаторы (старый вариант)
 # =========================
 def ema(series: pd.Series, period: int) -> pd.Series:
     return series.ewm(span=period, adjust=False).mean()
@@ -64,9 +66,9 @@ def adx(high, low, close, period=14):
     plus_dm[plus_dm < 0] = 0
     minus_dm[minus_dm > 0] = 0
 
-    tr1 = pd.DataFrame(high - low)
-    tr2 = pd.DataFrame(abs(high - close.shift()))
-    tr3 = pd.DataFrame(abs(low - close.shift()))
+    tr1 = high - low
+    tr2 = abs(high - close.shift())
+    tr3 = abs(low - close.shift())
     tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
 
     atr = tr.rolling(window=period).mean()
@@ -224,42 +226,60 @@ async def signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(chat_id=update.effective_chat.id, text=f"Ошибка: {e}")
 
 # =========================
-# Авто-проверка и управление позицией
+# Авто-проверка и управление позицией с апдейтами
 # =========================
 def auto_check(app):
     global position_type, entry_price, best_price, trailing_stop
-    chat_id = load_chat_id()
     while True:
         try:
             df = get_candles()
             last, conds, _ = evaluate_signal(df)
             current_signal = conds["signal"]
             price = last["close"]
+            chat_id = load_chat_id()
 
-            # Обновляем трейлинг-стоп и шлём апдейт
+            exit_pos = False
+            reason = None
+
+            # Обновляем трейлинг-стоп
             if position_type:
                 update_trailing(price)
-                # проверка выхода по трейлинг-стоп
-                exit_pos = False
-                if position_type=="long" and price <= trailing_stop:
-                    exit_pos = True
-                elif position_type=="short" and price >= trailing_stop:
-                    exit_pos = True
+                # Проверка закрытия позиции
+                if position_type == "long":
+                    if price <= trailing_stop:
+                        exit_pos = True
+                        reason = "трейлинг-стоп"
+                    elif current_signal != "BUY":
+                        exit_pos = True
+                        reason = "сигнал ушёл"
+                elif position_type == "short":
+                    if price >= trailing_stop:
+                        exit_pos = True
+                        reason = "трейлинг-стоп"
+                    elif current_signal != "SELL":
+                        exit_pos = True
+                        reason = "сигнал ушёл"
 
-                if exit_pos:
+                if exit_pos and chat_id:
                     pnl = (price - entry_price)/entry_price*100 if position_type=="long" else (entry_price - price)/entry_price*100
-                    msg = f"❌ Закрытие позиции {position_type.upper()}!\nЦена: {price:.2f}\nПрибыль: {pnl:.2f}%"
-                    if chat_id:
-                        app.bot.send_message(chat_id=chat_id, text=msg)
+                    msg = f"❌ Закрытие позиции {position_type.upper()}! ({reason})\nЦена: {price:.2f}\nПрибыль: {pnl:.2f}%"
+                    asyncio.run_coroutine_threadsafe(app.bot.send_message(chat_id=chat_id, text=msg), app.loop)
                     position_type = None
                     entry_price = None
                     best_price = None
                     trailing_stop = None
                 else:
-                    # отправляем регулярный апдейт
-                    msg = build_message(last, conds)
+                    # Отправка регулярного апдейта по открытой позиции
                     if chat_id:
-                        app.bot.send_message(chat_id=chat_id, text=msg)
+                        pnl = (price - entry_price)/entry_price*100 if position_type=="long" else (entry_price - price)/entry_price*100
+                        ts_text = f"{trailing_stop:.2f}" if trailing_stop else "-"
+                        msg = (
+                            f"📈 Обновление позиции {position_type.upper()}\n"
+                            f"Текущая цена: {price:.2f}\n"
+                            f"Трейлинг-стоп: {ts_text}\n"
+                            f"Прибыль: {pnl:.2f}%"
+                        )
+                        asyncio.run_coroutine_threadsafe(app.bot.send_message(chat_id=chat_id, text=msg), app.loop)
 
             # Новый сигнал — открываем позицию
             if current_signal and not position_type:
@@ -269,7 +289,7 @@ def auto_check(app):
                 trailing_stop = price*(1-TRAIL_PCT) if position_type=="long" else price*(1+TRAIL_PCT)
                 if chat_id:
                     msg = build_message(last, conds)
-                    app.bot.send_message(chat_id=chat_id, text=msg)
+                    asyncio.run_coroutine_threadsafe(app.bot.send_message(chat_id=chat_id, text=msg), app.loop)
 
         except Exception as e:
             log.exception("Ошибка в авто-проверке сигналов")
