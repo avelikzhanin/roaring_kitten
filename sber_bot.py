@@ -5,7 +5,7 @@ from tinkoff.invest import Client, CandleInterval
 from tinkoff.invest.utils import now
 from tinkoff.invest.schemas import HistoricCandle
 from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram.ext import Application, CommandHandler, ContextTypes, JobQueue
 import numpy as np
 import datetime
 import json
@@ -518,7 +518,13 @@ def main():
         return
     
     try:
+        # Создаем приложение с JobQueue
         app = Application.builder().token(TOKEN_TELEGRAM).build()
+        
+        # Проверяем, что JobQueue создан
+        if app.job_queue is None:
+            logger.error("❌ JobQueue не инициализован!")
+            return
 
         # Добавляем обработчики команд
         app.add_handler(CommandHandler("start", start))
@@ -531,10 +537,26 @@ def main():
         app.job_queue.run_repeating(send_signal, interval=900, first=10)
 
         logger.info("✅ Бот успешно запущен и работает...")
+        logger.info(f"📊 Интервал проверки: каждые 15 минут")
+        logger.info(f"🎯 Актив: SBER")
+        
+        # Тестовый запуск для проверки данных
+        try:
+            test_result = check_signal()
+            if test_result[1] is not None:
+                logger.info(f"✅ Тестовая проверка прошла успешно. Текущая цена: {test_result[1]:.2f}₽")
+            else:
+                logger.warning("⚠️ Проблемы с получением данных при тестовой проверке")
+        except Exception as e:
+            logger.error(f"❌ Ошибка тестовой проверки: {e}")
+        
         app.run_polling()
         
     except Exception as e:
         logger.error(f"❌ Ошибка запуска бота: {e}")
+        logger.error(f"Тип ошибки: {type(e).__name__}")
+        import traceback
+        logger.error(f"Трассировка: {traceback.format_exc()}")
 
 if __name__ == "__main__":
     main()
