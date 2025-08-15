@@ -6,7 +6,7 @@ from tinkoff.invest.utils import now
 from tinkoff.invest.schemas import HistoricCandle
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
-import pandas_ta as ta
+import numpy as np
 import datetime
 import json
 import os
@@ -147,6 +147,93 @@ def get_candles():
         logger.error(f"Ошибка получения данных: {e}")
         return None
 
+# === Расчет технических индикаторов ===
+def calculate_ema(prices, period):
+    """Расчет экспоненциальной скользящей средней (EMA)"""
+    prices = np.array(prices, dtype=float)
+    alpha = 2 / (period + 1)
+    ema = np.zeros_like(prices)
+    ema[0] = prices[0]
+    
+    for i in range(1, len(prices)):
+        ema[i] = alpha * prices[i] + (1 - alpha) * ema[i-1]
+    
+    return ema
+
+def calculate_true_range(high, low, close):
+    """Расчет True Range для ADX"""
+    high = np.array(high, dtype=float)
+    low = np.array(low, dtype=float)
+    close = np.array(close, dtype=float)
+    
+    prev_close = np.roll(close, 1)
+    prev_close[0] = close[0]
+    
+    tr1 = high - low
+    tr2 = np.abs(high - prev_close)
+    tr3 = np.abs(low - prev_close)
+    
+    return np.maximum(tr1, np.maximum(tr2, tr3))
+
+def calculate_directional_movement(high, low):
+    """Расчет направленного движения (+DM и -DM)"""
+    high = np.array(high, dtype=float)
+    low = np.array(low, dtype=float)
+    
+    up_move = np.diff(high, prepend=high[0])
+    down_move = -np.diff(low, prepend=low[0])
+    
+    up_move[0] = 0
+    down_move[0] = 0
+    
+    plus_dm = np.where((up_move > down_move) & (up_move > 0), up_move, 0)
+    minus_dm = np.where((down_move > up_move) & (down_move > 0), down_move, 0)
+    
+    return plus_dm, minus_dm
+
+def wilder_smoothing(data, period):
+    """Сглаживание Уайлдера для ADX"""
+    data = np.array(data, dtype=float)
+    smoothed = np.zeros_like(data)
+    smoothed[0] = data[0]
+    
+    for i in range(1, min(period, len(data))):
+        smoothed[i] = np.mean(data[:i+1])
+    
+    for i in range(period, len(data)):
+        smoothed[i] = (smoothed[i-1] * (period - 1) + data[i]) / period
+    
+    return smoothed
+
+def calculate_adx_di(high, low, close, period=14):
+    """Расчет ADX, +DI и -DI"""
+    try:
+        tr = calculate_true_range(high, low, close)
+        plus_dm, minus_dm = calculate_directional_movement(high, low)
+        
+        # Сглаживание по методу Уайлдера
+        atr = wilder_smoothing(tr, period)
+        plus_di_smooth = wilder_smoothing(plus_dm, period)
+        minus_di_smooth = wilder_smoothing(minus_dm, period)
+        
+        # Расчет DI
+        plus_di = 100 * np.divide(plus_di_smooth, atr, out=np.zeros_like(atr), where=atr!=0)
+        minus_di = 100 * np.divide(minus_di_smooth, atr, out=np.zeros_like(atr), where=atr!=0)
+        
+        # Расчет DX
+        di_sum = plus_di + minus_di
+        dx = 100 * np.divide(np.abs(plus_di - minus_di), di_sum, 
+                           out=np.zeros_like(di_sum), where=di_sum!=0)
+        
+        # Расчет ADX (сглаженный DX)
+        adx = wilder_smoothing(dx, period)
+        
+        return adx, plus_di, minus_di
+        
+    except Exception as e:
+        logger.error(f"Ошибка расчета ADX: {e}")
+        return np.zeros(len(high)), np.zeros(len(high)), np.zeros(len(high))
+
 def candle_to_float(p):
     """Конвертирует цену из Quotation в float"""
     return p.units + p.nano / 1e9
@@ -157,31 +244,36 @@ def check_signal():
     try:
         df = get_candles()
         
-        if df is None or len(df) < 100:  # Нужно достаточно данных для EMA100
-            logger.warning("Недостаточно данных для анализа")
+        if df is None or len(df) < 120:  # Нужно больше данных для корректного расчета
+            logger.warning(f"Недостаточно данных для анализа. Получено: {len(df) if df is not None else 0}")
             return False, None, None, None, None, None, None
 
-        # Расчет индикаторов с помощью pandas_ta
-        df.ta.adx(length=14, append=True)  # Добавляет ADX_14, DMP_14, DMN_14
-        df.ta.ema(length=100, append=True)  # Добавляет EMA_100
+        # Преобразуем данные в numpy массивы
+        close = df['close'].values
+        high = df['high'].values
+        low = df['low'].values
+        volume = df['volume'].values
+
+        # Расчет индикаторов
+        adx, plus_di, minus_di = calculate_adx_di(high, low, close, period=14)
+        ema100 = calculate_ema(close, period=100)
         
         # Средний объем за 20 периодов
-        df['avg_volume'] = df['volume'].rolling(window=20).mean()
+        avg_volume = pd.Series(volume).rolling(window=20).mean().values
 
         # Получаем последние значения
-        last_row = df.iloc[-1]
-        
-        last_adx = last_row['ADX_14']
-        last_plus_di = last_row['DMP_14']  # DM Plus (аналог +DI)
-        last_minus_di = last_row['DMN_14']  # DM Minus (аналог -DI)
-        last_close = last_row['close']
-        last_volume = last_row['volume']
-        last_ema100 = last_row['EMA_100']
-        last_avg_volume = last_row['avg_volume']
+        last_adx = adx[-1]
+        last_plus_di = plus_di[-1]
+        last_minus_di = minus_di[-1]
+        last_close = close[-1]
+        last_volume = volume[-1]
+        last_ema100 = ema100[-1]
+        last_avg_volume = avg_volume[-1]
 
-        # Проверка на NaN значения
-        if pd.isna([last_adx, last_plus_di, last_minus_di, last_ema100, last_avg_volume]).any():
-            logger.warning("Обнаружены NaN значения в индикаторах")
+        # Проверка на некорректные значения
+        if (np.isnan([last_adx, last_plus_di, last_minus_di, last_ema100, last_avg_volume]).any() or
+            last_adx == 0 or last_ema100 == 0):
+            logger.warning("Обнаружены некорректные значения в индикаторах")
             return False, last_close, last_adx, last_plus_di, last_minus_di, last_volume, last_ema100
 
         # Условия на покупку
@@ -191,6 +283,9 @@ def check_signal():
             last_volume > last_avg_volume and
             last_close > last_ema100
         )
+
+        logger.info(f"Сигнал: ADX={last_adx:.1f}, +DI={last_plus_di:.1f}, -DI={last_minus_di:.1f}, "
+                   f"Price={last_close:.2f}, EMA100={last_ema100:.2f}, Buy={buy_signal}")
 
         return buy_signal, last_close, last_adx, last_plus_di, last_minus_di, last_volume, last_ema100
         
