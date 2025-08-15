@@ -1,10 +1,5 @@
-matplotlib
-tinkoff-investments
-pandas
-ta
-nest_asyncio
-httpx
-pandas_ta
-numpy
-python-telegram-bot==20.3
-requests
+python-telegram-bot==20.6
+tinkoff-invest==2.16.2
+pandas==2.1.1
+ta==0.10.2
+numpy==1.26.1
