@@ -5,7 +5,8 @@ from tinkoff.invest import Client, CandleInterval
 from tinkoff.invest.utils import now
 from tinkoff.invest.schemas import HistoricCandle
 from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes, JobQueue
+from telegram.ext import Application, CommandHandler, ContextTypes
+import asyncio
 import numpy as np
 import datetime
 import json
@@ -293,9 +294,21 @@ def check_signal():
         logger.error(f"Ошибка в check_signal: {e}")
         return False, None, None, None, None, None, None
 
-# === Отправка сигналов ===
-async def send_signal(context: ContextTypes.DEFAULT_TYPE):
-    """Отправляет торговые сигналы пользователям"""
+# === Периодическая проверка сигналов ===
+async def periodic_signal_check(app):
+    """Периодическая проверка и отправка сигналов"""
+    logger.info("🔄 Запущена периодическая проверка сигналов")
+    
+    while True:
+        try:
+            await send_signal_manual(app)
+            await asyncio.sleep(900)  # 15 минут = 900 секунд
+        except Exception as e:
+            logger.error(f"Ошибка в периодической проверке: {e}")
+            await asyncio.sleep(60)  # Подождать минуту при ошибке
+
+async def send_signal_manual(app):
+    """Ручная отправка сигналов (без JobQueue)"""
     try:
         signal_data = check_signal()
         
@@ -342,7 +355,7 @@ async def send_signal(context: ContextTypes.DEFAULT_TYPE):
 
 ⏰ {datetime.datetime.now().strftime('%H:%M:%S %d.%m.%Y')}"""
 
-                    await context.bot.send_message(
+                    await app.bot.send_message(
                         chat_id=chat_id,
                         text=message,
                         parse_mode='Markdown'
@@ -368,7 +381,7 @@ async def send_signal(context: ContextTypes.DEFAULT_TYPE):
 
 ⏰ {datetime.datetime.now().strftime('%H:%M:%S %d.%m.%Y')}"""
 
-                    await context.bot.send_message(
+                    await app.bot.send_message(
                         chat_id=chat_id,
                         text=message,
                         parse_mode='Markdown'
@@ -379,12 +392,12 @@ async def send_signal(context: ContextTypes.DEFAULT_TYPE):
                 logger.error(f"Ошибка отправки сигнала пользователю {chat_id}: {e}")
 
     except Exception as e:
-        logger.error(f"Ошибка в send_signal: {e}")
+        logger.error(f"Ошибка в send_signal_manual: {e}")
         # Отправляем уведомление об ошибке всем пользователям
         subscribed_users = get_subscribed_users()
         for chat_id in subscribed_users:
             try:
-                await context.bot.send_message(
+                await app.bot.send_message(
                     chat_id=chat_id,
                     text=f"❌ Временная ошибка в боте. Проверяем..."
                 )
@@ -518,13 +531,8 @@ def main():
         return
     
     try:
-        # Создаем приложение с JobQueue
+        # Создаем приложение БЕЗ JobQueue
         app = Application.builder().token(TOKEN_TELEGRAM).build()
-        
-        # Проверяем, что JobQueue создан
-        if app.job_queue is None:
-            logger.error("❌ JobQueue не инициализован!")
-            return
 
         # Добавляем обработчики команд
         app.add_handler(CommandHandler("start", start))
@@ -532,9 +540,6 @@ def main():
         app.add_handler(CommandHandler("subscribe", subscribe_command))
         app.add_handler(CommandHandler("unsubscribe", unsubscribe_command))
         app.add_handler(CommandHandler("help", help_command))
-
-        # Запускаем отправку сигналов каждые 15 минут (900 секунд)
-        app.job_queue.run_repeating(send_signal, interval=900, first=10)
 
         logger.info("✅ Бот успешно запущен и работает...")
         logger.info(f"📊 Интервал проверки: каждые 15 минут")
@@ -549,8 +554,30 @@ def main():
                 logger.warning("⚠️ Проблемы с получением данных при тестовой проверке")
         except Exception as e:
             logger.error(f"❌ Ошибка тестовой проверки: {e}")
-        
-        app.run_polling()
+
+        async def run_app():
+            """Запуск приложения с периодической проверкой"""
+            # Запускаем бота
+            await app.initialize()
+            await app.start()
+            
+            # Запускаем периодическую проверку в фоне
+            check_task = asyncio.create_task(periodic_signal_check(app))
+            
+            # Запускаем polling
+            await app.updater.start_polling()
+            
+            # Ждем завершения
+            try:
+                await check_task
+            except asyncio.CancelledError:
+                pass
+            finally:
+                await app.stop()
+                await app.shutdown()
+
+        # Запускаем все
+        asyncio.run(run_app())
         
     except Exception as e:
         logger.error(f"❌ Ошибка запуска бота: {e}")
