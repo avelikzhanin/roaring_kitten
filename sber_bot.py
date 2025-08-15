@@ -1,287 +1,332 @@
-import os
 import logging
+import time
 import pandas as pd
-from datetime import timedelta
-import asyncio
-
-from tinkoff.invest import Client
-from tinkoff.invest.schemas import CandleInterval
+from tinkoff.invest import Client, CandleInterval
+from tinkoff.invest.utils import now
+from tinkoff.invest.schemas import HistoricCandle
 from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+from telegram.ext import Application, CommandHandler, ContextTypes
+import talib
+import datetime
+import json
+import os
 
-# =========================
-# Конфиг
-# =========================
-BOT_VERSION = "v0.25 — сигналы на покупку + выход"
-TINKOFF_API_TOKEN = os.getenv("TINKOFF_API_TOKEN")
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+# === Конфигурация ===
+TOKEN_TINKOFF = "ТВОЙ_TINKOFF_API_ТОКЕН"
+TOKEN_TELEGRAM = "ТВОЙ_TELEGRAM_BOT_TOKEN"
+FIGI = "BBG004730RP0"  # FIGI для SBER
+CANDLE_INTERVAL = CandleInterval.CANDLE_INTERVAL_15_MIN
 
-FIGI = "BBG004730N88"  # SBER
-TF = CandleInterval.CANDLE_INTERVAL_HOUR
-LOOKBACK_HOURS = 200
-CHECK_INTERVAL = 15 * 60  # 15 минут
-TRAIL_PCT = 0.015
-ADX_THRESHOLD = 23
+# Файл для хранения данных пользователей
+USERS_FILE = "users_data.json"
 
-CHAT_ID_FILE = "chat_id.txt"
-
-# =========================
-# Глобальное состояние позиции
-# =========================
-position_type = None   # "long" / None
-entry_price = None
-best_price = None
-trailing_stop = None
-
-# =========================
-# Логирование
-# =========================
 logging.basicConfig(level=logging.INFO)
-log = logging.getLogger("sber-bot")
+logger = logging.getLogger(__name__)
 
-# =========================
-# Работа с chat_id
-# =========================
-def save_chat_id(chat_id):
-    with open(CHAT_ID_FILE, "w") as f:
-        f.write(str(chat_id))
-    log.info(f"Chat ID сохранён: {chat_id}")
+# === Управление пользователями ===
+def load_users_data():
+    """Загружает данные пользователей из файла"""
+    if os.path.exists(USERS_FILE):
+        try:
+            with open(USERS_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception as e:
+            logger.error(f"Ошибка загрузки данных пользователей: {e}")
+            return {}
+    return {}
 
-def load_chat_id():
-    if os.path.exists(CHAT_ID_FILE):
-        with open(CHAT_ID_FILE, "r") as f:
-            return f.read().strip()
-    return None
+def save_users_data(users_data):
+    """Сохраняет данные пользователей в файл"""
+    try:
+        with open(USERS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(users_data, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.error(f"Ошибка сохранения данных пользователей: {e}")
 
-# =========================
-# Индикаторы
-# =========================
-def ema(series: pd.Series, period: int) -> pd.Series:
-    return series.ewm(span=period, adjust=False).mean()
+def register_user(chat_id, username=None):
+    """Регистрирует нового пользователя"""
+    users_data = load_users_data()
+    
+    if str(chat_id) not in users_data:
+        users_data[str(chat_id)] = {
+            "username": username,
+            "registered_at": datetime.datetime.now().isoformat(),
+            "position_open": False,
+            "entry_price": None,
+            "subscribed": True
+        }
+        save_users_data(users_data)
+        logger.info(f"Зарегистрирован новый пользователь: {chat_id} ({username})")
+        return True
+    return False
 
-def adx(high, low, close, period=14):
-    plus_dm = high.diff()
-    minus_dm = low.diff()
+def get_subscribed_users():
+    """Возвращает список подписанных пользователей"""
+    users_data = load_users_data()
+    return [int(chat_id) for chat_id, data in users_data.items() if data.get("subscribed", True)]
 
-    plus_dm[plus_dm < 0] = 0
+def update_user_position(chat_id, position_open, entry_price=None):
+    """Обновляет позицию пользователя"""
+    users_data = load_users_data()
+    chat_id_str = str(chat_id)
+    
+    if chat_id_str in users_data:
+        users_data[chat_id_str]["position_open"] = position_open
+        users_data[chat_id_str]["entry_price"] = entry_price
+        save_users_data(users_data)
 
-    tr1 = high - low
-    tr2 = abs(high - close.shift())
-    tr3 = abs(low - close.shift())
-    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+def get_user_position(chat_id):
+    """Получает позицию пользователя"""
+    users_data = load_users_data()
+    chat_id_str = str(chat_id)
+    
+    if chat_id_str in users_data:
+        user_data = users_data[chat_id_str]
+        return user_data.get("position_open", False), user_data.get("entry_price")
+    return False, None
 
-    atr = tr.rolling(window=period).mean()
+def subscribe_user(chat_id):
+    """Подписывает пользователя на сигналы"""
+    users_data = load_users_data()
+    chat_id_str = str(chat_id)
+    
+    if chat_id_str in users_data:
+        users_data[chat_id_str]["subscribed"] = True
+        save_users_data(users_data)
+        return True
+    return False
 
-    plus_di = 100 * (plus_dm.rolling(window=period).mean() / atr)
+def unsubscribe_user(chat_id):
+    """Отписывает пользователя от сигналов"""
+    users_data = load_users_data()
+    chat_id_str = str(chat_id)
+    
+    if chat_id_str in users_data:
+        users_data[chat_id_str]["subscribed"] = False
+        save_users_data(users_data)
+        return True
+    return False
 
-    dx = (plus_di / plus_di) * 100  # будет корректно для одного DI
-    adx_val = dx.rolling(window=period).mean()
-
-    return adx_val, plus_di, minus_dm  # минус DI пока не нужен
-
-# =========================
-# Данные
-# =========================
-def get_candles() -> pd.DataFrame:
-    with Client(TINKOFF_API_TOKEN) as client:
-        now = pd.Timestamp.now(tz="Europe/Moscow")
+# === Получение исторических данных ===
+def get_candles():
+    with Client(TOKEN_TINKOFF) as client:
+        now_dt = datetime.datetime.utcnow()
+        from_dt = now_dt - datetime.timedelta(days=5)
         candles = client.market_data.get_candles(
             figi=FIGI,
-            from_=now - pd.Timedelta(hours=LOOKBACK_HOURS),
-            to=now,
-            interval=TF
+            from_=from_dt,
+            to=now_dt,
+            interval=CANDLE_INTERVAL
         ).candles
 
-    df = pd.DataFrame([{
-        "time": c.time,
-        "open": c.open.units + c.open.nano / 1e9,
-        "high": c.high.units + c.high.nano / 1e9,
-        "low":  c.low.units  + c.low.nano  / 1e9,
-        "close":c.close.units+ c.close.nano / 1e9,
-        "volume": c.volume
-    } for c in candles])
+    data = []
+    for c in candles:
+        data.append([
+            c.time,
+            candle_to_float(c.open),
+            candle_to_float(c.high),
+            candle_to_float(c.low),
+            candle_to_float(c.close),
+            c.volume
+        ])
+
+    df = pd.DataFrame(data, columns=["time", "open", "high", "low", "close", "volume"])
     return df
 
-# =========================
-# Оценка сигналов
-# =========================
-def evaluate_signal(df: pd.DataFrame):
-    df = df.copy()
-    df["ema100"] = ema(df["close"], 100)
-    df["ADX"], df["+DI"], _ = adx(df["high"], df["low"], df["close"], period=14)
-    df["vol_ma20"] = df["volume"].rolling(20).mean()
+def candle_to_float(p):
+    return p.units + p.nano / 1e9
 
-    last = df.iloc[-1]
+# === Проверка стратегии ===
+def check_signal():
+    df = get_candles()
 
-    adx_cond = last["ADX"] > ADX_THRESHOLD
-    vol_cond = last["volume"] > last["vol_ma20"]
-    di_buy = last["+DI"] > 0
-    ema_buy = last["close"] > last["ema100"]
+    close = df["close"].values
+    high = df["high"].values
+    low = df["low"].values
+    volume = df["volume"].values
 
-    buy_ok = adx_cond and di_buy and vol_cond and ema_buy
+    # Индикаторы
+    adx = talib.ADX(high, low, close, timeperiod=14)
+    plus_di = talib.PLUS_DI(high, low, close, timeperiod=14)
+    minus_di = talib.MINUS_DI(high, low, close, timeperiod=14)
+    ema100 = talib.EMA(close, timeperiod=100)
+    avg_volume = pd.Series(volume).rolling(window=20).mean()
 
-    signal = "BUY" if buy_ok else None
+    last_adx = adx[-1]
+    last_plus_di = plus_di[-1]
+    last_minus_di = minus_di[-1]
+    last_close = close[-1]
+    last_volume = volume[-1]
+    last_ema100 = ema100[-1]
+    last_avg_volume = avg_volume.iloc[-1]
 
-    return last, {
-        "adx_cond": adx_cond,
-        "vol_cond": vol_cond,
-        "di_buy": di_buy,
-        "ema_buy": ema_buy,
-        "signal": signal,
-        "vol_ma20": last["vol_ma20"]
-    }, df
-
-# =========================
-# Трейлинг
-# =========================
-def update_trailing(curr_price: float):
-    global trailing_stop, best_price
-    if position_type == "long":
-        best_price = max(best_price or curr_price, curr_price)
-        trailing_stop = best_price * (1 - TRAIL_PCT)
-
-# =========================
-# Сообщения
-# =========================
-def emoji(ok: bool) -> str:
-    return "✅" if ok else "❌"
-
-def build_message(last: pd.Series, conds: dict) -> str:
-    price = last["close"]
-    adx = last["ADX"]
-    plus_di = last["+DI"]
-    ema100 = last["ema100"]
-    vol = last["volume"]
-    vol_ma20 = conds["vol_ma20"]
-
-    lines = []
-    lines.append("📊 Параметры стратегии:")
-    lines.append(f"ADX: {adx:.2f} | BUY: {emoji(conds['adx_cond'])}")
-    lines.append(f"Объём: {int(vol)} | BUY: {emoji(conds['vol_cond'])} (MA20={int(vol_ma20)})")
-    lines.append(f"EMA100: {ema100:.2f} | BUY: {emoji(conds['ema_buy'])}")
-    lines.append(f"+DI: {plus_di:.2f} | BUY: {emoji(conds['di_buy'])}")
-
-    if conds["signal"]:
-        lines.append(f"\n📢 Сигнал стратегии: {conds['signal']}")
-    else:
-        lines.append("\n❌ Сигналов по стратегии нет")
-
-    if position_type and entry_price:
-        pnl = (price - entry_price) / entry_price * 100
-        ts_text = f"{trailing_stop:.2f}" if trailing_stop else "-"
-        lines.append(f"\nТекущая цена: {price:.2f}")
-        lines.append(f"Цена входа: {entry_price:.2f}")
-        lines.append(f"Трейлинг-стоп: {ts_text}")
-        lines.append(f"Текущая прибыль: {pnl:.2f}%")
-    else:
-        lines.append(f"\nТекущая цена: {price:.2f}")
-        lines.append("Цена входа: -")
-        lines.append("Трейлинг-стоп: -")
-        lines.append("Текущая прибыль: -")
-
-    return "\n".join(lines)
-
-# =========================
-# Telegram Handlers
-# =========================
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-    save_chat_id(chat_id)
-    await context.bot.send_message(
-        chat_id=chat_id,
-        text="😺 Ревущий котёнок на связи! Буду присылать сигналы по SBER"
+    # Условия на покупку
+    buy_signal = (
+        last_adx > 23 and
+        last_plus_di > last_minus_di and
+        last_volume > last_avg_volume and
+        last_close > last_ema100
     )
 
-async def signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Условия на выход (проверяем для каждого пользователя отдельно)
+    return buy_signal, last_close, last_adx, last_plus_di, last_minus_di, last_volume, last_ema100
+
+# === Отправка сигналов ===
+async def send_signal(context: ContextTypes.DEFAULT_TYPE):
     try:
-        df = get_candles()
-        last, conds, _ = evaluate_signal(df)
-        msg = build_message(last, conds)
-        await context.bot.send_message(chat_id=update.effective_chat.id, text=msg)
+        buy_signal, last_close, last_adx, last_plus_di, last_minus_di, last_volume, last_ema100 = check_signal()
+        
+        subscribed_users = get_subscribed_users()
+        
+        if not subscribed_users:
+            logger.info("Нет подписанных пользователей")
+            return
+
+        for chat_id in subscribed_users:
+            try:
+                position_open, entry_price = get_user_position(chat_id)
+                
+                # Проверка условий выхода для каждого пользователя
+                sell_signal = (
+                    position_open and (
+                        last_adx < 20 or
+                        last_plus_di < last_minus_di or
+                        last_close < last_ema100
+                    )
+                )
+
+                # Сигнал на покупку
+                if buy_signal and not position_open:
+                    update_user_position(chat_id, True, last_close)
+                    await context.bot.send_message(
+                        chat_id=chat_id,
+                        text=f"📈 Сигнал на покупку SBER!\nЦена входа: {last_close:.2f}₽"
+                    )
+                    logger.info(f"Отправлен сигнал на покупку пользователю {chat_id}")
+
+                # Сигнал на выход
+                elif sell_signal:
+                    update_user_position(chat_id, False, None)
+                    await context.bot.send_message(
+                        chat_id=chat_id,
+                        text=f"📉 Сигнал на выход из позиции\nЦена выхода: {last_close:.2f}₽\nВход был по: {entry_price:.2f}₽"
+                    )
+                    logger.info(f"Отправлен сигнал на выход пользователю {chat_id}")
+
+            except Exception as e:
+                logger.error(f"Ошибка отправки сигнала пользователю {chat_id}: {e}")
+
     except Exception as e:
-        log.exception("Ошибка в /signal")
-        await context.bot.send_message(chat_id=update.effective_chat.id, text=f"Ошибка: {e}")
+        logger.error(f"Ошибка в send_signal: {e}")
 
-# =========================
-# Авто-проверка сигналов
-# =========================
-async def auto_check(app):
-    global position_type, entry_price, best_price, trailing_stop
-    while True:
-        try:
-            df = get_candles()
-            last, conds, _ = evaluate_signal(df)
-            current_signal = conds["signal"]
-            price = last["close"]
-            chat_id = load_chat_id()
+# === Команды бота ===
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    username = update.effective_user.username
+    
+    is_new_user = register_user(chat_id, username)
+    
+    if is_new_user:
+        await update.message.reply_text(
+            f"😺 Добро пожаловать! Ревущий котёнок на связи!\n\n"
+            f"🎯 Вы успешно зарегистрированы и подписаны на торговые сигналы по SBER\n"
+            f"📊 Стратегия: ADX + DI + EMA100\n"
+            f"⏱ Таймфрейм: 15 минут\n\n"
+            f"Доступные команды:\n"
+            f"/status - текущий статус позиции\n"
+            f"/subscribe - подписаться на сигналы\n"
+            f"/unsubscribe - отписаться от сигналов\n"
+            f"/help - помощь"
+        )
+    else:
+        await update.message.reply_text(
+            f"😺 С возвращением! Вы уже зарегистрированы.\n\n"
+            f"Используйте /help для просмотра доступных команд."
+        )
 
-            exit_pos = False
+async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    position_open, entry_price = get_user_position(chat_id)
+    
+    try:
+        _, last_close, last_adx, last_plus_di, last_minus_di, last_volume, last_ema100 = check_signal()
+        
+        status_text = f"📊 Текущий статус:\n\n"
+        
+        if position_open:
+            profit_loss = ((last_close - entry_price) / entry_price) * 100
+            status_text += f"🟢 Позиция открыта\n"
+            status_text += f"💰 Цена входа: {entry_price:.2f}₽\n"
+            status_text += f"💹 Текущая цена: {last_close:.2f}₽\n"
+            status_text += f"📈 P&L: {profit_loss:+.2f}%\n\n"
+        else:
+            status_text += f"⭕ Позиция закрыта\n"
+            status_text += f"💹 Текущая цена: {last_close:.2f}₽\n\n"
+        
+        status_text += f"📊 Индикаторы:\n"
+        status_text += f"ADX: {last_adx:.1f}\n"
+        status_text += f"+DI: {last_plus_di:.1f}\n"
+        status_text += f"-DI: {last_minus_di:.1f}\n"
+        status_text += f"EMA100: {last_ema100:.2f}₽"
+        
+        await update.message.reply_text(status_text)
+        
+    except Exception as e:
+        await update.message.reply_text(f"❌ Ошибка получения данных: {str(e)}")
 
-            # Обновляем трейлинг
-            if position_type:
-                update_trailing(price)
-                if price <= trailing_stop:
-                    exit_pos = True
-                    reason = "трейлинг-стоп"
-                    pnl = (price - entry_price)/entry_price*100
-                    if chat_id:
-                        msg = f"❌ Закрытие позиции LONG! ({reason})\nЦена: {price:.2f}\nПрибыль: {pnl:.2f}%"
-                        await app.bot.send_message(chat_id=chat_id, text=msg)
-                    position_type = None
-                    entry_price = None
-                    best_price = None
-                    trailing_stop = None
-                else:
-                    # Регулярный апдейт
-                    if chat_id:
-                        pnl = (price - entry_price)/entry_price*100
-                        ts_text = f"{trailing_stop:.2f}" if trailing_stop else "-"
-                        msg = (
-                            f"📈 Обновление позиции LONG\n"
-                            f"Текущая цена: {price:.2f}\n"
-                            f"Цена входа: {entry_price:.2f}\n"
-                            f"Трейлинг-стоп: {ts_text}\n"
-                            f"Текущая прибыль: {pnl:.2f}%"
-                        )
-                        await app.bot.send_message(chat_id=chat_id, text=msg)
+async def subscribe_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    
+    if subscribe_user(chat_id):
+        await update.message.reply_text("✅ Вы подписаны на торговые сигналы!")
+    else:
+        await update.message.reply_text("❌ Сначала используйте команду /start для регистрации")
 
-            # Новый сигнал — открываем позицию
-            if current_signal and not position_type:
-                position_type = "long"
-                entry_price = price
-                best_price = price
-                trailing_stop = price*(1-TRAIL_PCT)
-                if chat_id:
-                    msg = build_message(last, conds)
-                    await app.bot.send_message(chat_id=chat_id, text=msg)
+async def unsubscribe_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    
+    if unsubscribe_user(chat_id):
+        await update.message.reply_text("❌ Вы отписаны от торговых сигналов")
+    else:
+        await update.message.reply_text("❌ Вы не зарегистрированы в системе")
 
-        except Exception:
-            log.exception("Ошибка в авто-проверке сигналов")
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    help_text = """
+🤖 Торговый бот - Помощь
 
-        await asyncio.sleep(CHECK_INTERVAL)
+📋 Доступные команды:
 
-# =========================
-# Main
-# =========================
-async def main():
-    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+/start - Регистрация и подписка на сигналы
+/status - Текущий статус позиции и индикаторы  
+/subscribe - Подписаться на сигналы
+/unsubscribe - Отписаться от сигналов
+/help - Показать это сообщение
+
+📊 О стратегии:
+• Используется ADX, +DI, -DI, EMA100
+• Таймфрейм: 15 минут
+• Актив: SBER
+
+⚠️ Важно: Сигналы носят информационный характер и не являются инвестиционными рекомендациями.
+    """
+    await update.message.reply_text(help_text)
+
+# === Основной запуск ===
+def main():
+    app = Application.builder().token(TOKEN_TELEGRAM).build()
+
+    # Добавляем обработчики команд
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("signal", signal_cmd))
+    app.add_handler(CommandHandler("status", status))
+    app.add_handler(CommandHandler("subscribe", subscribe_command))
+    app.add_handler(CommandHandler("unsubscribe", unsubscribe_command))
+    app.add_handler(CommandHandler("help", help_command))
 
-    # Запуск авто-проверки
-    asyncio.create_task(auto_check(app))
+    # Запускаем отправку сигналов каждые 15 минут
+    app.job_queue.run_repeating(send_signal, interval=900, first=5)
 
-    # Запуск бота
-    await app.initialize()
-    await app.start()
-    await app.updater.start_polling()
-    await asyncio.Event().wait()  # держим процесс живым
+    logger.info("Бот запущен...")
+    app.run_polling()
 
-# =========================
-# Запуск
-# =========================
-try:
-    loop = asyncio.get_running_loop()
-    loop.create_task(main())
-except RuntimeError:
-    asyncio.run(main())
+if __name__ == "__main__":
+    main()
