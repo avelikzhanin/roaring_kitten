@@ -557,24 +557,40 @@ def main():
 
         async def run_app():
             """Запуск приложения с периодической проверкой"""
-            # Запускаем бота
-            await app.initialize()
-            await app.start()
-            
-            # Запускаем периодическую проверку в фоне
-            check_task = asyncio.create_task(periodic_signal_check(app))
-            
-            # Запускаем polling
-            await app.updater.start_polling()
-            
-            # Ждем завершения
             try:
+                # Запускаем бота
+                await app.initialize()
+                await app.start()
+                
+                # Запускаем периодическую проверку в фоне
+                check_task = asyncio.create_task(periodic_signal_check(app))
+                
+                # Запускаем polling
+                await app.updater.start_polling()
+                
+                # Ждем завершения
                 await check_task
-            except asyncio.CancelledError:
-                pass
+                
+            except KeyboardInterrupt:
+                logger.info("Получен сигнал остановки")
+            except Exception as e:
+                logger.error(f"Ошибка в run_app: {e}")
             finally:
-                await app.stop()
-                await app.shutdown()
+                # Останавливаем задачи
+                if 'check_task' in locals():
+                    check_task.cancel()
+                    try:
+                        await check_task
+                    except asyncio.CancelledError:
+                        pass
+                
+                # Корректно останавливаем бота
+                try:
+                    await app.updater.stop()
+                    await app.stop()
+                    await app.shutdown()
+                except:
+                    pass
 
         # Запускаем все
         asyncio.run(run_app())
