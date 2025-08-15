@@ -13,7 +13,7 @@ from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 # =========================
 # Конфиг
 # =========================
-BOT_VERSION = "v0.25 — Railway-ready + автосигналы"
+BOT_VERSION = "v0.25 — Railway-ready async bot"
 TINKOFF_API_TOKEN = os.getenv("TINKOFF_API_TOKEN")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 
@@ -78,9 +78,9 @@ def adx(high, low, close, period=14):
     minus_di = abs(100 * (minus_dm.rolling(window=period).mean() / atr))
 
     dx = (abs(plus_di - minus_di) / (plus_di + minus_di)) * 100
-    adx = dx.rolling(window=period).mean()
+    adx_val = dx.rolling(window=period).mean()
 
-    return adx, plus_di, minus_di
+    return adx_val, plus_di, minus_di
 
 # =========================
 # Данные
@@ -168,7 +168,7 @@ def build_message(last: pd.Series, conds: dict) -> str:
     global position_type, entry_price, trailing_stop
 
     price = last["close"]
-    adx = last["ADX"]
+    adx_val = last["ADX"]
     plus_di = last["+DI"]
     minus_di = last["-DI"]
     ema100 = last["ema100"]
@@ -177,7 +177,7 @@ def build_message(last: pd.Series, conds: dict) -> str:
 
     lines = []
     lines.append("📊 Параметры стратегии:")
-    lines.append(f"ADX: {adx:.2f} | BUY: {emoji(conds['adx_cond'])} | SELL: {emoji(conds['adx_cond'])} (порог > {ADX_THRESHOLD})")
+    lines.append(f"ADX: {adx_val:.2f} | BUY: {emoji(conds['adx_cond'])} | SELL: {emoji(conds['adx_cond'])} (порог > {ADX_THRESHOLD})")
     lines.append(f"Объём: {int(vol)} | BUY: {emoji(conds['vol_cond'])} | SELL: {emoji(conds['vol_cond'])} (MA20={int(vol_ma20)})")
     lines.append(f"EMA100: {ema100:.2f} | BUY: {emoji(conds['ema_buy'])} | SELL: {emoji(conds['ema_sell'])}")
     lines.append(f"+DI / -DI: {plus_di:.2f} / {minus_di:.2f} | BUY: {emoji(conds['di_buy'])} | SELL: {emoji(conds['di_sell'])}")
@@ -302,22 +302,16 @@ async def auto_check(app):
 async def main():
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
-    # Регистрируем команды
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("signal", signal_cmd))
 
-    # Запускаем авто-проверку сигналов как отдельную корутину
+    # Запускаем авто-проверку сигналов параллельно
     asyncio.create_task(auto_check(app))
 
-    # Запуск polling
+    # Запуск polling (Railway-ready)
     await app.run_polling()
 
-# Railway-ready запуск
-try:
-    loop = asyncio.get_running_loop()
-    if loop.is_running():
-        asyncio.create_task(main())
-    else:
-        asyncio.run(main())
-except RuntimeError:
-    asyncio.run(main())
+if __name__ == "__main__":
+    # Railway-ready: просто берём существующий loop
+    loop = asyncio.get_event_loop()
+    loop.create_task(main())
