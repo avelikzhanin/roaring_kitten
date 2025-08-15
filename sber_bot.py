@@ -2,7 +2,6 @@ import os
 import logging
 import pandas as pd
 import numpy as np
-import pandas_ta as ta
 from datetime import timedelta
 from threading import Thread
 import time
@@ -16,16 +15,16 @@ import requests
 # =========================
 # Конфиг
 # =========================
-BOT_VERSION = "v0.21 — ADX исправлен"
+BOT_VERSION = "v0.21 — сделки"
 TINKOFF_API_TOKEN = os.getenv("TINKOFF_API_TOKEN")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 
 FIGI = "BBG004730N88"             # SBER
 TF = CandleInterval.CANDLE_INTERVAL_HOUR
 LOOKBACK_HOURS = 200
-CHECK_INTERVAL = 300  # 5 минут для проверки
+CHECK_INTERVAL = 300  # 5 минут для теста
 TRAIL_PCT = 0.015
-ADX_THRESHOLD = 23  # порог для сигналов
+ADX_THRESHOLD = 23
 
 CHAT_ID_FILE = "chat_id.txt"
 
@@ -34,7 +33,6 @@ position_type = None   # "long" / "short" / None
 entry_price = None
 best_price = None
 trailing_stop = None
-last_signal_sent = None
 
 # Логирование
 logging.basicConfig(level=logging.INFO)
@@ -55,16 +53,32 @@ def load_chat_id():
     return None
 
 # =========================
-# Индикаторы через pandas_ta
+# Индикаторы (старый вариант)
 # =========================
-def add_indicators(df: pd.DataFrame):
-    df["EMA100"] = ta.ema(df["close"], length=100)
-    adx_df = ta.adx(high=df["high"], low=df["low"], close=df["close"], length=14)
-    df["ADX"] = adx_df["ADX_14"]
-    df["+DI"] = adx_df["DMP_14"]
-    df["-DI"] = adx_df["DMN_14"]
-    df["vol_ma20"] = df["volume"].rolling(20).mean()
-    return df
+def ema(series: pd.Series, period: int) -> pd.Series:
+    return series.ewm(span=period, adjust=False).mean()
+
+def adx(high, low, close, period=14):
+    plus_dm = high.diff()
+    minus_dm = low.diff()
+
+    plus_dm[plus_dm < 0] = 0
+    minus_dm[minus_dm > 0] = 0
+
+    tr1 = pd.DataFrame(high - low)
+    tr2 = pd.DataFrame(abs(high - close.shift()))
+    tr3 = pd.DataFrame(abs(low - close.shift()))
+    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+
+    atr = tr.rolling(window=period).mean()
+
+    plus_di = 100 * (plus_dm.rolling(window=period).mean() / atr)
+    minus_di = abs(100 * (minus_dm.rolling(window=period).mean() / atr))
+
+    dx = (abs(plus_di - minus_di) / (plus_di + minus_di)) * 100
+    adx = dx.rolling(window=period).mean()
+
+    return adx, plus_di, minus_di
 
 # =========================
 # Данные
@@ -87,32 +101,39 @@ def get_candles() -> pd.DataFrame:
         "close":c.close.units+ c.close.nano / 1e9,
         "volume": c.volume
     } for c in candles])
-    df = add_indicators(df)
     return df
 
 # =========================
 # Оценка условий и сигнал
 # =========================
 def evaluate_signal(df: pd.DataFrame):
+    df = df.copy()
+    df["ema100"] = ema(df["close"], 100)
+    df["ADX"], df["+DI"], df["-DI"] = adx(df["high"], df["low"], df["close"], period=14)
+    df["vol_ma20"] = df["volume"].rolling(20).mean()
+
     last = df.iloc[-1]
 
     adx_cond = last["ADX"] > ADX_THRESHOLD
     vol_cond = last["volume"] > last["vol_ma20"]
+
     di_buy = last["+DI"] > last["-DI"]
-    ema_buy = last["close"] > last["EMA100"]
+    ema_buy = last["close"] > last["ema100"]
+
     di_sell = last["-DI"] > last["+DI"]
-    ema_sell = last["close"] < last["EMA100"]
+    ema_sell = last["close"] < last["ema100"]
 
     buy_ok = adx_cond and di_buy and vol_cond and ema_buy
     sell_ok = adx_cond and di_sell and vol_cond and ema_sell
 
-    signal = None
     if buy_ok:
         signal = "BUY"
     elif sell_ok:
         signal = "SELL"
+    else:
+        signal = None
 
-    conds = {
+    return last, {
         "adx_cond": adx_cond,
         "vol_cond": vol_cond,
         "di_buy": di_buy,
@@ -121,9 +142,7 @@ def evaluate_signal(df: pd.DataFrame):
         "ema_sell": ema_sell,
         "signal": signal,
         "vol_ma20": last["vol_ma20"]
-    }
-
-    return last, conds
+    }, df
 
 # =========================
 # Трейлинг
@@ -150,7 +169,7 @@ def build_message(last: pd.Series, conds: dict) -> str:
     adx = last["ADX"]
     plus_di = last["+DI"]
     minus_di = last["-DI"]
-    ema100 = last["EMA100"]
+    ema100 = last["ema100"]
     vol = last["volume"]
     vol_ma20 = conds["vol_ma20"]
 
@@ -199,7 +218,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         df = get_candles()
-        last, conds = evaluate_signal(df)
+        last, conds, _ = evaluate_signal(df)
         msg = build_message(last, conds)
         await context.bot.send_message(chat_id=update.effective_chat.id, text=msg)
     except Exception as e:
@@ -207,26 +226,35 @@ async def signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(chat_id=update.effective_chat.id, text=f"Ошибка: {e}")
 
 # =========================
-# Авто-проверка и управление позицией
+# Авто-проверка и управление сделкой
 # =========================
 def auto_check(app):
-    global last_signal_sent, position_type, entry_price, best_price, trailing_stop
+    global position_type, entry_price, best_price, trailing_stop
     while True:
         try:
             df = get_candles()
-            last, conds = evaluate_signal(df)
+            last, conds, _ = evaluate_signal(df)
             current_signal = conds["signal"]
             price = last["close"]
             chat_id = load_chat_id()
 
-            # Обновляем трейлинг-стоп и проверяем закрытие
+            # Если есть открытая позиция — обновляем трейлинг
             if position_type:
                 update_trailing(price)
                 exit_pos = False
+
+                # Закрытие по трейлинг-стопу
                 if position_type=="long" and price <= trailing_stop:
                     exit_pos = True
                 elif position_type=="short" and price >= trailing_stop:
                     exit_pos = True
+
+                # Закрытие при исчезновении сигнала или появлении обратного
+                if current_signal is None or \
+                   (position_type=="long" and current_signal=="SELL") or \
+                   (position_type=="short" and current_signal=="BUY"):
+                    exit_pos = True
+
                 if exit_pos:
                     pnl = (price - entry_price)/entry_price*100 if position_type=="long" else (entry_price - price)/entry_price*100
                     msg = f"❌ Закрытие позиции {position_type.upper()}!\nЦена: {price:.2f}\nПрибыль: {pnl:.2f}%"
@@ -237,8 +265,8 @@ def auto_check(app):
                     best_price = None
                     trailing_stop = None
 
-            # Новый сигнал — открываем позицию
-            if current_signal and current_signal != last_signal_sent and not position_type:
+            # Новый сигнал — открываем позицию, если нет открытой
+            if current_signal and not position_type:
                 position_type = "long" if current_signal=="BUY" else "short"
                 entry_price = price
                 best_price = price
@@ -246,7 +274,6 @@ def auto_check(app):
                 if chat_id:
                     msg = build_message(last, conds)
                     app.bot.send_message(chat_id=chat_id, text=msg)
-                last_signal_sent = current_signal
 
         except Exception as e:
             log.exception("Ошибка в авто-проверке сигналов")
