@@ -1,8 +1,6 @@
 import os
 import logging
 import pandas as pd
-import numpy as np
-from datetime import timedelta
 from threading import Thread
 import time
 
@@ -10,29 +8,29 @@ from tinkoff.invest import Client
 from tinkoff.invest.schemas import CandleInterval
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
-import requests
 
 # =========================
 # Конфиг
 # =========================
-BOT_VERSION = "v0.21 — сделки"
+BOT_VERSION = "v0.22 — сделки + автосигналы"
 TINKOFF_API_TOKEN = os.getenv("TINKOFF_API_TOKEN")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 
 FIGI = "BBG004730N88"             # SBER
 TF = CandleInterval.CANDLE_INTERVAL_HOUR
 LOOKBACK_HOURS = 200
-CHECK_INTERVAL = 60  # 5 минут для теста
+CHECK_INTERVAL = 60  # 1 минута
 TRAIL_PCT = 0.015
 ADX_THRESHOLD = 23
 
 CHAT_ID_FILE = "chat_id.txt"
 
 # Глобальное состояние позиции
-position_type = None   # "long" / "short" / None
+position_type = None
 entry_price = None
 best_price = None
 trailing_stop = None
+last_signal_sent = None
 
 # Логирование
 logging.basicConfig(level=logging.INFO)
@@ -53,7 +51,7 @@ def load_chat_id():
     return None
 
 # =========================
-# Индикаторы (старый вариант)
+# Индикаторы
 # =========================
 def ema(series: pd.Series, period: int) -> pd.Series:
     return series.ewm(span=period, adjust=False).mean()
@@ -61,29 +59,27 @@ def ema(series: pd.Series, period: int) -> pd.Series:
 def adx(high, low, close, period=14):
     plus_dm = high.diff()
     minus_dm = low.diff()
-
     plus_dm[plus_dm < 0] = 0
     minus_dm[minus_dm > 0] = 0
 
-    tr1 = pd.DataFrame(high - low)
-    tr2 = pd.DataFrame(abs(high - close.shift()))
-    tr3 = pd.DataFrame(abs(low - close.shift()))
+    tr1 = high - low
+    tr2 = abs(high - close.shift())
+    tr3 = abs(low - close.shift())
     tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
 
-    atr = tr.rolling(window=period).mean()
+    atr = tr.rolling(period).mean()
 
-    plus_di = 100 * (plus_dm.rolling(window=period).mean() / atr)
-    minus_di = abs(100 * (minus_dm.rolling(window=period).mean() / atr))
+    plus_di = 100 * (plus_dm.rolling(period).mean() / atr)
+    minus_di = 100 * (abs(minus_dm).rolling(period).mean() / atr)
 
     dx = (abs(plus_di - minus_di) / (plus_di + minus_di)) * 100
-    adx = dx.rolling(window=period).mean()
-
+    adx = dx.rolling(period).mean()
     return adx, plus_di, minus_di
 
 # =========================
 # Данные
 # =========================
-def get_candles() -> pd.DataFrame:
+def get_candles():
     with Client(TINKOFF_API_TOKEN) as client:
         now = pd.Timestamp.now(tz="Europe/Moscow")
         candles = client.market_data.get_candles(
@@ -104,9 +100,9 @@ def get_candles() -> pd.DataFrame:
     return df
 
 # =========================
-# Оценка условий и сигнал
+# Сигнал стратегии
 # =========================
-def evaluate_signal(df: pd.DataFrame):
+def evaluate_signal(df):
     df = df.copy()
     df["ema100"] = ema(df["close"], 100)
     df["ADX"], df["+DI"], df["-DI"] = adx(df["high"], df["low"], df["close"], period=14)
@@ -162,9 +158,8 @@ def update_trailing(curr_price: float):
 def emoji(ok: bool) -> str:
     return "✅" if ok else "❌"
 
-def build_message(last: pd.Series, conds: dict) -> str:
+def build_message(last, conds):
     global position_type, entry_price, trailing_stop
-
     price = last["close"]
     adx = last["ADX"]
     plus_di = last["+DI"]
@@ -175,7 +170,6 @@ def build_message(last: pd.Series, conds: dict) -> str:
 
     lines = []
     lines.append("📊 Параметры стратегии:")
-
     lines.append(f"ADX: {adx:.2f} | BUY: {emoji(conds['adx_cond'])} | SELL: {emoji(conds['adx_cond'])} (порог > {ADX_THRESHOLD})")
     lines.append(f"Объём: {int(vol)} | BUY: {emoji(conds['vol_cond'])} | SELL: {emoji(conds['vol_cond'])} (MA20={int(vol_ma20)})")
     lines.append(f"EMA100: {ema100:.2f} | BUY: {emoji(conds['ema_buy'])} | SELL: {emoji(conds['ema_sell'])}")
@@ -187,7 +181,7 @@ def build_message(last: pd.Series, conds: dict) -> str:
         lines.append("\n❌ Сигналов по стратегии нет")
 
     if position_type and entry_price:
-        pnl = (price - entry_price) / entry_price * 100 if position_type=="long" else (entry_price - price)/entry_price*100
+        pnl = (price - entry_price)/entry_price*100 if position_type=="long" else (entry_price - price)/entry_price*100
         ts_text = f"{trailing_stop:.2f}" if trailing_stop else "-"
         lines.append(f"\nТекущая цена: {price:.2f}")
         lines.append(f"Тип позиции: {position_type}")
@@ -210,10 +204,7 @@ def build_message(last: pd.Series, conds: dict) -> str:
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     save_chat_id(chat_id)
-    await context.bot.send_message(
-        chat_id=chat_id,
-        text=f"😺 Ревущий котёнок на связи! Буду присылать сигналы по SBER\nВерсия: {BOT_VERSION}"
-    )
+    await context.bot.send_message(chat_id=chat_id, text=f"😺 Ревущий котёнок на связи! Буду присылать сигналы по SBER\nВерсия: {BOT_VERSION}")
 
 async def signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -226,10 +217,10 @@ async def signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(chat_id=update.effective_chat.id, text=f"Ошибка: {e}")
 
 # =========================
-# Авто-проверка и управление сделкой
+# Авто-проверка
 # =========================
 def auto_check(app):
-    global position_type, entry_price, best_price, trailing_stop
+    global position_type, entry_price, best_price, trailing_stop, last_signal_sent
     while True:
         try:
             df = get_candles()
@@ -238,23 +229,14 @@ def auto_check(app):
             price = last["close"]
             chat_id = load_chat_id()
 
-            # Если есть открытая позиция — обновляем трейлинг
+            # Обновляем трейлинг
             if position_type:
                 update_trailing(price)
                 exit_pos = False
-
-                # Закрытие по трейлинг-стопу
                 if position_type=="long" and price <= trailing_stop:
                     exit_pos = True
                 elif position_type=="short" and price >= trailing_stop:
                     exit_pos = True
-
-                # Закрытие при исчезновении сигнала или появлении обратного
-                if current_signal is None or \
-                   (position_type=="long" and current_signal=="SELL") or \
-                   (position_type=="short" and current_signal=="BUY"):
-                    exit_pos = True
-
                 if exit_pos:
                     pnl = (price - entry_price)/entry_price*100 if position_type=="long" else (entry_price - price)/entry_price*100
                     msg = f"❌ Закрытие позиции {position_type.upper()}!\nЦена: {price:.2f}\nПрибыль: {pnl:.2f}%"
@@ -265,15 +247,18 @@ def auto_check(app):
                     best_price = None
                     trailing_stop = None
 
-            # Новый сигнал — открываем позицию, если нет открытой
-            if current_signal and not position_type:
-                position_type = "long" if current_signal=="BUY" else "short"
-                entry_price = price
-                best_price = price
-                trailing_stop = price*(1-TRAIL_PCT) if position_type=="long" else price*(1+TRAIL_PCT)
+            # Новый сигнал — присылаем уведомление
+            if current_signal and current_signal != last_signal_sent:
                 if chat_id:
                     msg = build_message(last, conds)
                     app.bot.send_message(chat_id=chat_id, text=msg)
+                # Открытие позиции, если её нет
+                if not position_type:
+                    position_type = "long" if current_signal=="BUY" else "short"
+                    entry_price = price
+                    best_price = price
+                    trailing_stop = price*(1-TRAIL_PCT) if position_type=="long" else price*(1+TRAIL_PCT)
+                last_signal_sent = current_signal
 
         except Exception as e:
             log.exception("Ошибка в авто-проверке сигналов")
