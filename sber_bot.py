@@ -182,7 +182,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_chat_id(chat_id)
     await context.bot.send_message(
         chat_id=chat_id,
-        text=f"😺 Бот на связи! Буду присылать сигналы по SBER\nВерсия: {BOT_VERSION}"
+        text=f"😺 Ревущий котёнок на связи! Буду присылать сигналы по SBER "
     )
 
 async def signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
