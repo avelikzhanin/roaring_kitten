@@ -13,7 +13,7 @@ from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 # =========================
 # Конфиг
 # =========================
-BOT_VERSION = "v0.24 — асинхронные сделки + автосигналы + апдейты"
+BOT_VERSION = "v0.25 — полностью асинхронный"
 TINKOFF_API_TOKEN = os.getenv("TINKOFF_API_TOKEN")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 
@@ -299,31 +299,17 @@ async def auto_check(app):
 # =========================
 # Main
 # =========================
-def main():
-    from telegram.ext import ApplicationBuilder, CommandHandler
-    import asyncio
-    from threading import Thread
-
-    # Создаём приложение
+async def main():
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
-    # Регистрируем команды
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("signal", signal_cmd))
 
-    # Запускаем авто-проверку сигналов в отдельном потоке
-    Thread(target=auto_check, args=(app,), daemon=True).start()
+    # Запускаем авто-проверку сигналов как асинхронную задачу
+    asyncio.create_task(auto_check(app))
 
-    # Проверяем, есть ли уже запущенный loop
-    try:
-        loop = asyncio.get_running_loop()
-        # Если loop есть, запускаем polling как корутину
-        loop.create_task(app.run_polling())
-        loop.run_forever()
-    except RuntimeError:
-        # Если loop нет, запускаем polling в новом loop
-        asyncio.run(app.run_polling())
+    # Запуск polling
+    await app.run_polling()
 
 if __name__ == "__main__":
-    main()
-
+    asyncio.run(main())
