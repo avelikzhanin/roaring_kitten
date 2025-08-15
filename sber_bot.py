@@ -1,7 +1,7 @@
 import os
-import asyncio
 import logging
-from datetime import datetime, timezone
+import asyncio
+from datetime import datetime, timezone, timedelta
 import pandas as pd
 from ta.trend import ADXIndicator, EMAIndicator
 from tinkoff.invest import AsyncClient, CandleInterval
@@ -15,16 +15,18 @@ TELEGRAM_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 TINKOFF_TOKEN = os.environ["TINKOFF_TOKEN"]
 
 USERS = set()
-FIGI = "BBG004730N88"
+FIGI = "BBG004730N88"  # Сбербанк
 INTERVAL = CandleInterval.CANDLE_INTERVAL_1_MIN
 ADX_PERIOD = 14
 EMA_PERIOD = 100
 VOLUME_PERIOD = 20
 
+# Команда /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     USERS.add(update.effective_chat.id)
     await update.message.reply_text("Вы подписались на сигналы стратегии!")
 
+# Проверка стратегии
 def check_strategy(candles):
     df = pd.DataFrame([{
         "time": c.time,
@@ -50,6 +52,7 @@ def check_strategy(candles):
         return last["close"]
     return None
 
+# Отправка сигнала всем пользователям
 async def send_signal(app, price):
     for chat_id in USERS:
         try:
@@ -57,14 +60,16 @@ async def send_signal(app, price):
         except Exception as e:
             logger.error(f"Ошибка при отправке сигналу пользователю {chat_id}: {e}")
 
+# Автоматическая проверка стратегии каждые 1 минуту
 async def auto_check(app):
     async with AsyncClient(TINKOFF_TOKEN) as client:
         while True:
             try:
                 now = datetime.now(timezone.utc)
+                from_time = now - timedelta(minutes=30)
                 candles_resp = await client.market_data.get_candles(
                     figi=FIGI,
-                    from_=now.replace(minute=now.minute-30, second=0, microsecond=0),
+                    from_=from_time,
                     to=now,
                     interval=INTERVAL
                 )
@@ -75,13 +80,13 @@ async def auto_check(app):
                 logger.error(f"Ошибка в auto_check: {e}")
             await asyncio.sleep(60)  # проверка каждую минуту
 
-async def main():
+# Создание приложения
+def main():
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
-    # создаём таск после инициализации приложения
+    # Запуск фона auto_check
     app.create_task(auto_check(app))
-    await app.run_polling()  # Telegram сам управляет loop
+    app.run_polling()  # блокирующий вызов, идеально для Railway
 
 if __name__ == "__main__":
-    # На Railway просто запускаем main через asyncio.run()
-    asyncio.run(main())
+    main()
