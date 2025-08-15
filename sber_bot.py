@@ -1,92 +1,134 @@
 import os
 import logging
-import asyncio
-from datetime import datetime, timezone, timedelta
+import time
 import pandas as pd
-from ta.trend import ADXIndicator, EMAIndicator
-from tinkoff.invest import AsyncClient, CandleInterval
+from tinkoff.invest import Client
+from tinkoff.invest.schemas import CandleInterval
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+import requests
 
+# --- Логирование ---
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
-TELEGRAM_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
-TINKOFF_TOKEN = os.environ["TINKOFF_TOKEN"]
+# --- Переменные окружения ---
+TINKOFF_TOKEN = os.getenv("TINKOFF_API_TOKEN")
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 
-USERS = set()
-FIGI = "BBG004730N88"  # Сбербанк
-INTERVAL = CandleInterval.CANDLE_INTERVAL_1_MIN
-ADX_PERIOD = 14
-EMA_PERIOD = 100
-VOLUME_PERIOD = 20
+FIGI = "BBG004730N88"  # SBER
+INTERVAL = CandleInterval.CANDLE_INTERVAL_HOUR
+HISTORY_HOURS = 200
 
-# Команда /start
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    USERS.add(update.effective_chat.id)
-    await update.message.reply_text("Вы подписались на сигналы стратегии!")
+CHAT_ID_FILE = "chat_id.txt"
 
-# Проверка стратегии
-def check_strategy(candles):
-    df = pd.DataFrame([{
-        "time": c.time,
-        "open": c.open,
-        "high": c.high,
-        "low": c.low,
-        "close": c.close,
-        "volume": c.volume
-    } for c in candles])
+# --- Сохранение chat_id ---
+def save_chat_id(chat_id):
+    with open(CHAT_ID_FILE, "w") as f:
+        f.write(str(chat_id))
+    logging.info(f"Chat ID сохранён: {chat_id}")
 
-    if len(df) < max(EMA_PERIOD, ADX_PERIOD, VOLUME_PERIOD):
-        return None
-
-    df["ema"] = EMAIndicator(close=df["close"], window=EMA_PERIOD).ema_indicator()
-    adx = ADXIndicator(high=df["high"], low=df["low"], close=df["close"], window=ADX_PERIOD)
-    df["adx"] = adx.adx()
-    df["+di"] = adx.adx_pos()
-    df["-di"] = adx.adx_neg()
-    df["vol_ma"] = df["volume"].rolling(VOLUME_PERIOD).mean()
-
-    last = df.iloc[-1]
-    if last["adx"] > 23 and last["+di"] > last["-di"] and last["volume"] > last["vol_ma"] and last["close"] > last["ema"]:
-        return last["close"]
+def load_chat_id():
+    if os.path.exists(CHAT_ID_FILE):
+        with open(CHAT_ID_FILE, "r") as f:
+            return f.read().strip()
     return None
 
-# Отправка сигнала всем пользователям
-async def send_signal(app, price):
-    for chat_id in USERS:
-        try:
-            await app.bot.send_message(chat_id, f"Сигнал на покупку!\nЦена покупки: {price:.2f}")
-        except Exception as e:
-            logger.error(f"Ошибка при отправке сигналу пользователю {chat_id}: {e}")
+# --- /start ---
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    save_chat_id(chat_id)
+    await context.bot.send_message(chat_id=chat_id, text="✅ Chat ID сохранён! Теперь буду присылать сигналы.")
 
-# Автоматическая проверка стратегии каждые 1 минуту
-async def auto_check(app):
-    async with AsyncClient(TINKOFF_TOKEN) as client:
-        while True:
-            try:
-                now = datetime.now(timezone.utc)
-                from_time = now - timedelta(minutes=30)
-                candles_resp = await client.market_data.get_candles(
-                    figi=FIGI,
-                    from_=from_time,
-                    to=now,
-                    interval=INTERVAL
-                )
-                price = check_strategy(candles_resp.candles)
-                if price:
-                    await send_signal(app, price)
-            except Exception as e:
-                logger.error(f"Ошибка в auto_check: {e}")
-            await asyncio.sleep(60)  # проверка каждую минуту
+# --- EMA ---
+def ema(series, period):
+    return series.ewm(span=period, adjust=False).mean()
 
-# Создание приложения
-def main():
+# --- ADX ---
+def adx(high, low, close, period=14):
+    plus_dm = high.diff()
+    minus_dm = low.diff()
+    plus_dm[plus_dm < 0] = 0
+    minus_dm[minus_dm > 0] = 0
+
+    tr1 = high - low
+    tr2 = (high - close.shift()).abs()
+    tr3 = (low - close.shift()).abs()
+    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+
+    atr = tr.rolling(window=period).mean()
+
+    plus_di = 100 * (plus_dm.rolling(window=period).mean() / atr)
+    minus_di = abs(100 * (minus_dm.rolling(window=period).mean() / atr))
+
+    dx = (abs(plus_di - minus_di) / (plus_di + minus_di)) * 100
+    adx_val = dx.rolling(window=period).mean()
+    return adx_val, plus_di, minus_di
+
+# --- Получение свечей ---
+def get_candles():
+    with Client(TINKOFF_TOKEN) as client:
+        now = pd.Timestamp.now(tz="Europe/Moscow")
+        candles = client.market_data.get_candles(
+            figi=FIGI,
+            from_=now - pd.Timedelta(hours=HISTORY_HOURS),
+            to=now,
+            interval=INTERVAL
+        ).candles
+
+        df = pd.DataFrame([{
+            "time": c.time,
+            "open": c.open.units + c.open.nano / 1e9,
+            "high": c.high.units + c.high.nano / 1e9,
+            "low": c.low.units + c.low.nano / 1e9,
+            "close": c.close.units + c.close.nano / 1e9,
+            "volume": c.volume
+        } for c in candles])
+    return df
+
+# --- Проверка сигналов ---
+def check_signal():
+    df = get_candles()
+    df["ema100"] = ema(df["close"], 100)
+    df["ADX"], df["+DI"], df["-DI"] = adx(df["high"], df["low"], df["close"])
+    vol_ma = df["volume"].rolling(window=20).mean()
+    last = df.iloc[-1]
+
+    if last["ADX"] > 23 and last["+DI"] > last["-DI"] and last["volume"] > vol_ma.iloc[-1] and last["close"] > df["ema100"].iloc[-1]:
+        return f"📈 BUY сигнал — ADX={last['ADX']:.2f}, цена={last['close']:.2f}"
+    elif last["ADX"] < 20 or last["close"] < df["ema100"].iloc[-1]:
+        return f"📉 SELL сигнал — ADX={last['ADX']:.2f}, цена={last['close']:.2f}"
+    else:
+        return "⚪ Сигнал отсутствует"
+
+# --- Отправка в Telegram ---
+def send_telegram_message(text):
+    chat_id = load_chat_id()
+    if not chat_id:
+        logging.warning("❌ Chat ID не найден — напиши /start боту")
+        return
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    requests.post(url, json={"chat_id": chat_id, "text": text})
+
+# --- Команда /signal ---
+async def signal_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    signal = check_signal()
+    await context.bot.send_message(chat_id=update.effective_chat.id, text=signal)
+
+# --- Основной цикл ---
+def main_loop():
+    while True:
+        signal = check_signal()
+        if signal != "⚪ Сигнал отсутствует":
+            send_telegram_message(signal)
+        time.sleep(300)  # каждые 5 минут
+
+# --- Запуск ---
+if __name__ == "__main__":
+    from threading import Thread
+
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
-    # Запуск фона auto_check
-    app.create_task(auto_check(app))
-    app.run_polling()  # блокирующий вызов, идеально для Railway
+    app.add_handler(CommandHandler("signal", signal_command))  # кнопка /signal
 
-if __name__ == "__main__":
-    main()
+    Thread(target=main_loop, daemon=True).start()
+    app.run_polling()
