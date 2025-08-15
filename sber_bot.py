@@ -15,7 +15,6 @@ TELEGRAM_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 TINKOFF_TOKEN = os.environ["TINKOFF_TOKEN"]
 
 USERS = set()
-
 FIGI = "BBG004730N88"
 INTERVAL = CandleInterval.CANDLE_INTERVAL_1_MIN
 ADX_PERIOD = 14
@@ -74,16 +73,15 @@ async def auto_check(app):
                     await send_signal(app, price)
             except Exception as e:
                 logger.error(f"Ошибка в auto_check: {e}")
-            await asyncio.sleep(60)
+            await asyncio.sleep(60)  # проверка каждую минуту
 
 async def main():
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
+    # создаём таск после инициализации приложения
     app.create_task(auto_check(app))
-    await app.run_polling()
+    await app.run_polling()  # Telegram сам управляет loop
 
-# На Railway лучше не использовать asyncio.run(), оставляем запуск через loop
 if __name__ == "__main__":
-    loop = asyncio.get_event_loop()
-    loop.create_task(main())
-    loop.run_forever()
+    # На Railway просто запускаем main через asyncio.run()
+    asyncio.run(main())
