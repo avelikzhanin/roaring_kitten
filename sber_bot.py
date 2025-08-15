@@ -229,7 +229,9 @@ async def signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Авто-проверка и управление позицией с апдейтами
 # =========================
 def auto_check(app):
-    global position_type, entry_price, best_price, trailing_stop
+    global last_signal_sent, position_type, entry_price, best_price, trailing_stop
+    first_test_sent = False  # флаг, чтобы отправить только один раз тестовое сообщение
+
     while True:
         try:
             df = get_candles()
@@ -238,50 +240,30 @@ def auto_check(app):
             price = last["close"]
             chat_id = load_chat_id()
 
-            exit_pos = False
-            reason = None
+            # === Тестовая проверка отправки сообщения ===
+            if chat_id and not first_test_sent:
+                app.bot.send_message(chat_id=chat_id, text="Тестовое сообщение — автосигнал работает ✅")
+                first_test_sent = True
 
-            # Обновляем трейлинг-стоп
+            # === Обновление трейлинг-стопа и проверка выхода ===
             if position_type:
                 update_trailing(price)
-                # Проверка закрытия позиции
-                if position_type == "long":
-                    if price <= trailing_stop:
-                        exit_pos = True
-                        reason = "трейлинг-стоп"
-                    elif current_signal != "BUY":
-                        exit_pos = True
-                        reason = "сигнал ушёл"
-                elif position_type == "short":
-                    if price >= trailing_stop:
-                        exit_pos = True
-                        reason = "трейлинг-стоп"
-                    elif current_signal != "SELL":
-                        exit_pos = True
-                        reason = "сигнал ушёл"
-
-                if exit_pos and chat_id:
+                exit_pos = False
+                if position_type == "long" and price <= trailing_stop:
+                    exit_pos = True
+                elif position_type == "short" and price >= trailing_stop:
+                    exit_pos = True
+                if exit_pos:
                     pnl = (price - entry_price)/entry_price*100 if position_type=="long" else (entry_price - price)/entry_price*100
-                    msg = f"❌ Закрытие позиции {position_type.upper()}! ({reason})\nЦена: {price:.2f}\nПрибыль: {pnl:.2f}%"
-                    asyncio.run_coroutine_threadsafe(app.bot.send_message(chat_id=chat_id, text=msg), app.loop)
+                    msg = f"❌ Закрытие позиции {position_type.upper()}!\nЦена: {price:.2f}\nПрибыль: {pnl:.2f}%"
+                    if chat_id:
+                        app.bot.send_message(chat_id=chat_id, text=msg)
                     position_type = None
                     entry_price = None
                     best_price = None
                     trailing_stop = None
-                else:
-                    # Отправка регулярного апдейта по открытой позиции
-                    if chat_id:
-                        pnl = (price - entry_price)/entry_price*100 if position_type=="long" else (entry_price - price)/entry_price*100
-                        ts_text = f"{trailing_stop:.2f}" if trailing_stop else "-"
-                        msg = (
-                            f"📈 Обновление позиции {position_type.upper()}\n"
-                            f"Текущая цена: {price:.2f}\n"
-                            f"Трейлинг-стоп: {ts_text}\n"
-                            f"Прибыль: {pnl:.2f}%"
-                        )
-                        asyncio.run_coroutine_threadsafe(app.bot.send_message(chat_id=chat_id, text=msg), app.loop)
 
-            # Новый сигнал — открываем позицию
+            # === Новый сигнал — открытие позиции ===
             if current_signal and not position_type:
                 position_type = "long" if current_signal=="BUY" else "short"
                 entry_price = price
@@ -289,11 +271,14 @@ def auto_check(app):
                 trailing_stop = price*(1-TRAIL_PCT) if position_type=="long" else price*(1+TRAIL_PCT)
                 if chat_id:
                     msg = build_message(last, conds)
-                    asyncio.run_coroutine_threadsafe(app.bot.send_message(chat_id=chat_id, text=msg), app.loop)
+                    app.bot.send_message(chat_id=chat_id, text=msg)
+                last_signal_sent = current_signal
 
         except Exception as e:
             log.exception("Ошибка в авто-проверке сигналов")
+
         time.sleep(CHECK_INTERVAL)
+
 
 # =========================
 # Main
