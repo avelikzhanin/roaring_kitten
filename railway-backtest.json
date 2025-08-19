@@ -4,7 +4,7 @@
     "builder": "NIXPACKS"
   },
   "deploy": {
-    "startCommand": "python backtest.py",
+    "startCommand": "python standalone_backtest.py",
     "restartPolicyType": "NEVER"
   }
 }
