@@ -39,29 +39,69 @@ class TradingBot:
         self.is_running = False
         self.current_signal_active = False  # Трекинг активного сигнала
         self.last_conditions_met = False    # Последнее состояние условий
+        self._signal_task = None  # Для отслеживания задачи проверки сигналов
         
     async def start(self):
         """Запуск бота"""
-        # Создаем приложение Telegram
-        self.app = Application.builder().token(self.telegram_token).build()
+        try:
+            # Создаем приложение Telegram
+            self.app = Application.builder().token(self.telegram_token).build()
+            
+            # Добавляем обработчики команд
+            self.app.add_handler(CommandHandler("start", self.start_command))
+            self.app.add_handler(CommandHandler("stop", self.stop_command))
+            self.app.add_handler(CommandHandler("signal", self.signal_command))
+            self.app.add_handler(CommandHandler("status", self.status_command))
+            
+            logger.info("🚀 Запуск торгового бота SBER...")
+            
+            # Запускаем периодическую проверку в отдельной задаче
+            self.is_running = True
+            self._signal_task = asyncio.create_task(self.check_signals_periodically())
+            
+            # Инициализируем и запускаем Telegram бота
+            await self.app.initialize()
+            await self.app.start()
+            
+            # Запускаем polling
+            await self.app.updater.start_polling(drop_pending_updates=True)
+            
+            # Ждем до остановки
+            try:
+                await asyncio.gather(self._signal_task)
+            except asyncio.CancelledError:
+                logger.info("Задача проверки сигналов отменена")
+                
+        except Exception as e:
+            logger.error(f"Ошибка в start(): {e}")
+            await self.shutdown()
+            raise
+    
+    async def shutdown(self):
+        """Корректная остановка бота"""
+        logger.info("Начинаем остановку бота...")
         
-        # Добавляем обработчики команд
-        self.app.add_handler(CommandHandler("start", self.start_command))
-        self.app.add_handler(CommandHandler("stop", self.stop_command))
-        self.app.add_handler(CommandHandler("signal", self.signal_command))
-        self.app.add_handler(CommandHandler("status", self.status_command))
+        self.is_running = False
         
-        logger.info("🚀 Запуск торгового бота SBER...")
+        # Отменяем задачу проверки сигналов
+        if self._signal_task and not self._signal_task.done():
+            self._signal_task.cancel()
+            try:
+                await self._signal_task
+            except asyncio.CancelledError:
+                pass
         
-        # Запускаем периодическую проверку в отдельной задаче
-        self.is_running = True
-        asyncio.create_task(self.check_signals_periodically())
+        # Останавливаем Telegram приложение
+        if self.app:
+            try:
+                if self.app.updater and self.app.updater.running:
+                    await self.app.updater.stop()
+                await self.app.stop()
+                await self.app.shutdown()
+            except Exception as e:
+                logger.error(f"Ошибка при остановке Telegram приложения: {e}")
         
-        # Запускаем Telegram бота
-        await self.app.run_polling(
-            allowed_updates=Update.ALL_TYPES,
-            drop_pending_updates=True
-        )
+        logger.info("Бот остановлен")
     
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработчик команды /start"""
@@ -387,6 +427,9 @@ class TradingBot:
                 # Ждем 5 минут для тестирования (в продакшене можно изменить на 3600 для 1 часа)
                 await asyncio.sleep(300)  # 5 минут = 300 секунд
                 
+            except asyncio.CancelledError:
+                logger.info("Задача проверки сигналов отменена")
+                break
             except Exception as e:
                 logger.error(f"Ошибка в периодической проверке: {e}")
                 await asyncio.sleep(60)  # Ждем минуту при ошибке
@@ -452,5 +495,4 @@ class TradingBot:
         
         # Не отправляем повторные сигналы покупки в течение 4 часов
         # (достаточно времени, чтобы не спамить)
-        time_diff = signal.timestamp - self.last_signal_time
-        return time_diff > timedelta(hours=4)
+        time_diff = signal.timestamp - self.last_
