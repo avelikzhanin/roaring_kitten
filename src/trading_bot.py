@@ -275,12 +275,23 @@ class TradingBot:
                 logger.warning("Не все индикаторы рассчитаны")
                 return None
             
-            # Логирование текущих значений для отладки
+            # Расширенное логирование для отладки ADX
             logger.info(
-                f"Анализ: цена={current_price:.2f}, EMA20={current_ema20:.2f}, "
-                f"ADX={current_adx:.1f}, +DI={current_plus_di:.1f}, -DI={current_minus_di:.1f}, "
-                f"объем={current_volume}, ср.объем={current_avg_volume:.0f}"
+                f"🔍 ОТЛАДКА ИНДИКАТОРОВ:"
             )
+            logger.info(
+                f"💰 Цена: {current_price:.2f} ₽ | EMA20: {current_ema20:.2f} ₽"
+            )
+            logger.info(
+                f"📊 ADX: {current_adx:.2f} | +DI: {current_plus_di:.2f} | -DI: {current_minus_di:.2f}"
+            )
+            logger.info(
+                f"📈 Объем: {current_volume:,} | Средний: {current_avg_volume:,.0f} | Коэфф: {current_volume/current_avg_volume:.2f}"
+            )
+            
+            # Показываем последние несколько значений ADX для отладки
+            adx_last_5 = adx_data['adx'][-5:]
+            logger.info(f"🔢 Последние 5 значений ADX: {[f'{x:.2f}' if not pd.isna(x) else 'NaN' for x in adx_last_5]}")
             
             # Проверка условий сигнала
             conditions = [
