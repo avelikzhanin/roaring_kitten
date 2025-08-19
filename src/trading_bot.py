@@ -47,11 +47,10 @@ class TradingBot:
             # Создаем приложение Telegram
             self.app = Application.builder().token(self.telegram_token).build()
             
-            # Добавляем обработчики команд
+            # Добавляем обработчики команд (без /status)
             self.app.add_handler(CommandHandler("start", self.start_command))
             self.app.add_handler(CommandHandler("stop", self.stop_command))
             self.app.add_handler(CommandHandler("signal", self.signal_command))
-            self.app.add_handler(CommandHandler("status", self.status_command))
             
             logger.info("🚀 Запуск торгового бота SBER...")
             
@@ -112,7 +111,7 @@ class TradingBot:
             await update.message.reply_text(
                 "🤖 <b>Добро пожаловать в торгового бота SBER!</b>\n\n"
                 "📈 Вы подписаны на торговые сигналы\n"
-                "🔔 Бот будет уведомлять о сигналах покупки\n\n"
+                "🔔 Бот будет уведомлять о сигналах покупки и их отмене\n\n"
                 "<b>Параметры стратегии:</b>\n"
                 "• EMA20 - цена выше средней\n"
                 "• ADX > 23 - сильный тренд\n"
@@ -120,8 +119,7 @@ class TradingBot:
                 "• Объем > среднего × 1.47\n\n"
                 "<b>Команды:</b>\n"
                 "/stop - отписаться от сигналов\n"
-                "/signal - проверить текущий сигнал\n"
-                "/status - статус бота",
+                "/signal - проверить текущий сигнал",
                 parse_mode='HTML'
             )
             logger.info(f"Новый подписчик: {chat_id}")
@@ -230,34 +228,6 @@ class TradingBot:
                 "Попробуйте позже или обратитесь к администратору.",
                 parse_mode='HTML'
             )
-    
-    async def status_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Обработчик команды /status"""
-        try:
-            # Получаем последние данные для статуса
-            candles = await self.tinkoff_provider.get_candles(hours=50)
-            
-            if candles:
-                df = self.tinkoff_provider.candles_to_dataframe(candles)
-                last_price = df.iloc[-1]['close'] if not df.empty else 0
-                last_time = df.iloc[-1]['timestamp'] if not df.empty else None
-                
-                status_msg = (
-                    f"🤖 <b>Статус бота SBER</b>\n\n"
-                    f"📊 <b>Текущая цена:</b> {last_price:.2f} ₽\n"
-                    f"⏰ <b>Последнее обновление:</b> {last_time.strftime('%H:%M %d.%m') if last_time else 'н/д'}\n"
-                    f"👥 <b>Подписчиков:</b> {len(self.subscribers)}\n"
-                    f"🔄 <b>Бот работает:</b> {'✅ Да' if self.is_running else '❌ Нет'}\n"
-                    f"📈 <b>Последний сигнал:</b> {self.last_signal_time.strftime('%H:%M %d.%m') if self.last_signal_time else 'Еще не было'}"
-                )
-            else:
-                status_msg = "❌ Не удалось получить данные для статуса"
-                
-        except Exception as e:
-            logger.error(f"Ошибка получения статуса: {e}")
-            status_msg = "❌ Ошибка получения статуса"
-        
-        await update.message.reply_text(status_msg, parse_mode='HTML')
     
     async def analyze_market(self) -> Optional[TradingSignal]:
         """Анализ рынка и генерация сигнала"""
@@ -401,17 +371,16 @@ class TradingBot:
                 signal = await self.analyze_market()
                 conditions_met = signal is not None
                 
-                # Логика отправки сигналов с отменой
+                # Улучшенная логика отправки сигналов
                 if conditions_met and not self.current_signal_active:
-                    # Новый сигнал покупки
-                    if self.should_send_signal(signal):
-                        await self.send_signal_to_subscribers(signal)
-                        self.last_signal_time = signal.timestamp
-                        self.current_signal_active = True
-                        logger.info(f"✅ Отправлен сигнал ПОКУПКИ по цене {signal.price:.2f}")
+                    # Новый сигнал покупки - отправляем сразу без ограничений по времени
+                    await self.send_signal_to_subscribers(signal)
+                    self.last_signal_time = signal.timestamp
+                    self.current_signal_active = True
+                    logger.info(f"✅ Отправлен сигнал ПОКУПКИ по цене {signal.price:.2f}")
                 
                 elif not conditions_met and self.current_signal_active:
-                    # Условия перестали выполняться - отправляем сигнал отмены
+                    # Условия перестали выполняться - отправляем сигнал отмены немедленно
                     await self.send_cancel_signal()
                     self.current_signal_active = False
                     logger.info("❌ Отправлен сигнал ОТМЕНЫ")
@@ -487,13 +456,3 @@ class TradingBot:
                 self.subscribers.remove(chat_id)
         
         logger.info(f"Сигнал отмены отправлен: {successful_sends} получателей, {len(failed_chats)} ошибок")
-
-    def should_send_signal(self, signal: TradingSignal) -> bool:
-        """Проверка, нужно ли отправлять сигнал покупки"""
-        if self.last_signal_time is None:
-            return True
-        
-        # Не отправляем повторные сигналы покупки в течение 4 часов
-        # (достаточно времени, чтобы не спамить)
-        time_diff = signal.timestamp - self.last_signal_time
-        return time_diff > timedelta(hours=4)
