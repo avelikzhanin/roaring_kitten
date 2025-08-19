@@ -49,6 +49,7 @@ class TradingBot:
         self.app.add_handler(CommandHandler("start", self.start_command))
         self.app.add_handler(CommandHandler("stop", self.stop_command))
         self.app.add_handler(CommandHandler("signal", self.signal_command))
+        self.app.add_handler(CommandHandler("status", self.status_command))
         
         logger.info("🚀 Запуск торгового бота SBER...")
         
@@ -79,7 +80,8 @@ class TradingBot:
                 "• Объем > среднего × 1.47\n\n"
                 "<b>Команды:</b>\n"
                 "/stop - отписаться от сигналов\n"
-                "/signal - проверить текущий сигнал",
+                "/signal - проверить текущий сигнал\n"
+                "/status - статус бота",
                 parse_mode='HTML'
             )
             logger.info(f"Новый подписчик: {chat_id}")
@@ -96,6 +98,98 @@ class TradingBot:
             logger.info(f"Пользователь отписался: {chat_id}")
         else:
             await update.message.reply_text("ℹ️ Вы не были подписаны на сигналы")
+    
+    async def signal_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработчик команды /signal - проверка текущего сигнала"""
+        try:
+            await update.message.reply_text("🔍 Анализирую текущую ситуацию на рынке...")
+            
+            # Выполняем анализ рынка
+            signal = await self.analyze_market()
+            
+            if signal:
+                # Есть активный сигнал
+                message = f"""✅ <b>АКТИВНЫЙ СИГНАЛ ПОКУПКИ SBER</b>
+
+{self.format_signal_message(signal)}
+
+⏰ <b>Время сигнала:</b> {signal.timestamp.strftime('%H:%M %d.%m.%Y')}
+"""
+            else:
+                # Анализируем почему нет сигнала
+                try:
+                    # Получаем данные для детального анализа
+                    candles = await self.tinkoff_provider.get_candles(hours=120)
+                    
+                    if len(candles) < 50:
+                        message = "❌ <b>Недостаточно данных для анализа</b>\n\nПопробуйте позже."
+                    else:
+                        df = self.tinkoff_provider.candles_to_dataframe(candles)
+                        
+                        if df.empty:
+                            message = "❌ <b>Ошибка получения данных</b>"
+                        else:
+                            # Получаем текущие значения индикаторов
+                            closes = df['close'].tolist()
+                            highs = df['high'].tolist()
+                            lows = df['low'].tolist()
+                            volumes = df['volume'].tolist()
+                            
+                            # Расчет индикаторов
+                            ema20 = TechnicalIndicators.calculate_ema(closes, 20)
+                            adx_data = TechnicalIndicators.calculate_adx(highs, lows, closes, 14)
+                            
+                            # Средний объем
+                            df['avg_volume_20'] = df['volume'].rolling(window=20, min_periods=1).mean()
+                            
+                            # Последние значения
+                            current_price = closes[-1]
+                            current_ema20 = ema20[-1]
+                            current_adx = adx_data['adx'][-1]
+                            current_plus_di = adx_data['plus_di'][-1]
+                            current_minus_di = adx_data['minus_di'][-1]
+                            current_volume = volumes[-1]
+                            current_avg_volume = df.iloc[-1]['avg_volume_20']
+                            
+                            # Проверяем условия
+                            price_above_ema = current_price > current_ema20 if not pd.isna(current_ema20) else False
+                            strong_trend = current_adx > 23 if not pd.isna(current_adx) else False
+                            positive_direction = current_plus_di > current_minus_di if not pd.isna(current_plus_di) and not pd.isna(current_minus_di) else False
+                            di_difference = (current_plus_di - current_minus_di) > 5 if not pd.isna(current_plus_di) and not pd.isna(current_minus_di) else False
+                            high_volume = current_volume > current_avg_volume * 1.47
+                            
+                            # Формируем сообщение с текущим состоянием
+                            message = f"""📊 <b>ТЕКУЩЕЕ СОСТОЯНИЕ РЫНКА SBER</b>
+
+💰 <b>Цена:</b> {current_price:.2f} ₽
+📈 <b>EMA20:</b> {current_ema20:.2f} ₽ {'✅' if price_above_ema else '❌'}
+
+📊 <b>Индикаторы:</b>
+• <b>ADX:</b> {current_adx:.1f} {'✅' if strong_trend else '❌'} (нужно >23)
+• <b>+DI:</b> {current_plus_di:.1f}
+• <b>-DI:</b> {current_minus_di:.1f} {'✅' if positive_direction else '❌'}
+• <b>Разница DI:</b> {current_plus_di - current_minus_di:.1f} {'✅' if di_difference else '❌'} (нужно >5)
+
+📈 <b>Объем:</b>
+• <b>Текущий:</b> {current_volume:,}
+• <b>Средний:</b> {current_avg_volume:,.0f}
+• <b>Коэффициент:</b> {current_volume/current_avg_volume:.2f} {'✅' if high_volume else '❌'} (нужно >1.47)
+
+{'🔔 <b>Все условия выполнены - ожидайте сигнал!</b>' if all([price_above_ema, strong_trend, positive_direction, di_difference, high_volume]) else '⏳ <b>Ожидаем улучшения показателей...</b>'}"""
+                
+                except Exception as e:
+                    logger.error(f"Ошибка в детальном анализе: {e}")
+                    message = "❌ <b>Ошибка получения данных для анализа</b>\n\nПопробуйте позже."
+            
+            await update.message.reply_text(message, parse_mode='HTML')
+            
+        except Exception as e:
+            logger.error(f"Ошибка в команде /signal: {e}")
+            await update.message.reply_text(
+                "❌ <b>Ошибка при проверке сигнала</b>\n\n"
+                "Попробуйте позже или обратитесь к администратору.",
+                parse_mode='HTML'
+            )
     
     async def status_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработчик команды /status"""
@@ -249,13 +343,13 @@ class TradingBot:
 📈 <b>EMA20:</b> {signal.ema20:.2f} ₽ (цена выше)
 
 📊 <b>Индикаторы:</b>
-- <b>ADX:</b> {signal.adx:.1f} (сильный тренд)
-- <b>+DI:</b> {signal.plus_di:.1f}
-- <b>-DI:</b> {signal.minus_di:.1f}
+• <b>ADX:</b> {signal.adx:.1f} (сильный тренд)
+• <b>+DI:</b> {signal.plus_di:.1f}
+• <b>-DI:</b> {signal.minus_di:.1f}
 
 📈 <b>Объем (час):</b>
-- <b>Текущий:</b> {signal.volume:,} (↑{signal.volume_ratio:.0%} от среднего)
-- <b>Средний (20ч):</b> {signal.avg_volume:,.0f}"""
+• <b>Текущий:</b> {signal.volume:,} (↑{signal.volume_ratio:.0%} от среднего)
+• <b>Средний (20ч):</b> {signal.avg_volume:,.0f}"""
     
     async def check_signals_periodically(self):
         """Периодическая проверка сигналов"""
@@ -320,10 +414,10 @@ class TradingBot:
 
 ⚠️ <b>Причина отмены:</b>
 Условия покупки больше не выполняются:
-- Цена может быть ниже EMA20
-- ADX снизился < 23
-- Изменилось соотношение +DI/-DI
-- Объемы торгов упали
+• Цена может быть ниже EMA20
+• ADX снизился < 23
+• Изменилось соотношение +DI/-DI
+• Объемы торгов упали
 
 🔍 <b>Продолжаем мониторинг...</b>"""
         
