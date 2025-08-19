@@ -495,4 +495,5 @@ class TradingBot:
         
         # Не отправляем повторные сигналы покупки в течение 4 часов
         # (достаточно времени, чтобы не спамить)
-        time_diff = signal.timestamp - self.last_
+        time_diff = signal.timestamp - self.last_signal_time
+        return time_diff > timedelta(hours=4)
