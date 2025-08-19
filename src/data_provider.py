@@ -23,13 +23,14 @@ class TinkoffDataProvider:
         
         for attempt in range(max_retries):
             try:
-                async with Client(self.token) as client:
+                # Используем синхронный Client вместо async
+                with Client(self.token) as client:
                     to_time = now()
                     from_time = to_time - timedelta(hours=hours)
                     
                     logger.info(f"Запрос данных SBER с {from_time} по {to_time}")
                     
-                    response = await client.market_data.get_candles(
+                    response = client.market_data.get_candles(
                         figi=self.figi,
                         from_=from_time,
                         to=to_time,
