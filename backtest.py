@@ -277,19 +277,18 @@ class SBERBacktester:
             try:
                 for i, trade in enumerate(results.trades, 1):
                     if trade.is_closed():
-                        # ИСПРАВЛЕНО: Правильное форматирование без вложенных f-strings
-                        entry_str = trade.entry_time.strftime("%d.%m %H:%M") if trade.entry_time else "N/A"
+                        # ИСПРАВЛЕНО: Убрано условное форматирование внутри f-string
+                        entry_str = trade.entry_time.strftime("%d.%m %H:%M")
                         exit_str = trade.exit_time.strftime("%d.%m %H:%M") if trade.exit_time else "N/A"
-                        
                         entry_price_str = f"{trade.entry_price:.2f}₽"
-                        exit_price_str = f"{trade.exit_price:.2f}₽" if trade.exit_price else "---₽"
+                        exit_price_str = f"{trade.exit_price:.2f}₽"
                         profit_str = f"{trade.profit_pct:+.2f}%"
                         
                         print(f" {i:2d}. {entry_str} → {exit_str} | "
                               f"{entry_price_str} → {exit_price_str} | "
                               f"{profit_str} | {trade.duration_hours}ч")
                     else:
-                        entry_str = trade.entry_time.strftime("%d.%m %H:%M") if trade.entry_time else "N/A"
+                        entry_str = trade.entry_time.strftime("%d.%m %H:%M")
                         entry_price_str = f"{trade.entry_price:.2f}₽"
                         
                         print(f" {i:2d}. {entry_str} → [открыта] | "
