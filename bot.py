@@ -211,7 +211,7 @@ class StrategyBacktest:
         self.signals: List[BacktestSignal] = []
         self.trades: List[Trade] = []
         
-    async def run_backtest(self, days: int = 60) -> Dict:
+    async def run_backtest_fixed(self, days: int = 60) -> Dict:
         """Запуск бэктеста"""
         logger.info(f"🔄 Запуск бэктестинга за {days} дней...")
         
