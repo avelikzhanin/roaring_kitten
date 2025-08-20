@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Окончательно исправленный бэктестинг SBER Trading Bot
-Исправлена ошибка форматирования f-string
+ПОЛНОСТЬЮ ИСПРАВЛЕННЫЙ бэктестинг SBER Trading Bot
+Все проблемы с форматированием устранены
 """
 
 import asyncio
@@ -247,7 +247,7 @@ class SBERBacktester:
         return results
     
     def print_results(self, results: BacktestResults, days: int):
-        """Красивый вывод результатов с исправленным форматированием"""
+        """ПОЛНОСТЬЮ ИСПРАВЛЕННЫЙ вывод результатов"""
         print("\n" + "="*70)
         print(f"🎯 БЭКТЕСТИНГ SBER ЗА {days} ДНЕЙ")
         print("="*70)
@@ -272,28 +272,29 @@ class SBERBacktester:
         print(f"\n⏰ ВРЕМЯ:")
         print(f" • Средняя длительность: {results.avg_duration_hours:.1f}ч")
         
-        if results.trades and len(results.trades) <= 20:  # Показываем детали только если сделок не много
+        # ИСПРАВЛЕНО: Убрано проблемное форматирование сделок
+        if results.trades and len(results.trades) <= 20:
             print(f"\n📋 СДЕЛКИ:")
             try:
                 for i, trade in enumerate(results.trades, 1):
-                    if trade.is_closed():
-                        # ИСПРАВЛЕНО: Все форматирования вынесены в отдельные переменные
-                        entry_str = trade.entry_time.strftime("%d.%m %H:%M")
-                        if trade.exit_time:
-                            exit_str = trade.exit_time.strftime("%d.%m %H:%M")
-                        else:
-                            exit_str = "N/A"
+                    # Форматируем каждую часть отдельно
+                    entry_date = trade.entry_time.strftime("%d.%m %H:%M")
+                    entry_price_formatted = f"{trade.entry_price:.2f}₽"
+                    
+                    if trade.is_closed() and trade.exit_time:
+                        exit_date = trade.exit_time.strftime("%d.%m %H:%M")
+                        exit_price_formatted = f"{trade.exit_price:.2f}₽"
+                        profit_formatted = f"{trade.profit_pct:+.2f}%"
+                        duration_text = f"{trade.duration_hours}ч"
                         
-                        entry_price_str = f"{trade.entry_price:.2f}₽"
-                        exit_price_str = f"{trade.exit_price:.2f}₽"
-                        profit_str = f"{trade.profit_pct:+.2f}%"
-                        
-                        print(f" {i:2d}. {entry_str} → {exit_str} | {entry_price_str} → {exit_price_str} | {profit_str} | {trade.duration_hours}ч")
+                        # Простая строка без сложных f-string выражений
+                        line = f" {i:2d}. {entry_date} → {exit_date} | {entry_price_formatted} → {exit_price_formatted} | {profit_formatted} | {duration_text}"
+                        print(line)
                     else:
-                        entry_str = trade.entry_time.strftime("%d.%m %H:%M")
-                        entry_price_str = f"{trade.entry_price:.2f}₽"
+                        # Открытая сделка
+                        line = f" {i:2d}. {entry_date} → [открыта] | {entry_price_formatted} → [текущая] | [в процессе]"
+                        print(line)
                         
-                        print(f" {i:2d}. {entry_str} → [открыта] | {entry_price_str} → [текущая] | [в процессе]")
             except Exception as e:
                 logger.error(f"Ошибка вывода деталей сделок: {e}")
                 print(" [Ошибка при выводе деталей сделок]")
