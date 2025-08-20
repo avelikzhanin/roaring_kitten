@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-Исправленный бэктестинг SBER Trading Bot с улучшенной обработкой ошибок
+Окончательно исправленный бэктестинг SBER Trading Bot
+Исправлена ошибка форматирования f-string
 """
 
 import asyncio
@@ -246,7 +247,7 @@ class SBERBacktester:
         return results
     
     def print_results(self, results: BacktestResults, days: int):
-        """Красивый вывод результатов"""
+        """Красивый вывод результатов с исправленным форматированием"""
         print("\n" + "="*70)
         print(f"🎯 БЭКТЕСТИНГ SBER ЗА {days} ДНЕЙ")
         print("="*70)
@@ -276,16 +277,23 @@ class SBERBacktester:
             try:
                 for i, trade in enumerate(results.trades, 1):
                     if trade.is_closed():
+                        # ИСПРАВЛЕНО: Правильное форматирование без вложенных f-strings
                         entry_str = trade.entry_time.strftime("%d.%m %H:%M") if trade.entry_time else "N/A"
                         exit_str = trade.exit_time.strftime("%d.%m %H:%M") if trade.exit_time else "N/A"
                         
+                        entry_price_str = f"{trade.entry_price:.2f}₽"
+                        exit_price_str = f"{trade.exit_price:.2f}₽" if trade.exit_price else "---₽"
+                        profit_str = f"{trade.profit_pct:+.2f}%"
+                        
                         print(f" {i:2d}. {entry_str} → {exit_str} | "
-                              f"{trade.entry_price:.2f}₽ → {trade.exit_price:.2f}₽ | "
-                              f"{trade.profit_pct:+.2f}% | {trade.duration_hours}ч")
+                              f"{entry_price_str} → {exit_price_str} | "
+                              f"{profit_str} | {trade.duration_hours}ч")
                     else:
                         entry_str = trade.entry_time.strftime("%d.%m %H:%M") if trade.entry_time else "N/A"
+                        entry_price_str = f"{trade.entry_price:.2f}₽"
+                        
                         print(f" {i:2d}. {entry_str} → [открыта] | "
-                              f"{trade.entry_price:.2f}₽ → [текущая] | "
+                              f"{entry_price_str} → [текущая] | "
                               f"[в процессе]")
             except Exception as e:
                 logger.error(f"Ошибка вывода деталей сделок: {e}")
@@ -317,11 +325,17 @@ async def main():
         results = await backtester.run_backtest(days=30)
         backtester.print_results(results, 30)
         
+        # Дополнительно - за 7 дней для сравнения
+        logger.info("🔄 Анализ за 7 дней...")
+        results_week = await backtester.run_backtest(days=7)
+        backtester.print_results(results_week, 7)
+        
     except KeyboardInterrupt:
         logger.info("❌ Бэктестинг прерван пользователем")
     except Exception as e:
         logger.error(f"❌ Критическая ошибка: {e}")
-        raise
+        import traceback
+        traceback.print_exc()
 
 if __name__ == "__main__":
     try:
