@@ -28,21 +28,21 @@ class Trade:
     @property
     def duration_hours(self) -> float:
         """Продолжительность сделки в часах"""
-        if self.exit_time:
+        if self.exit_time is not None:
             return (self.exit_time - self.entry_time).total_seconds() / 3600
         return 0
 
     @property
     def profit_pct(self) -> float:
         """Прибыль в процентах"""
-        if self.exit_price:
+        if self.exit_price is not None:
             return (self.exit_price - self.entry_price) / self.entry_price * 100
         return 0
 
     @property
     def profit_rub(self) -> float:
         """Прибыль в рублях на 1 акцию"""
-        if self.exit_price:
+        if self.exit_price is not None:
             return self.exit_price - self.entry_price
         return 0
 
@@ -270,11 +270,24 @@ class BacktestEngine:
         
         for i, trade in enumerate(self.trades[:10], 1):  # Показываем первые 10 сделок
             entry_str = trade.entry_time.strftime('%d.%m %H:%M')
-            exit_str = trade.exit_time.strftime('%d.%m %H:%M') if trade.exit_time else '---'
-            exit_price_str = f"{trade.exit_price:.2f}" if trade.exit_price else "---"
+            
+            # Безопасное форматирование exit_time и exit_price
+            if trade.exit_time:
+                exit_str = trade.exit_time.strftime('%d.%m %H:%M')
+            else:
+                exit_str = '---'
+                
+            if trade.exit_price is not None:
+                exit_price_str = f"{trade.exit_price:.2f}"
+            else:
+                exit_price_str = "---"
+            
+            # Безопасное форматирование процентов и часов
+            profit_str = f"{trade.profit_pct:+6.2f}" if trade.exit_price is not None else "  ---"
+            duration_str = f"{trade.duration_hours:5.1f}" if trade.exit_time is not None else " ---"
             
             print(f"{i:2d}. {entry_str} | {trade.entry_price:.2f} ₽ → {exit_price_str} ₽ | "
-                  f"{trade.profit_pct:+6.2f}% | {trade.duration_hours:5.1f}ч")
+                  f"{profit_str}% | {duration_str}ч")
         
         if len(self.trades) > 10:
             print(f"... и еще {len(self.trades) - 10} сделок")
