@@ -234,7 +234,8 @@ class SimpleBacktest:
         print()
         
         print("📋 СДЕЛКИ:")
-        self.print_trades_safe()
+        # Вызываем исправленный метод вывода сделок
+        self.print_trades_without_errors()
         
         print("\n" + "="*70)
         
@@ -248,30 +249,63 @@ class SimpleBacktest:
             
         print("="*70)
         
-    def print_trades_safe(self):
-        """Безопасный вывод сделок без проблематичного форматирования"""
-        for i, trade in enumerate(self.trades, 1):
-            entry_date = trade.entry_time.strftime('%d.%m %H:%M')
-            entry_price = trade.entry_price
-            
-            if trade.exit_time is not None:
-                exit_date = trade.exit_time.strftime('%d.%m %H:%M')
-            else:
-                exit_date = "---"
+    def print_trades_without_errors(self):
+        """Полностью безопасный вывод сделок"""
+        try:
+            for i, trade in enumerate(self.trades, 1):
+                # Безопасное получение всех значений
+                entry_date = trade.entry_time.strftime('%d.%m %H:%M')
+                entry_price = round(trade.entry_price, 2)
                 
-            if trade.exit_price is not None:
-                exit_price = trade.exit_price
-                exit_price_str = f"{exit_price:.2f}"
-                profit = trade.get_profit_pct()
-                profit_str = f"{profit:+.2f}%"
-            else:
-                exit_price_str = "---"
-                profit_str = "---"
+                # Обработка выхода из позиции
+                if trade.exit_time is not None:
+                    exit_date = trade.exit_time.strftime('%d.%m %H:%M')
+                else:
+                    exit_date = "---"
+                    
+                # Обработка цены выхода
+                if trade.exit_price is not None:
+                    exit_price = round(trade.exit_price, 2)
+                    exit_price_text = str(exit_price)
+                    # Расчет прибыли
+                    profit_pct = round(trade.get_profit_pct(), 2)
+                    if profit_pct >= 0:
+                        profit_text = f"+{profit_pct}%"
+                    else:
+                        profit_text = f"{profit_pct}%"
+                else:
+                    exit_price_text = "---"
+                    profit_text = "---"
+                    
+                # Обработка времени
+                duration = trade.get_duration_hours()
+                if duration > 0:
+                    duration_text = f"{round(duration, 1)}ч"
+                else:
+                    duration_text = "---"
                 
-            duration = trade.get_duration_hours()
-            duration_str = f"{duration:.1f}ч" if duration > 0 else "---"
-            
-            print(f"{i:2d}. {entry_date} | {entry_price:.2f}₽ → {exit_price_str}₽ | {profit_str} | {duration_str}")
+                # Собираем строку по частям - БЕЗ f-строк с условиями
+                line_parts = [
+                    f"{i:2d}.",
+                    entry_date,
+                    "|",
+                    f"{entry_price}₽",
+                    "→",
+                    f"{exit_price_text}₽",
+                    "|",
+                    profit_text,
+                    "|", 
+                    duration_text
+                ]
+                
+                # Выводим готовую строку
+                print(" ".join(line_parts))
+                
+        except Exception as e:
+            print(f"Ошибка при выводе сделок: {e}")
+            # Простой fallback без форматирования
+            for i, trade in enumerate(self.trades, 1):
+                print(f"{i}. {trade.entry_time} -> {trade.exit_time}")
 
 async def main():
     """Главная функция"""
