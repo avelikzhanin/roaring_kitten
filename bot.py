@@ -2,6 +2,7 @@
 """
 Независимый бэктестинг торговой стратегии SBER для Railway
 Не зависит от основного бота
+ИСПРАВЛЕНЫ ВСЕ ОШИБКИ ФОРМАТИРОВАНИЯ
 """
 
 import asyncio
@@ -384,7 +385,7 @@ class StrategyBacktest:
         }
     
     def print_results(self, stats: Dict):
-        """Вывод результатов"""
+        """ИСПРАВЛЕННЫЙ вывод результатов"""
         print("\n" + "="*70)
         print(f"🎯 БЭКТЕСТИНГ SBER ЗА {stats['period_days']} ДНЕЙ")
         print("="*70)
@@ -409,14 +410,22 @@ class StrategyBacktest:
         print(f"\n⏰ ВРЕМЯ:")
         print(f"   • Средняя длительность: {stats['avg_duration_hours']:.1f}ч")
         
+        # ИСПРАВЛЕНО: Упрощен вывод сделок
         if stats['trades_detail']:
             print(f"\n📋 СДЕЛКИ:")
             for i, trade in enumerate(stats['trades_detail'][:10], 1):
-                profit = f"{trade.profit_pct:+.2f}%" if trade.profit_pct else "---"
-                print(f"   {i:2d}. {trade.entry_time.strftime('%d.%m %H:%M')} → "
-                      f"{trade.exit_time.strftime('%d.%m %H:%M') if trade.exit_time else 'Открыта'} | "
-                      f"{trade.entry_price:.2f} → {trade.exit_price:.2f if trade.exit_price else '---'} | "
-                      f"{profit}")
+                # Форматируем каждую часть отдельно
+                entry_date = trade.entry_time.strftime('%d.%m %H:%M')
+                entry_price_formatted = f"{trade.entry_price:.2f}"
+                
+                if trade.exit_time:
+                    exit_date = trade.exit_time.strftime('%d.%m %H:%M')
+                    exit_price_formatted = f"{trade.exit_price:.2f}"
+                    profit_formatted = f"{trade.profit_pct:+.2f}%"
+                    
+                    print(f"   {i:2d}. {entry_date} → {exit_date} | {entry_price_formatted} → {exit_price_formatted} | {profit_formatted}")
+                else:
+                    print(f"   {i:2d}. {entry_date} → Открыта | {entry_price_formatted} → --- | ---")
         
         print("="*70)
 
