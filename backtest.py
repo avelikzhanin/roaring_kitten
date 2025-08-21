@@ -1,116 +1,117 @@
 #!/usr/bin/env python3
 """
-ПОЛНОСТЬЮ ИСПРАВЛЕННЫЙ бэктестинг SBER Trading Bot
-Все проблемы с форматированием устранены
+Оптимизатор стратегии SBER Trading Bot
+Тестирует разные параметры для улучшения результатов
 """
 
 import asyncio
 import logging
 import os
 import sys
-from datetime import datetime, timedelta, timezone
-from typing import List, Optional, Dict, Any
+from datetime import datetime, timedelta
+from typing import List, Dict, Tuple
 import pandas as pd
 import numpy as np
 from dataclasses import dataclass
+import itertools
 
-# Добавляем путь к нашим модулям
+# Предполагаем, что модули уже импортированы
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-try:
-    from src.data_provider import TinkoffDataProvider
-    from src.indicators import TechnicalIndicators
-except ImportError as e:
-    print(f"❌ Ошибка импорта модулей: {e}")
-    print("Убедитесь, что файлы находятся в папке src/")
-    sys.exit(1)
-
-# Настройка логирования
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 @dataclass
-class Trade:
-    """Структура сделки"""
-    entry_time: datetime
-    exit_time: Optional[datetime] = None
-    entry_price: float = 0.0
-    exit_price: float = 0.0
-    profit_pct: float = 0.0
-    duration_hours: int = 0
+class StrategyParams:
+    """Параметры стратегии"""
+    ema_period: int = 20
+    adx_period: int = 14
+    adx_threshold: float = 23
+    di_diff_threshold: float = 5
+    volume_multiplier: float = 1.47
+    stop_loss_pct: float = None  # Новый параметр
+    take_profit_pct: float = None  # Новый параметр
+    rsi_period: int = None  # Для RSI фильтра
+    rsi_threshold: float = None  # RSI < этого значения
     
-    def is_closed(self) -> bool:
-        return self.exit_time is not None
-    
-    def is_profitable(self) -> bool:
-        return self.profit_pct > 0
+    def __str__(self):
+        return f"EMA{self.ema_period}_ADX{self.adx_threshold}_VOL{self.volume_multiplier}"
 
-@dataclass
-class BacktestResults:
-    """Результаты бэктестинга"""
-    total_signals: int = 0
-    buy_signals: int = 0
-    sell_signals: int = 0
-    total_trades: int = 0
-    profitable_trades: int = 0
-    winrate: float = 0.0
-    total_return: float = 0.0
-    avg_return_per_trade: float = 0.0
-    max_profit: float = 0.0
-    max_loss: float = 0.0
-    avg_duration_hours: float = 0.0
-    annual_return_estimate: float = 0.0
-    trades: List[Trade] = None
+@dataclass 
+class OptimizationResult:
+    """Результат оптимизации"""
+    params: StrategyParams
+    total_return: float
+    win_rate: float
+    total_trades: int
+    avg_return: float
+    max_drawdown: float
+    sharpe_ratio: float
     
-    def __post_init__(self):
-        if self.trades is None:
-            self.trades = []
+    def score(self) -> float:
+        """Комплексная оценка стратегии"""
+        # Учитываем доходность, винрейт и количество сделок
+        return (self.total_return * 0.4 + 
+                self.win_rate * 0.3 + 
+                min(self.total_trades/10, 5) * 0.2 +
+                max(0, self.sharpe_ratio) * 0.1)
 
-class SBERBacktester:
-    """Класс для бэктестинга стратегии SBER"""
+class RSIIndicator:
+    """RSI индикатор"""
     
-    def __init__(self, tinkoff_token: str):
-        self.data_provider = TinkoffDataProvider(tinkoff_token)
+    @staticmethod
+    def calculate_rsi(prices: List[float], period: int = 14) -> List[float]:
+        """Расчет RSI"""
+        if len(prices) < period + 1:
+            return [np.nan] * len(prices)
         
-    async def run_backtest(self, days: int = 30) -> BacktestResults:
-        """Запуск бэктестинга"""
-        logger.info(f"🔄 Запуск бэктестинга за {days} дней...")
+        df = pd.DataFrame({'price': prices})
+        df['change'] = df['price'].diff()
+        df['gain'] = df['change'].where(df['change'] > 0, 0)
+        df['loss'] = (-df['change']).where(df['change'] < 0, 0)
         
+        # Сглаживание по Wilder
+        df['avg_gain'] = df['gain'].ewm(alpha=1/period, adjust=False).mean()
+        df['avg_loss'] = df['loss'].ewm(alpha=1/period, adjust=False).mean()
+        
+        df['rs'] = df['avg_gain'] / df['avg_loss']
+        df['rsi'] = 100 - (100 / (1 + df['rs']))
+        
+        return df['rsi'].fillna(np.nan).tolist()
+
+class EnhancedStrategyBacktester:
+    """Расширенный бэктестер с дополнительными фильтрами"""
+    
+    def __init__(self, data_provider):
+        self.data_provider = data_provider
+        
+    async def test_strategy(self, params: StrategyParams, days: int = 60) -> OptimizationResult:
+        """Тестирование стратегии с заданными параметрами"""
         try:
-            # Получаем данные
-            hours = days * 24 + 160  # Добавляем буфер для расчета индикаторов
+            # Получаем данные (как в основном коде)
+            hours = days * 24 + 200
             candles = await self.data_provider.get_candles(hours=hours)
             
             if len(candles) < 100:
-                raise ValueError(f"Недостаточно данных: {len(candles)} свечей")
-            
-            # Создаем DataFrame
+                return self._empty_result(params)
+                
             df = self.data_provider.candles_to_dataframe(candles)
             if df.empty:
-                raise ValueError("Пустой DataFrame")
+                return self._empty_result(params)
             
-            logger.info(f"✅ Получено {len(candles)} свечей")
-            logger.info(f"🔍 Анализ данных и поиск сигналов...")
+            # Применяем стратегию
+            signals, trades = self._apply_enhanced_strategy(df, params, days)
             
-            # Расчет индикаторов
-            results = self._analyze_data(df, days)
-            
-            logger.info(f"🎯 Всего сигналов: {results.total_signals} (BUY: {results.buy_signals})")
-            logger.info(f"💰 Создано сделок: {results.total_trades}")
-            
-            return results
+            # Рассчитываем метрики
+            return self._calculate_metrics(params, trades, days)
             
         except Exception as e:
-            logger.error(f"❌ Ошибка бэктестинга: {e}")
-            raise
+            logger.error(f"Ошибка тестирования {params}: {e}")
+            return self._empty_result(params)
     
-    def _analyze_data(self, df: pd.DataFrame, target_days: int) -> BacktestResults:
-        """Анализ данных и генерация сигналов"""
-        logger.info("📊 Расчет индикаторов...")
+    def _apply_enhanced_strategy(self, df: pd.DataFrame, params: StrategyParams, days: int) -> Tuple[List, List]:
+        """Применение улучшенной стратегии"""
+        from src.indicators import TechnicalIndicators
         
         # Подготовка данных
         closes = df['close'].tolist()
@@ -119,227 +120,296 @@ class SBERBacktester:
         volumes = df['volume'].tolist()
         timestamps = df['timestamp'].tolist()
         
-        # Расчет индикаторов
-        ema20 = TechnicalIndicators.calculate_ema(closes, 20)
-        adx_data = TechnicalIndicators.calculate_adx(highs, lows, closes, 14)
+        # Расчет основных индикаторов
+        ema = TechnicalIndicators.calculate_ema(closes, params.ema_period)
+        adx_data = TechnicalIndicators.calculate_adx(highs, lows, closes, params.adx_period)
         
-        # Средний объем за 20 периодов
-        df['avg_volume_20'] = df['volume'].rolling(window=20, min_periods=1).mean()
-        avg_volumes = df['avg_volume_20'].tolist()
+        # RSI если нужен
+        rsi = []
+        if params.rsi_period:
+            rsi = RSIIndicator.calculate_rsi(closes, params.rsi_period)
         
-        # Определяем период тестирования (исключаем первые 160 свечей для прогрева индикаторов)
-        start_idx = 160
+        # Средний объем
+        df['avg_volume'] = df['volume'].rolling(window=20, min_periods=1).mean()
+        avg_volumes = df['avg_volume'].tolist()
         
-        # Ограничиваем период target_days днями от конца
+        # Определяем тестовый период
         end_time = timestamps[-1]
-        start_time = end_time - timedelta(days=target_days)
+        start_time = end_time - timedelta(days=days)
+        test_start_idx = 200  # Минимум для прогрева индикаторов
         
-        # Находим начальный индекс для тестового периода
-        test_start_idx = start_idx
-        for i in range(start_idx, len(timestamps)):
+        for i in range(test_start_idx, len(timestamps)):
             if timestamps[i] >= start_time:
                 test_start_idx = i
                 break
         
-        logger.info(f"📈 Тестовый период: {len(timestamps) - test_start_idx} свечей")
-        
         # Поиск сигналов
-        results = BacktestResults()
+        signals = []
         trades = []
         current_trade = None
         
-        signal_count = 0
-        buy_count = 0
-        sell_count = 0
-        
         for i in range(test_start_idx, len(timestamps)):
             try:
-                # Текущие значения
                 price = closes[i]
-                ema_val = ema20[i] if i < len(ema20) else np.nan
-                adx_val = adx_data['adx'][i] if i < len(adx_data['adx']) else np.nan
-                plus_di = adx_data['plus_di'][i] if i < len(adx_data['plus_di']) else np.nan
-                minus_di = adx_data['minus_di'][i] if i < len(adx_data['minus_di']) else np.nan
-                volume = volumes[i]
-                avg_volume = avg_volumes[i]
                 
-                # Проверяем на NaN
-                if any(pd.isna(val) for val in [ema_val, adx_val, plus_di, minus_di]):
+                # Проверяем базовые индикаторы
+                if (i >= len(ema) or i >= len(adx_data['adx']) or 
+                    pd.isna(ema[i]) or pd.isna(adx_data['adx'][i])):
                     continue
                 
-                # Условия сигнала покупки
+                # Базовые условия
                 conditions = [
-                    price > ema_val,                            # Цена выше EMA20
-                    adx_val > 23,                              # ADX больше 23
-                    plus_di > minus_di,                        # +DI больше -DI
-                    plus_di - minus_di > 5,                    # Существенная разница
-                    volume > avg_volume * 1.47                 # Объем на 47% выше среднего
+                    price > ema[i],  # EMA фильтр
+                    adx_data['adx'][i] > params.adx_threshold,  # ADX фильтр
+                    adx_data['plus_di'][i] > adx_data['minus_di'][i],  # Направление
+                    adx_data['plus_di'][i] - adx_data['minus_di'][i] > params.di_diff_threshold,  # Разница DI
+                    volumes[i] > avg_volumes[i] * params.volume_multiplier  # Объем
                 ]
                 
-                buy_signal = all(conditions)
+                # RSI фильтр (если включен)
+                if params.rsi_period and i < len(rsi) and not pd.isna(rsi[i]):
+                    conditions.append(rsi[i] < params.rsi_threshold)
                 
-                if buy_signal and current_trade is None:
-                    # Новый сигнал покупки
-                    current_trade = Trade(
-                        entry_time=timestamps[i],
-                        entry_price=price
-                    )
+                # Временной фильтр (избегаем обеденное время)
+                hour = timestamps[i].hour
+                if hour >= 13 and hour <= 15:  # Обеденный флет
+                    conditions.append(False)
+                
+                signal_active = all(conditions)
+                
+                # Логика входа/выхода
+                if signal_active and current_trade is None:
+                    # Вход в позицию
+                    current_trade = {
+                        'entry_time': timestamps[i],
+                        'entry_price': price,
+                        'highest_price': price
+                    }
+                    signals.append(('BUY', timestamps[i], price))
+                
+                elif current_trade is not None:
+                    # Обновляем максимальную цену для трейлинга
+                    current_trade['highest_price'] = max(current_trade['highest_price'], price)
                     
-                    signal_count += 1
-                    buy_count += 1
+                    # Условия выхода
+                    exit_conditions = [
+                        not signal_active,  # Базовые условия не выполняются
+                    ]
                     
-                    logger.info(f"📈 BUY #{buy_count}: {timestamps[i].strftime('%d.%m %H:%M')} = {price:.2f}₽")
+                    # Stop Loss
+                    if params.stop_loss_pct:
+                        stop_loss_price = current_trade['entry_price'] * (1 - params.stop_loss_pct/100)
+                        exit_conditions.append(price <= stop_loss_price)
                     
-                elif not buy_signal and current_trade is not None:
-                    # Закрываем позицию
-                    current_trade.exit_time = timestamps[i]
-                    current_trade.exit_price = price
-                    current_trade.profit_pct = ((price - current_trade.entry_price) / current_trade.entry_price) * 100
-                    current_trade.duration_hours = int((current_trade.exit_time - current_trade.entry_time).total_seconds() / 3600)
+                    # Take Profit
+                    if params.take_profit_pct:
+                        take_profit_price = current_trade['entry_price'] * (1 + params.take_profit_pct/100)
+                        exit_conditions.append(price >= take_profit_price)
                     
-                    trades.append(current_trade)
-                    current_trade = None
-                    
-                    signal_count += 1
-                    sell_count += 1
-                    
-                    logger.info(f"📉 SELL: {timestamps[i].strftime('%d.%m %H:%M')} = {price:.2f}₽")
-                    
+                    if any(exit_conditions):
+                        # Выход из позиции
+                        profit_pct = ((price - current_trade['entry_price']) / current_trade['entry_price']) * 100
+                        duration_hours = int((timestamps[i] - current_trade['entry_time']).total_seconds() / 3600)
+                        
+                        trades.append({
+                            'entry_time': current_trade['entry_time'],
+                            'exit_time': timestamps[i],
+                            'entry_price': current_trade['entry_price'],
+                            'exit_price': price,
+                            'profit_pct': profit_pct,
+                            'duration_hours': duration_hours
+                        })
+                        
+                        signals.append(('SELL', timestamps[i], price))
+                        current_trade = None
+                
             except Exception as e:
-                logger.error(f"Ошибка обработки индекса {i}: {e}")
                 continue
         
-        # Закрываем последнюю позицию если она открыта
+        # Закрываем открытую позицию
         if current_trade is not None:
-            current_trade.exit_time = timestamps[-1]
-            current_trade.exit_price = closes[-1]
-            current_trade.profit_pct = ((closes[-1] - current_trade.entry_price) / current_trade.entry_price) * 100
-            current_trade.duration_hours = int((current_trade.exit_time - current_trade.entry_time).total_seconds() / 3600)
-            trades.append(current_trade)
-        
-        # Расчет статистики
-        results.total_signals = signal_count
-        results.buy_signals = buy_count
-        results.sell_signals = sell_count
-        results.total_trades = len(trades)
-        results.trades = trades
-        
-        if trades:
-            completed_trades = [t for t in trades if t.is_closed()]
+            price = closes[-1]
+            profit_pct = ((price - current_trade['entry_price']) / current_trade['entry_price']) * 100
+            duration_hours = int((timestamps[-1] - current_trade['entry_time']).total_seconds() / 3600)
             
-            if completed_trades:
-                results.profitable_trades = sum(1 for t in completed_trades if t.is_profitable())
-                results.winrate = (results.profitable_trades / len(completed_trades)) * 100
-                
-                profits = [t.profit_pct for t in completed_trades]
-                results.total_return = sum(profits)
-                results.avg_return_per_trade = np.mean(profits)
-                results.max_profit = max(profits)
-                results.max_loss = min(profits)
-                
-                durations = [t.duration_hours for t in completed_trades if t.duration_hours > 0]
-                results.avg_duration_hours = np.mean(durations) if durations else 0
-                
-                # Оценка годовой доходности
-                if target_days > 0:
-                    results.annual_return_estimate = (results.total_return / target_days) * 365
+            trades.append({
+                'entry_time': current_trade['entry_time'],
+                'exit_time': timestamps[-1],
+                'entry_price': current_trade['entry_price'],
+                'exit_price': price,
+                'profit_pct': profit_pct,
+                'duration_hours': duration_hours
+            })
         
+        return signals, trades
+    
+    def _calculate_metrics(self, params: StrategyParams, trades: List[Dict], days: int) -> OptimizationResult:
+        """Расчет метрик стратегии"""
+        if not trades:
+            return self._empty_result(params)
+        
+        profits = [t['profit_pct'] for t in trades]
+        profitable = [p for p in profits if p > 0]
+        
+        total_return = sum(profits)
+        win_rate = len(profitable) / len(profits) * 100
+        avg_return = np.mean(profits)
+        max_drawdown = min(profits) if profits else 0
+        
+        # Sharpe ratio (упрощенный)
+        if len(profits) > 1:
+            sharpe_ratio = np.mean(profits) / np.std(profits) if np.std(profits) > 0 else 0
+        else:
+            sharpe_ratio = 0
+        
+        return OptimizationResult(
+            params=params,
+            total_return=total_return,
+            win_rate=win_rate,
+            total_trades=len(trades),
+            avg_return=avg_return,
+            max_drawdown=max_drawdown,
+            sharpe_ratio=sharpe_ratio
+        )
+    
+    def _empty_result(self, params: StrategyParams) -> OptimizationResult:
+        """Пустой результат для неудачных тестов"""
+        return OptimizationResult(
+            params=params,
+            total_return=0,
+            win_rate=0,
+            total_trades=0,
+            avg_return=0,
+            max_drawdown=0,
+            sharpe_ratio=0
+        )
+
+class StrategyOptimizer:
+    """Оптимизатор параметров стратегии"""
+    
+    def __init__(self, data_provider):
+        self.backtester = EnhancedStrategyBacktester(data_provider)
+    
+    async def optimize_parameters(self, days: int = 60) -> List[OptimizationResult]:
+        """Оптимизация параметров стратегии"""
+        logger.info("🔧 Запуск оптимизации параметров...")
+        
+        # Определяем диапазоны параметров для тестирования
+        parameter_ranges = {
+            'ema_period': [15, 20, 25],
+            'adx_threshold': [20, 23, 25, 28],
+            'volume_multiplier': [1.3, 1.47, 1.6, 1.8],
+            'stop_loss_pct': [None, 0.5, 1.0],
+            'take_profit_pct': [None, 1.5, 2.0],
+            'rsi_filter': [
+                (None, None),  # Без RSI
+                (14, 70),      # RSI 14, порог 70
+                (14, 65),      # RSI 14, порог 65
+            ]
+        }
+        
+        results = []
+        total_combinations = (len(parameter_ranges['ema_period']) * 
+                            len(parameter_ranges['adx_threshold']) * 
+                            len(parameter_ranges['volume_multiplier']) * 
+                            len(parameter_ranges['stop_loss_pct']) * 
+                            len(parameter_ranges['take_profit_pct']) * 
+                            len(parameter_ranges['rsi_filter']))
+        
+        logger.info(f"🧪 Тестируем {total_combinations} комбинаций параметров...")
+        
+        tested = 0
+        for ema_period in parameter_ranges['ema_period']:
+            for adx_threshold in parameter_ranges['adx_threshold']:
+                for volume_multiplier in parameter_ranges['volume_multiplier']:
+                    for stop_loss in parameter_ranges['stop_loss_pct']:
+                        for take_profit in parameter_ranges['take_profit_pct']:
+                            for rsi_period, rsi_threshold in parameter_ranges['rsi_filter']:
+                                
+                                params = StrategyParams(
+                                    ema_period=ema_period,
+                                    adx_threshold=adx_threshold,
+                                    volume_multiplier=volume_multiplier,
+                                    stop_loss_pct=stop_loss,
+                                    take_profit_pct=take_profit,
+                                    rsi_period=rsi_period,
+                                    rsi_threshold=rsi_threshold
+                                )
+                                
+                                result = await self.backtester.test_strategy(params, days)
+                                results.append(result)
+                                
+                                tested += 1
+                                if tested % 10 == 0:
+                                    logger.info(f"⏳ Протестировано {tested}/{total_combinations}...")
+        
+        # Сортируем по комплексной оценке
+        results.sort(key=lambda x: x.score(), reverse=True)
+        
+        logger.info(f"✅ Оптимизация завершена! Найдено {len(results)} результатов")
         return results
     
-    def print_results(self, results: BacktestResults, days: int):
-        """ПОЛНОСТЬЮ ИСПРАВЛЕННЫЙ вывод результатов"""
-        print("\n" + "="*70)
-        print(f"🎯 БЭКТЕСТИНГ SBER ЗА {days} ДНЕЙ")
-        print("="*70)
+    def print_top_results(self, results: List[OptimizationResult], top_n: int = 10):
+        """Вывод лучших результатов"""
+        print(f"\n🏆 ТОП-{top_n} ЛУЧШИХ СТРАТЕГИЙ:")
+        print("="*100)
         
-        print(f"📊 СИГНАЛЫ:")
-        print(f" • Всего: {results.total_signals}")
-        print(f" • Покупки: {results.buy_signals}")
-        print(f" • Продажи: {results.sell_signals}")
-        
-        print(f"\n💼 СДЕЛКИ:")
-        print(f" • Количество: {results.total_trades}")
-        print(f" • Прибыльные: {results.profitable_trades}")
-        print(f" • Винрейт: {results.winrate:.1f}%")
-        
-        print(f"\n💰 ДОХОДНОСТЬ:")
-        print(f" • Общая: {results.total_return:.2f}%")
-        print(f" • Средняя на сделку: {results.avg_return_per_trade:.2f}%")
-        print(f" • Макс прибыль: {results.max_profit:.2f}%")
-        print(f" • Макс убыток: {results.max_loss:.2f}%")
-        print(f" • Годовая (оценка): {results.annual_return_estimate:.1f}%")
-        
-        print(f"\n⏰ ВРЕМЯ:")
-        print(f" • Средняя длительность: {results.avg_duration_hours:.1f}ч")
-        
-        # ИСПРАВЛЕНО: Убрано проблемное форматирование сделок
-        if results.trades and len(results.trades) <= 20:
-            print(f"\n📋 СДЕЛКИ:")
-            try:
-                for i, trade in enumerate(results.trades, 1):
-                    # Форматируем каждую часть отдельно
-                    entry_date = trade.entry_time.strftime("%d.%m %H:%M")
-                    entry_price_formatted = f"{trade.entry_price:.2f}₽"
-                    
-                    if trade.is_closed() and trade.exit_time:
-                        exit_date = trade.exit_time.strftime("%d.%m %H:%M")
-                        exit_price_formatted = f"{trade.exit_price:.2f}₽"
-                        profit_formatted = f"{trade.profit_pct:+.2f}%"
-                        duration_text = f"{trade.duration_hours}ч"
-                        
-                        # Простая строка без сложных f-string выражений
-                        line = f" {i:2d}. {entry_date} → {exit_date} | {entry_price_formatted} → {exit_price_formatted} | {profit_formatted} | {duration_text}"
-                        print(line)
-                    else:
-                        # Открытая сделка
-                        line = f" {i:2d}. {entry_date} → [открыта] | {entry_price_formatted} → [текущая] | [в процессе]"
-                        print(line)
-                        
-            except Exception as e:
-                logger.error(f"Ошибка вывода деталей сделок: {e}")
-                print(" [Ошибка при выводе деталей сделок]")
-        
-        print("\n" + "="*70)
-        print()
+        for i, result in enumerate(results[:top_n], 1):
+            print(f"\n{i:2d}. ОЦЕНКА: {result.score():.2f}")
+            print(f"    📊 Доходность: {result.total_return:.2f}% | Винрейт: {result.win_rate:.1f}% | Сделок: {result.total_trades}")
+            
+            params = result.params
+            print(f"    ⚙️ EMA: {params.ema_period} | ADX: {params.adx_threshold} | Объем: {params.volume_multiplier}")
+            
+            extras = []
+            if params.stop_loss_pct:
+                extras.append(f"SL: {params.stop_loss_pct}%")
+            if params.take_profit_pct:
+                extras.append(f"TP: {params.take_profit_pct}%")
+            if params.rsi_period:
+                extras.append(f"RSI({params.rsi_period})<{params.rsi_threshold}")
+            
+            if extras:
+                print(f"    🎯 Доп. фильтры: {' | '.join(extras)}")
+            
+            print(f"    📈 Средняя прибыль: {result.avg_return:.3f}% | Макс просадка: {result.max_drawdown:.2f}%")
 
 async def main():
-    """Главная функция"""
-    print("🚀 SBER Trading Bot - Независимый бэктестинг")
+    """Главная функция оптимизации"""
+    print("🚀 SBER Strategy Optimizer")
     print("-" * 60)
     
-    # Получаем токен
     tinkoff_token = os.getenv('TINKOFF_TOKEN')
-    
     if not tinkoff_token:
-        print("❌ Не найден TINKOFF_TOKEN в переменных окружения")
-        print("Установите переменную окружения: export TINKOFF_TOKEN='your_token'")
+        print("❌ Не найден TINKOFF_TOKEN")
         return
     
-    logger.info("✅ Токен найден, запускаем бэктестинг...")
-    
     try:
-        backtester = SBERBacktester(tinkoff_token)
+        # Импортируем провайдер данных
+        from src.data_provider import TinkoffDataProvider
         
-        # Бэктест за 30 дней
-        logger.info("🔄 Анализ за 30 дней...")
-        results = await backtester.run_backtest(days=30)
-        backtester.print_results(results, 30)
+        data_provider = TinkoffDataProvider(tinkoff_token)
+        optimizer = StrategyOptimizer(data_provider)
         
-        # Дополнительно - за 7 дней для сравнения
-        logger.info("🔄 Анализ за 7 дней...")
-        results_week = await backtester.run_backtest(days=7)
-        backtester.print_results(results_week, 7)
+        # Запускаем оптимизацию
+        results = await optimizer.optimize_parameters(days=60)
         
-    except KeyboardInterrupt:
-        logger.info("❌ Бэктестинг прерван пользователем")
+        # Выводим результаты
+        optimizer.print_top_results(results, top_n=15)
+        
+        print(f"\n💡 РЕКОМЕНДАЦИИ:")
+        best = results[0]
+        print(f"✅ Лучшая стратегия показала доходность {best.total_return:.2f}% за 60 дней")
+        print(f"🎯 Винрейт: {best.win_rate:.1f}% ({best.total_trades} сделок)")
+        print(f"⚙️ Параметры: EMA{best.params.ema_period}, ADX>{best.params.adx_threshold}, Volume×{best.params.volume_multiplier}")
+        
+        if best.params.stop_loss_pct or best.params.take_profit_pct:
+            print(f"🛡️ Управление рисками улучшило результат!")
+        
     except Exception as e:
-        logger.error(f"❌ Критическая ошибка: {e}")
+        logger.error(f"❌ Ошибка оптимизации: {e}")
         import traceback
         traceback.print_exc()
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except Exception as e:
-        logger.error(f"❌ Ошибка запуска: {e}")
-        sys.exit(1)
+    asyncio.run(main())
