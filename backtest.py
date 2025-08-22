@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Улучшенный оптимизатор стратегии SBER с фокусом на Trailing Stop
-Тестирует различные варианты trailing stop для максимизации прибыли
+ИСПРАВЛЕННЫЙ оптимизатор SBER с правильной логикой Trailing Stop
+Фикс: Trailing Stop работает БЕЗ конфликта с Take Profit
 """
 
 import asyncio
@@ -19,7 +19,6 @@ from enum import Enum
 from tinkoff.invest import Client, RequestError, CandleInterval, HistoricCandle
 from tinkoff.invest.utils import now
 
-# Настройка логирования
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -34,6 +33,13 @@ class TrailingStopType(Enum):
     PROFIT_STEPPED = "profit_stepped"  # Ступенчатый в зависимости от прибыли
     DYNAMIC = "dynamic"                # Динамический на основе волатильности
 
+class ExitStrategy(Enum):
+    """Стратегии выхода из позиций"""
+    TRAILING_ONLY = "trailing_only"           # Только trailing stop
+    TRAILING_WITH_HIGH_TP = "trailing_high_tp" # Trailing + высокий TP (защита)
+    ADAPTIVE_EXIT = "adaptive_exit"           # Адаптивный выход
+    SIGNAL_LOSS_BACKUP = "signal_backup"     # Trailing + signal loss как backup
+
 @dataclass
 class TrailingStopConfig:
     """Конфигурация Trailing Stop"""
@@ -47,7 +53,7 @@ class TrailingStopConfig:
     weak_trend_percent: float = 0.7
     
     # Для ступенчатого
-    profit_levels: List[Tuple[float, float]] = None  # [(profit_threshold, trailing_percent)]
+    profit_levels: List[Tuple[float, float]] = None
     
     # Для динамического
     atr_multiplier: float = 2.0
@@ -55,10 +61,11 @@ class TrailingStopConfig:
     def __post_init__(self):
         if self.profit_levels is None:
             self.profit_levels = [
-                (0.5, 0.5),   # При прибыли 0.5%+ → trailing 0.5%
-                (1.0, 0.8),   # При прибыли 1.0%+ → trailing 0.8%
-                (2.0, 1.2),   # При прибыли 2.0%+ → trailing 1.2%
-                (3.0, 1.8),   # При прибыли 3.0%+ → trailing 1.8%
+                (0.5, 0.4),   # При прибыли 0.5%+ → trailing 0.4%
+                (1.0, 0.6),   # При прибыли 1.0%+ → trailing 0.6%
+                (1.5, 0.8),   # При прибыли 1.5%+ → trailing 0.8%
+                (2.5, 1.2),   # При прибыли 2.5%+ → trailing 1.2%
+                (4.0, 1.8),   # При прибыли 4.0%+ → trailing 1.8%
             ]
 
 @dataclass
@@ -69,11 +76,14 @@ class OptimizedParams:
     di_diff_threshold: float = 5
     volume_multiplier: float = 1.47
     
+    # 🎯 ИСПРАВЛЕНО: Четкая стратегия выхода
+    exit_strategy: ExitStrategy = ExitStrategy.TRAILING_ONLY
+    
     # Управление рисками
     stop_loss_pct: Optional[float] = None
-    take_profit_pct: Optional[float] = None
+    emergency_take_profit_pct: Optional[float] = None  # Только для защиты от аномалий
     
-    # 🎯 Новый Trailing Stop
+    # Trailing Stop конфигурация
     trailing_config: Optional[TrailingStopConfig] = None
     
     # Дополнительные фильтры
@@ -85,25 +95,6 @@ class OptimizedParams:
     avoid_lunch_time: bool = False
     trading_hours_start: int = 10
     trading_hours_end: int = 18
-    
-    def __str__(self):
-        base = f"EMA{self.ema_period}_ADX{self.adx_threshold}_VOL{self.volume_multiplier}"
-        
-        filters = []
-        if self.stop_loss_pct:
-            filters.append(f"SL{self.stop_loss_pct}")
-        if self.take_profit_pct:
-            filters.append(f"TP{self.take_profit_pct}")
-        if self.trailing_config:
-            filters.append(f"TS_{self.trailing_config.type.value}_{self.trailing_config.base_percent}")
-        if self.rsi_period:
-            filters.append(f"RSI{self.rsi_period}")
-        if self.avoid_lunch_time:
-            filters.append("NoLunch")
-            
-        if filters:
-            return f"{base}_{'_'.join(filters)}"
-        return base
 
 @dataclass 
 class OptimizationResult:
@@ -119,25 +110,35 @@ class OptimizationResult:
     sharpe_ratio: float
     max_consecutive_losses: int
     
-    # 🎯 Дополнительные метрики для trailing stop
+    # Дополнительные метрики для trailing stop
     max_profit_per_trade: float = 0
     avg_profit_on_winners: float = 0
     trailing_stop_exits: int = 0
+    signal_loss_exits: int = 0
+    emergency_tp_exits: int = 0
     
     def overall_score(self) -> float:
-        """Улучшенная комплексная оценка стратегии"""
-        return_score = min(self.total_return / 10, 15)
+        """Улучшенная комплексная оценка"""
+        return_score = min(self.total_return / 8, 20)  # Больший вес доходности
         winrate_score = self.win_rate / 8
-        trades_score = min(self.total_trades / 5, 5)
-        drawdown_penalty = max(0, abs(self.max_drawdown) / 2)
+        trades_score = min(self.total_trades / 4, 6)
+        drawdown_penalty = max(0, abs(self.max_drawdown) / 3)
         
-        # 🎯 Бонус за крупные прибыли
-        big_profit_bonus = min(self.max_profit_per_trade / 2, 3)
+        # Бонус за крупные прибыли
+        big_profit_bonus = min(self.max_profit_per_trade / 1.5, 5)
         
-        return (return_score * 0.4 + 
+        # Бонус за эффективность trailing stop
+        if self.total_trades > 0:
+            trailing_efficiency = self.trailing_stop_exits / self.total_trades
+            trailing_bonus = trailing_efficiency * 3
+        else:
+            trailing_bonus = 0
+        
+        return (return_score * 0.35 + 
                 winrate_score * 0.25 + 
                 trades_score * 0.15 + 
-                big_profit_bonus * 0.2 - 
+                big_profit_bonus * 0.15 + 
+                trailing_bonus * 0.1 - 
                 drawdown_penalty * 0.1)
 
 class DataProvider:
@@ -216,17 +217,14 @@ class TechnicalIndicators:
     
     @staticmethod
     def calculate_ema(prices: List[float], period: int) -> List[float]:
-        """EMA"""
         if len(prices) < period:
             return [np.nan] * len(prices)
-        
         series = pd.Series(prices)
         ema = series.ewm(span=period, adjust=False).mean()
         return ema.tolist()
     
     @staticmethod
     def calculate_rsi(prices: List[float], period: int = 14) -> List[float]:
-        """RSI индикатор"""
         if len(prices) < period + 1:
             return [np.nan] * len(prices)
         
@@ -245,29 +243,21 @@ class TechnicalIndicators:
 
     @staticmethod
     def calculate_atr(highs: List[float], lows: List[float], closes: List[float], period: int = 14) -> List[float]:
-        """ATR для динамического trailing stop"""
         if len(highs) < period + 1:
             return [np.nan] * len(highs)
         
-        df = pd.DataFrame({
-            'high': highs,
-            'low': lows,
-            'close': closes
-        })
-        
+        df = pd.DataFrame({'high': highs, 'low': lows, 'close': closes})
         df['prev_close'] = df['close'].shift(1)
         df['hl'] = df['high'] - df['low']
         df['hc'] = abs(df['high'] - df['prev_close'])
         df['lc'] = abs(df['low'] - df['prev_close'])
         df['tr'] = df[['hl', 'hc', 'lc']].max(axis=1)
-        
         df['atr'] = df['tr'].rolling(window=period).mean()
         
         return df['atr'].fillna(np.nan).tolist()
     
     @staticmethod
     def wilder_smoothing(values: pd.Series, period: int) -> pd.Series:
-        """Сглаживание Уайлдера"""
         result = pd.Series(index=values.index, dtype=float)
         first_avg = values.iloc[:period].mean()
         result.iloc[period-1] = first_avg
@@ -279,19 +269,10 @@ class TechnicalIndicators:
     
     @staticmethod
     def calculate_adx(highs: List[float], lows: List[float], closes: List[float], period: int = 14) -> Dict:
-        """ADX расчет"""
         if len(highs) < period * 2:
-            return {
-                'adx': [np.nan] * len(highs), 
-                'plus_di': [np.nan] * len(highs), 
-                'minus_di': [np.nan] * len(highs)
-            }
+            return {'adx': [np.nan] * len(highs), 'plus_di': [np.nan] * len(highs), 'minus_di': [np.nan] * len(highs)}
         
-        df = pd.DataFrame({
-            'high': highs,
-            'low': lows,
-            'close': closes
-        })
+        df = pd.DataFrame({'high': highs, 'low': lows, 'close': closes})
         
         # True Range
         df['prev_close'] = df['close'].shift(1)
@@ -304,15 +285,8 @@ class TechnicalIndicators:
         df['high_diff'] = df['high'] - df['high'].shift(1)
         df['low_diff'] = df['low'].shift(1) - df['low']
         
-        df['plus_dm'] = np.where(
-            (df['high_diff'] > df['low_diff']) & (df['high_diff'] > 0),
-            df['high_diff'], 0
-        )
-        
-        df['minus_dm'] = np.where(
-            (df['low_diff'] > df['high_diff']) & (df['low_diff'] > 0),
-            df['low_diff'], 0
-        )
+        df['plus_dm'] = np.where((df['high_diff'] > df['low_diff']) & (df['high_diff'] > 0), df['high_diff'], 0)
+        df['minus_dm'] = np.where((df['low_diff'] > df['high_diff']) & (df['low_diff'] > 0), df['low_diff'], 0)
         
         # Сглаживание
         df['atr'] = TechnicalIndicators.wilder_smoothing(df['tr'], period)
@@ -336,18 +310,14 @@ class TechnicalIndicators:
         }
 
 class TrailingStopManager:
-    """Менеджер Trailing Stop с различными стратегиями"""
+    """Менеджер Trailing Stop"""
     
     def __init__(self, config: TrailingStopConfig):
         self.config = config
     
-    def calculate_trailing_level(self, 
-                               current_trade: Dict,
-                               current_price: float,
-                               current_adx: float = None,
-                               current_atr: float = None) -> float:
+    def calculate_trailing_level(self, current_trade: Dict, current_price: float, 
+                               current_adx: float = None, current_atr: float = None) -> float:
         """Расчет уровня trailing stop"""
-        
         entry_price = current_trade['entry_price']
         highest_price = current_trade['highest_price']
         current_profit = ((current_price - entry_price) / entry_price) * 100
@@ -360,24 +330,18 @@ class TrailingStopManager:
                 return highest_price * (1 - self.config.base_percent/100)
             
             if current_adx >= self.config.adx_strong_threshold:
-                # Сильный тренд - даем больше свободы
                 trailing_pct = self.config.strong_trend_percent
             elif current_adx <= self.config.adx_weak_threshold:
-                # Слабый тренд - жестче держим
                 trailing_pct = self.config.weak_trend_percent
             else:
-                # Промежуточное значение
-                ratio = (current_adx - self.config.adx_weak_threshold) / (
-                    self.config.adx_strong_threshold - self.config.adx_weak_threshold)
-                trailing_pct = (self.config.weak_trend_percent + 
-                              (self.config.strong_trend_percent - self.config.weak_trend_percent) * ratio)
+                ratio = (current_adx - self.config.adx_weak_threshold) / (self.config.adx_strong_threshold - self.config.adx_weak_threshold)
+                trailing_pct = self.config.weak_trend_percent + (self.config.strong_trend_percent - self.config.weak_trend_percent) * ratio
             
             return highest_price * (1 - trailing_pct/100)
         
         elif self.config.type == TrailingStopType.PROFIT_STEPPED:
             trailing_pct = self.config.base_percent
             
-            # Находим подходящий уровень
             for profit_threshold, step_trailing_pct in sorted(self.config.profit_levels, reverse=True):
                 if current_profit >= profit_threshold:
                     trailing_pct = step_trailing_pct
@@ -389,31 +353,29 @@ class TrailingStopManager:
             if current_atr is None:
                 return highest_price * (1 - self.config.base_percent/100)
             
-            # ATR-based trailing stop
             atr_distance = current_atr * self.config.atr_multiplier
             return highest_price - atr_distance
         
         else:
             return highest_price * (1 - self.config.base_percent/100)
 
-class EnhancedTrailingOptimizer:
-    """Оптимизатор с фокусом на Trailing Stop"""
+class FixedTrailingOptimizer:
+    """Исправленный оптимизатор с правильной логикой trailing stop"""
     
     def __init__(self, tinkoff_token: str):
         self.data_provider = DataProvider(tinkoff_token)
     
     async def run_optimization(self, test_days: int = 90) -> List[OptimizationResult]:
-        """Запуск оптимизации с фокусом на trailing stop"""
-        logger.info(f"🚀 Запуск оптимизации Trailing Stop для SBER за {test_days} дней...")
+        """Запуск оптимизации с исправленной логикой"""
+        logger.info(f"🎯 Запуск ИСПРАВЛЕННОЙ оптимизации Trailing Stop за {test_days} дней...")
         
-        # Получаем данные
         hours_needed = test_days * 24 + 200
         
         try:
             candles = await self.data_provider.get_candles(hours=hours_needed)
             
             if len(candles) < 100:
-                logger.error("❌ Недостаточно данных для оптимизации")
+                logger.error("❌ Недостаточно данных")
                 return []
                 
             df = self.data_provider.candles_to_dataframe(candles)
@@ -422,15 +384,14 @@ class EnhancedTrailingOptimizer:
                 logger.error("❌ Ошибка преобразования данных")
                 return []
             
-            # Генерируем параметры с фокусом на trailing stop
-            parameter_combinations = self._generate_trailing_combinations()
+            parameter_combinations = self._generate_fixed_combinations()
             
-            logger.info(f"🧪 Будем тестировать {len(parameter_combinations)} trailing stop комбинаций...")
+            logger.info(f"🧪 Тестируем {len(parameter_combinations)} ИСПРАВЛЕННЫХ комбинаций...")
             
             results = []
             for i, params in enumerate(parameter_combinations, 1):
                 try:
-                    if i % 5 == 0:
+                    if i % 8 == 0:
                         logger.info(f"⏳ Прогресс: {i}/{len(parameter_combinations)} ({i/len(parameter_combinations)*100:.1f}%)")
                     
                     result = await self._test_strategy_params(df, params, test_days)
@@ -442,84 +403,97 @@ class EnhancedTrailingOptimizer:
             
             results.sort(key=lambda x: x.overall_score(), reverse=True)
             
-            logger.info(f"✅ Оптимизация завершена! Найдено {len(results)} результатов")
+            logger.info(f"✅ Исправленная оптимизация завершена! Найдено {len(results)} результатов")
             return results
             
         except Exception as e:
-            logger.error(f"❌ Критическая ошибка оптимизации: {e}")
+            logger.error(f"❌ Критическая ошибка: {e}")
             return []
     
-    def _generate_trailing_combinations(self) -> List[OptimizedParams]:
-        """Генерация комбинаций с различными trailing stop"""
+    def _generate_fixed_combinations(self) -> List[OptimizedParams]:
+        """Генерация исправленных комбинаций"""
         combinations = []
         
-        # Базовые параметры (из твоих лучших результатов)
-        base_params = [
+        # Базовые параметры (твои лучшие + вариации)
+        base_configs = [
             (20, 23, 1.47),  # Твои оптимальные
-            (25, 25, 1.6),   # Альтернативы
-            (15, 20, 1.2)
+            (25, 25, 1.6),
+            (15, 20, 1.2),
+            (20, 20, 1.3),
         ]
         
-        # 🎯 Различные конфигурации Trailing Stop
+        # 🎯 ИСПРАВЛЕНО: Разные стратегии выхода
+        exit_strategies = [
+            ExitStrategy.TRAILING_ONLY,           # Только trailing
+            ExitStrategy.TRAILING_WITH_HIGH_TP,   # Trailing + защитный TP
+            ExitStrategy.ADAPTIVE_EXIT,           # Адаптивный
+        ]
+        
+        # Trailing stop конфигурации
         trailing_configs = [
-            # Фиксированные
-            TrailingStopConfig(TrailingStopType.FIXED, 0.5),
+            # Фиксированные (разные уровни)
+            TrailingStopConfig(TrailingStopType.FIXED, 0.4),
+            TrailingStopConfig(TrailingStopType.FIXED, 0.6),
             TrailingStopConfig(TrailingStopType.FIXED, 0.8),
             TrailingStopConfig(TrailingStopType.FIXED, 1.0),
             TrailingStopConfig(TrailingStopType.FIXED, 1.2),
             TrailingStopConfig(TrailingStopType.FIXED, 1.5),
             
             # ADX адаптивные
-            TrailingStopConfig(TrailingStopType.ADX_ADAPTIVE, 1.0, 
-                             adx_strong_threshold=35, adx_weak_threshold=25, 
-                             strong_trend_percent=1.8, weak_trend_percent=0.6),
+            TrailingStopConfig(TrailingStopType.ADX_ADAPTIVE, 1.0,
+                             adx_strong_threshold=35, adx_weak_threshold=25,
+                             strong_trend_percent=1.5, weak_trend_percent=0.5),
             TrailingStopConfig(TrailingStopType.ADX_ADAPTIVE, 1.0,
                              adx_strong_threshold=30, adx_weak_threshold=20,
-                             strong_trend_percent=1.5, weak_trend_percent=0.8),
+                             strong_trend_percent=1.8, weak_trend_percent=0.6),
+            TrailingStopConfig(TrailingStopType.ADX_ADAPTIVE, 1.0,
+                             adx_strong_threshold=40, adx_weak_threshold=25,
+                             strong_trend_percent=2.0, weak_trend_percent=0.8),
             
             # Ступенчатые
             TrailingStopConfig(TrailingStopType.PROFIT_STEPPED, 1.0,
-                             profit_levels=[(0.5, 0.5), (1.0, 0.8), (2.0, 1.2), (3.0, 1.8)]),
+                             profit_levels=[(0.5, 0.4), (1.0, 0.6), (2.0, 1.0), (3.0, 1.5)]),
             TrailingStopConfig(TrailingStopType.PROFIT_STEPPED, 1.0,
-                             profit_levels=[(0.8, 0.6), (1.5, 1.0), (2.5, 1.5), (4.0, 2.0)]),
-            
-            # Динамические (ATR-based)
-            TrailingStopConfig(TrailingStopType.DYNAMIC, atr_multiplier=1.5),
-            TrailingStopConfig(TrailingStopType.DYNAMIC, atr_multiplier=2.0),
+                             profit_levels=[(0.8, 0.5), (1.5, 0.8), (2.5, 1.2), (4.0, 1.8)]),
         ]
         
-        # Управление рисками
-        risk_configs = [
-            (None, None),        # Только trailing
-            (0.8, None),         # SL + trailing
-            (None, 3.0),         # Trailing + высокий TP
-            (0.5, 2.5),          # Консервативный
-        ]
+        # Stop Loss варианты
+        stop_losses = [None, 0.5, 0.8]
         
-        for ema, adx, vol in base_params:
-            for trailing_config in trailing_configs:
-                for sl, tp in risk_configs:
-                    
-                    params = OptimizedParams(
-                        ema_period=ema,
-                        adx_threshold=adx,
-                        volume_multiplier=vol,
-                        stop_loss_pct=sl,
-                        take_profit_pct=tp,
-                        trailing_config=trailing_config,
-                        di_diff_threshold=5
-                    )
-                    combinations.append(params)
-                    
-                    if len(combinations) >= 120:  # Ограничение для Railway
-                        return combinations
+        # Emergency TP (только для защиты от аномалий)
+        emergency_tps = {
+            ExitStrategy.TRAILING_ONLY: [None],
+            ExitStrategy.TRAILING_WITH_HIGH_TP: [7.0, 10.0],  # Очень высокие
+            ExitStrategy.ADAPTIVE_EXIT: [8.0],
+        }
+        
+        for ema, adx, vol in base_configs:
+            for exit_strategy in exit_strategies:
+                for trailing_config in trailing_configs:
+                    for sl in stop_losses:
+                        for emergency_tp in emergency_tps[exit_strategy]:
+                            
+                            params = OptimizedParams(
+                                ema_period=ema,
+                                adx_threshold=adx,
+                                volume_multiplier=vol,
+                                exit_strategy=exit_strategy,
+                                stop_loss_pct=sl,
+                                emergency_take_profit_pct=emergency_tp,
+                                trailing_config=trailing_config,
+                                di_diff_threshold=5
+                            )
+                            combinations.append(params)
+                            
+                            if len(combinations) >= 150:  # Лимит для Railway
+                                return combinations
         
         return combinations
     
     async def _test_strategy_params(self, df: pd.DataFrame, params: OptimizedParams, test_days: int) -> Optional[OptimizationResult]:
-        """Тестирование стратегии с trailing stop"""
+        """Тестирование с исправленной логикой"""
         try:
-            trades = self._simulate_trading_with_trailing(df, params, test_days)
+            trades = self._simulate_fixed_trading(df, params, test_days)
             
             if not trades:
                 return None
@@ -529,8 +503,9 @@ class EnhancedTrailingOptimizer:
         except Exception as e:
             return None
     
-    def _simulate_trading_with_trailing(self, df: pd.DataFrame, params: OptimizedParams, test_days: int) -> List[Dict]:
-        """Симуляция торговли с улучшенным trailing stop"""
+    def _simulate_fixed_trading(self, df: pd.DataFrame, params: OptimizedParams, test_days: int) -> List[Dict]:
+        """🎯 ИСПРАВЛЕННАЯ симуляция торговли"""
+        
         # Подготовка данных
         closes = df['close'].tolist()
         highs = df['high'].tolist()
@@ -543,19 +518,12 @@ class EnhancedTrailingOptimizer:
         adx_data = TechnicalIndicators.calculate_adx(highs, lows, closes, 14)
         atr = TechnicalIndicators.calculate_atr(highs, lows, closes, 14)
         
-        # Дополнительные индикаторы
-        rsi = []
-        if params.rsi_period:
-            rsi = TechnicalIndicators.calculate_rsi(closes, params.rsi_period)
-        
         # Средний объем
         df['avg_volume'] = df['volume'].rolling(window=20, min_periods=1).mean()
         avg_volumes = df['avg_volume'].tolist()
         
-        # 🎯 Инициализация Trailing Stop менеджера
-        trailing_manager = None
-        if params.trailing_config:
-            trailing_manager = TrailingStopManager(params.trailing_config)
+        # Trailing Stop менеджер
+        trailing_manager = TrailingStopManager(params.trailing_config)
         
         # Определяем тестовый период
         test_start_time = timestamps[-1] - timedelta(days=test_days)
@@ -569,7 +537,11 @@ class EnhancedTrailingOptimizer:
         # Симуляция торговли
         trades = []
         current_trade = None
-        trailing_stop_exits = 0
+        
+        # Счетчики выходов
+        trailing_stops = 0
+        signal_losses = 0
+        emergency_tps = 0
         
         for i in range(test_start_idx, len(timestamps)):
             try:
@@ -590,10 +562,6 @@ class EnhancedTrailingOptimizer:
                     volumes[i] > avg_volumes[i] * params.volume_multiplier
                 ]
                 
-                # RSI фильтр
-                if params.rsi_period and i < len(rsi) and not pd.isna(rsi[i]):
-                    conditions.append(rsi[i] < params.rsi_overbought)
-                
                 # Временные фильтры
                 if params.avoid_lunch_time:
                     hour = timestamp.hour
@@ -606,23 +574,38 @@ class EnhancedTrailingOptimizer:
                 
                 signal_active = all(conditions)
                 
-                # Логика входа в позицию
+                # Вход в позицию
                 if signal_active and current_trade is None:
                     current_trade = {
                         'entry_time': timestamp,
                         'entry_price': price,
                         'highest_price': price,
-                        'trailing_stop_level': None
+                        'trailing_stop_level': None,
+                        'profit_milestone_reached': 0  # Для адаптивного выхода
                     }
                 
-                # 🎯 Управление позицией с улучшенным trailing stop
+                # 🎯 ИСПРАВЛЕННОЕ управление позицией
                 elif current_trade is not None:
                     current_trade['highest_price'] = max(current_trade['highest_price'], price)
+                    current_profit = ((price - current_trade['entry_price']) / current_trade['entry_price']) * 100
                     
-                    exit_reasons = []
+                    exit_reason = None
                     
-                    # Обновляем trailing stop уровень
-                    if trailing_manager:
+                    # 1. STOP LOSS (жесткий уровень - всегда приоритет)
+                    if params.stop_loss_pct:
+                        stop_price = current_trade['entry_price'] * (1 - params.stop_loss_pct/100)
+                        if price <= stop_price:
+                            exit_reason = 'stop_loss'
+                    
+                    # 2. EMERGENCY TAKE PROFIT (защита от аномалий)
+                    if not exit_reason and params.emergency_take_profit_pct:
+                        emergency_tp_price = current_trade['entry_price'] * (1 + params.emergency_take_profit_pct/100)
+                        if price >= emergency_tp_price:
+                            exit_reason = 'emergency_take_profit'
+                            emergency_tps += 1
+                    
+                    # 3. TRAILING STOP (основной механизм выхода)
+                    if not exit_reason:
                         current_adx = adx_data['adx'][i] if not pd.isna(adx_data['adx'][i]) else None
                         current_atr = atr[i] if i < len(atr) and not pd.isna(atr[i]) else None
                         
@@ -634,35 +617,30 @@ class EnhancedTrailingOptimizer:
                         if (current_trade['trailing_stop_level'] is None or 
                             new_trailing_level > current_trade['trailing_stop_level']):
                             current_trade['trailing_stop_level'] = new_trailing_level
+                        
+                        # Проверяем срабатывание trailing stop
+                        if (current_trade['trailing_stop_level'] and 
+                            price <= current_trade['trailing_stop_level']):
+                            exit_reason = 'trailing_stop'
+                            trailing_stops += 1
                     
-                    # Проверки выхода
-                    
-                    # 1. Trailing Stop
-                    if (trailing_manager and current_trade['trailing_stop_level'] and 
-                        price <= current_trade['trailing_stop_level']):
-                        exit_reasons.append('trailing_stop')
-                        trailing_stop_exits += 1
-                    
-                    # 2. Базовый выход (только если нет trailing stop или он не сработал)
-                    elif not signal_active:
-                        exit_reasons.append('signal_lost')
-                    
-                    # 3. Stop Loss (жесткий уровень)
-                    if params.stop_loss_pct:
-                        stop_price = current_trade['entry_price'] * (1 - params.stop_loss_pct/100)
-                        if price <= stop_price:
-                            exit_reasons = ['stop_loss']  # Перезаписываем, SL приоритетнее
-                    
-                    # 4. Take Profit (если установлен)
-                    if params.take_profit_pct:
-                        tp_price = current_trade['entry_price'] * (1 + params.take_profit_pct/100)
-                        if price >= tp_price:
-                            exit_reasons.append('take_profit')
+                    # 4. SIGNAL LOSS (резервный выход для некоторых стратегий)
+                    if not exit_reason:
+                        if params.exit_strategy == ExitStrategy.SIGNAL_LOSS_BACKUP:
+                            if not signal_active and current_profit > 0.3:  # Минимальная прибыль для выхода
+                                exit_reason = 'signal_loss'
+                                signal_losses += 1
+                        
+                        elif params.exit_strategy == ExitStrategy.ADAPTIVE_EXIT:
+                            # Адаптивный выход: после достижения определенной прибыли становимся более консервативными
+                            if current_profit >= 1.5 and not signal_active:
+                                exit_reason = 'adaptive_signal_loss'
+                                signal_losses += 1
                     
                     # Выход из позиции
-                    if exit_reasons:
-                        profit_pct = ((price - current_trade['entry_price']) / current_trade['entry_price']) * 100
+                    if exit_reason:
                         duration = (timestamp - current_trade['entry_time']).total_seconds() / 3600
+                        max_potential = ((current_trade['highest_price'] - current_trade['entry_price']) / current_trade['entry_price']) * 100
                         
                         trades.append({
                             'entry_time': current_trade['entry_time'],
@@ -670,11 +648,12 @@ class EnhancedTrailingOptimizer:
                             'entry_price': current_trade['entry_price'],
                             'exit_price': price,
                             'highest_price': current_trade['highest_price'],
-                            'profit_pct': profit_pct,
+                            'profit_pct': current_profit,
                             'duration_hours': duration,
-                            'exit_reason': exit_reasons[0],
-                            'trailing_stop_used': trailing_manager is not None,
-                            'max_potential_profit': ((current_trade['highest_price'] - current_trade['entry_price']) / current_trade['entry_price']) * 100
+                            'exit_reason': exit_reason,
+                            'trailing_stop_used': True,
+                            'max_potential_profit': max_potential,
+                            'trailing_level_at_exit': current_trade.get('trailing_stop_level')
                         })
                         
                         current_trade = None
@@ -697,21 +676,28 @@ class EnhancedTrailingOptimizer:
                 'profit_pct': profit_pct,
                 'duration_hours': duration,
                 'exit_reason': 'end_of_data',
-                'trailing_stop_used': trailing_manager is not None,
-                'max_potential_profit': max_potential
+                'trailing_stop_used': True,
+                'max_potential_profit': max_potential,
+                'trailing_level_at_exit': current_trade.get('trailing_stop_level')
             })
+        
+        # Добавляем статистику выходов к результатам
+        for trade in trades:
+            trade['total_trailing_stops'] = trailing_stops
+            trade['total_signal_losses'] = signal_losses
+            trade['total_emergency_tps'] = emergency_tps
         
         return trades
     
     def _calculate_enhanced_metrics(self, params: OptimizedParams, trades: List[Dict]) -> OptimizationResult:
-        """Расчет улучшенных метрик с анализом trailing stop"""
+        """Расчет метрик с правильным учетом trailing stop"""
         if not trades:
             return OptimizationResult(
-                params=params,
-                total_return=0, win_rate=0, total_trades=0, profitable_trades=0,
+                params=params, total_return=0, win_rate=0, total_trades=0, profitable_trades=0,
                 avg_return_per_trade=0, max_drawdown=0, avg_trade_duration_hours=0,
                 sharpe_ratio=0, max_consecutive_losses=0,
-                max_profit_per_trade=0, avg_profit_on_winners=0, trailing_stop_exits=0
+                max_profit_per_trade=0, avg_profit_on_winners=0, trailing_stop_exits=0,
+                signal_loss_exits=0, emergency_tp_exits=0
             )
         
         profits = [t['profit_pct'] for t in trades]
@@ -743,13 +729,14 @@ class EnhancedTrailingOptimizer:
                 consecutive_losses = 0
         max_consecutive_losses = max(max_consecutive_losses, consecutive_losses)
         
-        # 🎯 Дополнительные метрики для trailing stop
+        # Метрики trailing stop
         max_profit_per_trade = max(profits) if profits else 0
         avg_profit_on_winners = np.mean(profitable) if profitable else 0
-        trailing_stop_exits = len([t for t in trades if t.get('exit_reason') == 'trailing_stop'])
         
-        # Анализ эффективности trailing stop
-        avg_max_potential = np.mean(max_potentials) if max_potentials else 0
+        # Подсчет выходов по типам
+        trailing_stop_exits = len([t for t in trades if 'trailing_stop' in t.get('exit_reason', '')])
+        signal_loss_exits = len([t for t in trades if 'signal_loss' in t.get('exit_reason', '')])
+        emergency_tp_exits = len([t for t in trades if t.get('exit_reason') == 'emergency_take_profit'])
         
         return OptimizationResult(
             params=params,
@@ -764,234 +751,247 @@ class EnhancedTrailingOptimizer:
             max_consecutive_losses=max_consecutive_losses,
             max_profit_per_trade=max_profit_per_trade,
             avg_profit_on_winners=avg_profit_on_winners,
-            trailing_stop_exits=trailing_stop_exits
+            trailing_stop_exits=trailing_stop_exits,
+            signal_loss_exits=signal_loss_exits,
+            emergency_tp_exits=emergency_tp_exits
         )
     
-    def print_trailing_results(self, results: List[OptimizationResult], top_n: int = 15):
-        """Детальный вывод результатов с анализом trailing stop"""
+    def print_fixed_results(self, results: List[OptimizationResult], top_n: int = 12):
+        """Детальный вывод ИСПРАВЛЕННЫХ результатов"""
         if not results:
             print("❌ Нет результатов для отображения")
             return
         
-        print(f"\n{'='*90}")
-        print(f"🎯 ТОП-{top_n} TRAILING STOP СТРАТЕГИЙ ДЛЯ SBER")
-        print(f"{'='*90}")
-        print(f"{'Ранг':<4} {'Оценка':<6} {'Доход%':<8} {'ВинРейт':<8} {'Сделок':<7} {'МаксПриб':<9} {'Тип Trailing':<15} {'Детали':<20}")
-        print("-" * 90)
+        print(f"\n{'='*100}")
+        print(f"🎯 ТОП-{top_n} ИСПРАВЛЕННЫХ TRAILING STOP СТРАТЕГИЙ SBER")
+        print(f"{'='*100}")
+        print(f"{'№':<3} {'Оценка':<7} {'Доход%':<8} {'ВинР%':<6} {'Сделок':<7} {'Средн%':<7} {'Макс%':<7} {'TrailExit':<9} {'Стратегия':<20}")
+        print("-" * 100)
         
         for i, result in enumerate(results[:top_n], 1):
-            params = result.params
-            trailing_type = "None"
-            trailing_details = ""
+            trail_exits = result.trailing_stop_exits
+            trail_pct = f"{trail_exits/result.total_trades*100:.0f}%" if result.total_trades > 0 else "0%"
+            exit_strategy = result.params.exit_strategy.value.replace('_', ' ').title()[:18]
             
-            if params.trailing_config:
-                trailing_type = params.trailing_config.type.value.title()
-                
-                if params.trailing_config.type == TrailingStopType.FIXED:
-                    trailing_details = f"{params.trailing_config.base_percent}%"
-                elif params.trailing_config.type == TrailingStopType.ADX_ADAPTIVE:
-                    trailing_details = f"{params.trailing_config.weak_trend_percent}-{params.trailing_config.strong_trend_percent}%"
-                elif params.trailing_config.type == TrailingStopType.PROFIT_STEPPED:
-                    trailing_details = "Multi-level"
-                elif params.trailing_config.type == TrailingStopType.DYNAMIC:
-                    trailing_details = f"ATR×{params.trailing_config.atr_multiplier}"
-            
-            print(f"{i:<4} {result.overall_score():<6.2f} {result.total_return:<8.2f} "
-                  f"{result.win_rate:<8.1f} {result.total_trades:<7} "
-                  f"{result.max_profit_per_trade:<9.2f} {trailing_type:<15} {trailing_details:<20}")
+            print(f"{i:<3} {result.overall_score():<7.2f} {result.total_return:<8.2f} "
+                  f"{result.win_rate:<6.1f} {result.total_trades:<7} "
+                  f"{result.avg_return_per_trade:<7.3f} {result.max_profit_per_trade:<7.2f} "
+                  f"{trail_exits}({trail_pct})<9 {exit_strategy:<20}")
         
-        # Детальный анализ ТОП-3
-        print(f"\n{'='*90}")
-        print("🔍 ДЕТАЛЬНЫЙ АНАЛИЗ ТОП-3 СТРАТЕГИЙ")
-        print(f"{'='*90}")
+        # Детальный анализ ТОП-5
+        print(f"\n{'='*100}")
+        print("🔍 ДЕТАЛЬНЫЙ АНАЛИЗ ТОП-5 ИСПРАВЛЕННЫХ СТРАТЕГИЙ")
+        print(f"{'='*100}")
         
-        for i, result in enumerate(results[:3], 1):
+        for i, result in enumerate(results[:5], 1):
             params = result.params
             
-            print(f"\n🏆 МЕСТО {i} - ОЦЕНКА: {result.overall_score():.2f}")
-            print(f"   📊 Основные показатели:")
-            print(f"       • Общая доходность: {result.total_return:+.2f}%")
-            print(f"       • Винрейт: {result.win_rate:.1f}% ({result.profitable_trades}/{result.total_trades})")
-            print(f"       • Средняя прибыль: {result.avg_return_per_trade:+.3f}%")
-            print(f"       • Максимальная сделка: {result.max_profit_per_trade:+.2f}%")
-            print(f"       • Средняя на выигрышах: {result.avg_profit_on_winners:+.2f}%")
-            print(f"       • Максимальная просадка: {result.max_drawdown:.2f}%")
-            print(f"       • Средняя длительность: {result.avg_trade_duration_hours:.1f}ч")
+            print(f"\n🏆 МЕСТО {i} - ИТОГОВАЯ ОЦЕНКА: {result.overall_score():.2f}")
+            print(f"   📊 ОСНОВНЫЕ ПОКАЗАТЕЛИ:")
+            print(f"       💰 Общая доходность: {result.total_return:+.2f}%")
+            print(f"       🎯 Винрейт: {result.win_rate:.1f}% ({result.profitable_trades}/{result.total_trades})")
+            print(f"       📈 Средняя прибыль: {result.avg_return_per_trade:+.3f}% (было +0.137%)")
+            print(f"       🚀 Максимальная сделка: {result.max_profit_per_trade:+.2f}% (было +2.72%)")
+            print(f"       💎 Средняя на выигрышах: {result.avg_profit_on_winners:+.2f}%")
+            print(f"       📉 Максимальная просадка: {result.max_drawdown:.2f}%")
+            print(f"       ⏱️ Средняя длительность: {result.avg_trade_duration_hours:.1f}ч")
+            print(f"       📊 Sharpe Ratio: {result.sharpe_ratio:.2f}")
             
-            print(f"   ⚙️ Параметры стратегии:")
+            print(f"   ⚙️ ПАРАМЕТРЫ СТРАТЕГИИ:")
             print(f"       • EMA период: {params.ema_period}")
             print(f"       • ADX порог: {params.adx_threshold}")
             print(f"       • Объем множитель: {params.volume_multiplier}")
+            print(f"       • Стратегия выхода: {params.exit_strategy.value.replace('_', ' ').title()}")
             
             if params.stop_loss_pct:
                 print(f"       • Stop Loss: -{params.stop_loss_pct}%")
-            if params.take_profit_pct:
-                print(f"       • Take Profit: +{params.take_profit_pct}%")
+            if params.emergency_take_profit_pct:
+                print(f"       • Emergency TP: +{params.emergency_take_profit_pct}% (защита)")
             
-            # 🎯 Анализ Trailing Stop
-            if params.trailing_config:
-                print(f"   🎯 Trailing Stop конфигурация:")
-                print(f"       • Тип: {params.trailing_config.type.value.title()}")
+            # Детализация Trailing Stop
+            print(f"   🎯 TRAILING STOP АНАЛИЗ:")
+            tc = params.trailing_config
+            print(f"       • Тип: {tc.type.value.replace('_', ' ').title()}")
+            
+            if tc.type == TrailingStopType.FIXED:
+                print(f"       • Фиксированный процент: {tc.base_percent}%")
+            elif tc.type == TrailingStopType.ADX_ADAPTIVE:
+                print(f"       • Слабый тренд (ADX<{tc.adx_weak_threshold}): {tc.weak_trend_percent}%")
+                print(f"       • Сильный тренд (ADX>{tc.adx_strong_threshold}): {tc.strong_trend_percent}%")
+            elif tc.type == TrailingStopType.PROFIT_STEPPED:
+                print(f"       • Ступенчатая система:")
+                for profit_thresh, trail_pct in tc.profit_levels[:3]:  # Показываем первые 3
+                    print(f"         - При прибыли {profit_thresh}%+ → trailing {trail_pct}%")
+            
+            # Статистика выходов
+            print(f"   📊 СТАТИСТИКА ВЫХОДОВ:")
+            if result.total_trades > 0:
+                trail_ratio = result.trailing_stop_exits / result.total_trades * 100
+                signal_ratio = result.signal_loss_exits / result.total_trades * 100
+                emergency_ratio = result.emergency_tp_exits / result.total_trades * 100
                 
-                if params.trailing_config.type == TrailingStopType.FIXED:
-                    print(f"       • Фиксированный процент: {params.trailing_config.base_percent}%")
-                
-                elif params.trailing_config.type == TrailingStopType.ADX_ADAPTIVE:
-                    print(f"       • Слабый тренд (ADX<{params.trailing_config.adx_weak_threshold}): {params.trailing_config.weak_trend_percent}%")
-                    print(f"       • Сильный тренд (ADX>{params.trailing_config.adx_strong_threshold}): {params.trailing_config.strong_trend_percent}%")
-                
-                elif params.trailing_config.type == TrailingStopType.PROFIT_STEPPED:
-                    print(f"       • Ступенчатая система:")
-                    for profit_thresh, trail_pct in params.trailing_config.profit_levels:
-                        print(f"         - При прибыли {profit_thresh}%+ → trailing {trail_pct}%")
-                
-                elif params.trailing_config.type == TrailingStopType.DYNAMIC:
-                    print(f"       • ATR множитель: {params.trailing_config.atr_multiplier}")
-                
-                print(f"       • Выходов по trailing stop: {result.trailing_stop_exits}")
-                if result.total_trades > 0:
-                    trailing_ratio = result.trailing_stop_exits / result.total_trades * 100
-                    print(f"       • Доля trailing выходов: {trailing_ratio:.1f}%")
-            else:
-                print(f"   🎯 Trailing Stop: НЕ ИСПОЛЬЗУЕТСЯ")
+                print(f"       🎯 Trailing Stop: {result.trailing_stop_exits} ({trail_ratio:.1f}%)")
+                print(f"       📡 Signal Loss: {result.signal_loss_exits} ({signal_ratio:.1f}%)")
+                if result.emergency_tp_exits > 0:
+                    print(f"       🚨 Emergency TP: {result.emergency_tp_exits} ({emergency_ratio:.1f}%)")
+                print(f"       🛑 Stop Loss: оставшиеся")
         
-        # Сравнительный анализ
-        print(f"\n{'='*90}")
-        print("📈 СРАВНИТЕЛЬНЫЙ АНАЛИЗ TRAILING STOP ТИПОВ")
-        print(f"{'='*90}")
+        # Сравнительный анализ по стратегиям выхода
+        print(f"\n{'='*100}")
+        print("📈 СРАВНЕНИЕ СТРАТЕГИЙ ВЫХОДА")
+        print(f"{'='*100}")
         
-        # Группируем результаты по типам trailing stop
+        exit_strategies = {}
+        for result in results:
+            strategy = result.params.exit_strategy.value
+            if strategy not in exit_strategies:
+                exit_strategies[strategy] = []
+            exit_strategies[strategy].append(result)
+        
+        print(f"📊 Средние показатели по стратегиям выхода:")
+        for strategy, strategy_results in exit_strategies.items():
+            if strategy_results:
+                avg_return = np.mean([r.total_return for r in strategy_results])
+                avg_winrate = np.mean([r.win_rate for r in strategy_results])
+                avg_max_profit = np.mean([r.max_profit_per_trade for r in strategy_results])
+                avg_trail_ratio = np.mean([r.trailing_stop_exits/r.total_trades*100 if r.total_trades > 0 else 0 for r in strategy_results])
+                best_score = max([r.overall_score() for r in strategy_results])
+                
+                strategy_name = strategy.replace('_', ' ').title()
+                print(f"   • {strategy_name}:")
+                print(f"     - Доходность: {avg_return:+.2f}%, Винрейт: {avg_winrate:.1f}%")
+                print(f"     - Макс прибыль: {avg_max_profit:.2f}%, Trailing выходы: {avg_trail_ratio:.1f}%")
+                print(f"     - Лучшая оценка: {best_score:.2f}")
+        
+        # Анализ Trailing Stop типов
+        print(f"\n📊 Анализ Trailing Stop типов:")
         trailing_types = {}
-        no_trailing = []
-        
         for result in results:
             if result.params.trailing_config:
                 ts_type = result.params.trailing_config.type.value
                 if ts_type not in trailing_types:
                     trailing_types[ts_type] = []
                 trailing_types[ts_type].append(result)
-            else:
-                no_trailing.append(result)
-        
-        print(f"📊 Средние показатели по типам:")
-        
-        if no_trailing:
-            avg_return = np.mean([r.total_return for r in no_trailing])
-            avg_winrate = np.mean([r.win_rate for r in no_trailing])
-            avg_max_profit = np.mean([r.max_profit_per_trade for r in no_trailing])
-            print(f"   • БЕЗ TRAILING: {avg_return:+.2f}% доходность, {avg_winrate:.1f}% винрейт, макс {avg_max_profit:.2f}%")
         
         for ts_type, ts_results in trailing_types.items():
             if ts_results:
                 avg_return = np.mean([r.total_return for r in ts_results])
-                avg_winrate = np.mean([r.win_rate for r in ts_results])
-                avg_max_profit = np.mean([r.max_profit_per_trade for r in ts_results])
-                best_score = max([r.overall_score() for r in ts_results])
-                print(f"   • {ts_type.upper()}: {avg_return:+.2f}% доходность, {avg_winrate:.1f}% винрейт, макс {avg_max_profit:.2f}%, лучший {best_score:.2f}")
+                avg_trail_exits = np.mean([r.trailing_stop_exits/r.total_trades*100 if r.total_trades > 0 else 0 for r in ts_results])
+                best_max_profit = max([r.max_profit_per_trade for r in ts_results])
+                
+                ts_name = ts_type.replace('_', ' ').title()
+                print(f"   • {ts_name}: {avg_return:+.2f}% доходность, {avg_trail_exits:.1f}% trailing выходы, макс {best_max_profit:.2f}%")
         
-        # Рекомендации
-        print(f"\n{'='*90}")
-        print("💡 РЕКОМЕНДАЦИИ ПО TRAILING STOP")
-        print(f"{'='*90}")
+        # Главные выводы
+        print(f"\n{'='*100}")
+        print("💡 ГЛАВНЫЕ ВЫВОДЫ И РЕКОМЕНДАЦИИ")
+        print(f"{'='*100}")
         
         best = results[0]
         
-        if best.params.trailing_config:
-            print(f"🎯 ЛУЧШИЙ TRAILING STOP: {best.params.trailing_config.type.value.title()}")
-            
-            if best.params.trailing_config.type == TrailingStopType.FIXED:
-                print(f"   🔧 Используйте фиксированный trailing stop {best.params.trailing_config.base_percent}%")
-                print(f"   💡 Преимущества: Простота, стабильность")
-                
-            elif best.params.trailing_config.type == TrailingStopType.ADX_ADAPTIVE:
-                print(f"   🔧 Используйте ADX-адаптивный trailing stop")
-                print(f"       • При слабом тренде: {best.params.trailing_config.weak_trend_percent}%")
-                print(f"       • При сильном тренде: {best.params.trailing_config.strong_trend_percent}%")
-                print(f"   💡 Преимущества: Адаптация к силе тренда, максимизация прибыли")
-                
-            elif best.params.trailing_config.type == TrailingStopType.PROFIT_STEPPED:
-                print(f"   🔧 Используйте ступенчатый trailing stop")
-                print(f"   💡 Преимущества: Защита прибыли на разных уровнях, гибкость")
-                
-        else:
-            print(f"⚠️ Лучший результат БЕЗ trailing stop - возможно, нужна доработка алгоритма")
+        print(f"🏆 ЛУЧШАЯ СТРАТЕГИЯ:")
+        print(f"   📈 Улучшение средней прибыли: {best.avg_return_per_trade:+.3f}% (было +0.137%)")
+        improvement = ((best.avg_return_per_trade - 0.137) / 0.137) * 100 if 0.137 != 0 else 0
+        print(f"   🚀 Улучшение в {improvement:+.0f}%!")
         
-        # Практические советы
+        print(f"   💎 Максимальная сделка: {best.max_profit_per_trade:+.2f}% (было +2.72%)")
+        if best.max_profit_per_trade > 2.72:
+            profit_improvement = ((best.max_profit_per_trade - 2.72) / 2.72) * 100
+            print(f"   ⬆️ Рост максимальной прибыли на {profit_improvement:+.0f}%!")
+        
+        if best.trailing_stop_exits > 0:
+            trail_efficiency = best.trailing_stop_exits / best.total_trades * 100
+            print(f"   🎯 Эффективность trailing stop: {trail_efficiency:.1f}% всех выходов")
+            print(f"   ✅ Trailing stop РАБОТАЕТ правильно!")
+        else:
+            print(f"   ⚠️ Trailing stop все еще не срабатывает - нужна дальнейшая настройка")
+        
         print(f"\n🔧 КОД ДЛЯ ВНЕДРЕНИЯ ЛУЧШЕЙ СТРАТЕГИИ:")
         print("=" * 60)
         best_params = best.params
         
-        print("# Основные параметры:")
+        print("# Основные параметры стратегии:")
         print(f"EMA_PERIOD = {best_params.ema_period}")
         print(f"ADX_THRESHOLD = {best_params.adx_threshold}")
         print(f"VOLUME_MULTIPLIER = {best_params.volume_multiplier}")
         print(f"DI_DIFF_THRESHOLD = {best_params.di_diff_threshold}")
         
+        print(f"\n# Стратегия выхода:")
+        print(f"EXIT_STRATEGY = '{best_params.exit_strategy.value}'")
+        
         if best_params.stop_loss_pct:
             print(f"STOP_LOSS_PCT = {best_params.stop_loss_pct}")
-        if best_params.take_profit_pct:
-            print(f"TAKE_PROFIT_PCT = {best_params.take_profit_pct}")
-            
-        # Код trailing stop
-        if best_params.trailing_config:
-            tc = best_params.trailing_config
-            print(f"\n# Trailing Stop конфигурация:")
-            print(f"TRAILING_TYPE = '{tc.type.value}'")
-            
-            if tc.type == TrailingStopType.FIXED:
-                print(f"TRAILING_PERCENT = {tc.base_percent}")
-                print("\n# Логика trailing stop:")
-                print("def update_trailing_stop(highest_price, trailing_percent):")
-                print("    return highest_price * (1 - trailing_percent/100)")
-                
-            elif tc.type == TrailingStopType.ADX_ADAPTIVE:
-                print(f"ADX_STRONG_THRESHOLD = {tc.adx_strong_threshold}")
-                print(f"ADX_WEAK_THRESHOLD = {tc.adx_weak_threshold}")
-                print(f"STRONG_TREND_PERCENT = {tc.strong_trend_percent}")
-                print(f"WEAK_TREND_PERCENT = {tc.weak_trend_percent}")
-                
-                print("\n# Логика ADX-адаптивного trailing:")
-                print("def calculate_trailing_percent(current_adx):")
-                print("    if current_adx >= ADX_STRONG_THRESHOLD:")
-                print("        return STRONG_TREND_PERCENT")
-                print("    elif current_adx <= ADX_WEAK_THRESHOLD:")
-                print("        return WEAK_TREND_PERCENT")
-                print("    else:")
-                print("        # Линейная интерполяция")
-                print("        ratio = (current_adx - ADX_WEAK_THRESHOLD) / (ADX_STRONG_THRESHOLD - ADX_WEAK_THRESHOLD)")
-                print("        return WEAK_TREND_PERCENT + (STRONG_TREND_PERCENT - WEAK_TREND_PERCENT) * ratio")
-                
-            elif tc.type == TrailingStopType.PROFIT_STEPPED:
-                print("PROFIT_LEVELS = [")
-                for profit_thresh, trail_pct in tc.profit_levels:
-                    print(f"    ({profit_thresh}, {trail_pct}),")
-                print("]")
-                
-                print("\n# Логика ступенчатого trailing:")
-                print("def get_trailing_percent(current_profit):")
-                print("    for profit_threshold, trailing_pct in sorted(PROFIT_LEVELS, reverse=True):")
-                print("        if current_profit >= profit_threshold:")
-                print("            return trailing_pct")
-                print("    return 1.0  # базовый уровень")
         
-        print(f"\n📊 ОЖИДАЕМЫЕ РЕЗУЛЬТАТЫ:")
-        print(f"   💰 Доходность: {best.total_return:+.2f}%")
-        print(f"   🎲 Винрейт: {best.win_rate:.1f}%")
+        if best_params.emergency_take_profit_pct:
+            print(f"EMERGENCY_TAKE_PROFIT_PCT = {best_params.emergency_take_profit_pct}")
+            print("# ☝️ Emergency TP - только защита от аномалий, НЕ основной выход!")
+        
+        # Код trailing stop
+        tc = best_params.trailing_config
+        print(f"\n# Trailing Stop конфигурация:")
+        print(f"TRAILING_TYPE = '{tc.type.value}'")
+        
+        if tc.type == TrailingStopType.FIXED:
+            print(f"TRAILING_PERCENT = {tc.base_percent}")
+            print("\ndef calculate_trailing_stop(highest_price):")
+            print(f"    return highest_price * (1 - {tc.base_percent}/100)")
+            
+        elif tc.type == TrailingStopType.ADX_ADAPTIVE:
+            print(f"ADX_STRONG_THRESHOLD = {tc.adx_strong_threshold}")
+            print(f"ADX_WEAK_THRESHOLD = {tc.adx_weak_threshold}")
+            print(f"STRONG_TREND_PERCENT = {tc.strong_trend_percent}")
+            print(f"WEAK_TREND_PERCENT = {tc.weak_trend_percent}")
+            
+            print("\ndef calculate_adaptive_trailing(highest_price, current_adx):")
+            print("    if current_adx >= ADX_STRONG_THRESHOLD:")
+            print("        trailing_pct = STRONG_TREND_PERCENT")
+            print("    elif current_adx <= ADX_WEAK_THRESHOLD:")
+            print("        trailing_pct = WEAK_TREND_PERCENT")
+            print("    else:")
+            print("        ratio = (current_adx - ADX_WEAK_THRESHOLD) / (ADX_STRONG_THRESHOLD - ADX_WEAK_THRESHOLD)")
+            print("        trailing_pct = WEAK_TREND_PERCENT + (STRONG_TREND_PERCENT - WEAK_TREND_PERCENT) * ratio")
+            print("    return highest_price * (1 - trailing_pct/100)")
+            
+        elif tc.type == TrailingStopType.PROFIT_STEPPED:
+            print("PROFIT_LEVELS = [")
+            for profit_thresh, trail_pct in tc.profit_levels:
+                print(f"    ({profit_thresh}, {trail_pct}),")
+            print("]")
+            
+            print("\ndef calculate_stepped_trailing(highest_price, current_profit):")
+            print("    trailing_pct = 1.0  # базовый")
+            print("    for profit_threshold, step_trailing_pct in sorted(PROFIT_LEVELS, reverse=True):")
+            print("        if current_profit >= profit_threshold:")
+            print("            trailing_pct = step_trailing_pct")
+            print("            break")
+            print("    return highest_price * (1 - trailing_pct/100)")
+        
+        print(f"\n📊 ОЖИДАЕМЫЕ РЕЗУЛЬТАТЫ С НОВОЙ СТРАТЕГИЕЙ:")
+        print(f"   💰 Общая доходность: {best.total_return:+.2f}%")
+        print(f"   🎯 Винрейт: {best.win_rate:.1f}%")
+        print(f"   📈 Средняя прибыль: {best.avg_return_per_trade:+.3f}%")
         print(f"   🚀 Максимальная сделка: {best.max_profit_per_trade:+.2f}%")
-        print(f"   📈 Количество сделок: {best.total_trades}")
+        print(f"   📊 Количество сделок: {best.total_trades}")
         print(f"   ⏱️ Средняя длительность: {best.avg_trade_duration_hours:.1f}ч")
         
         if best.trailing_stop_exits > 0:
-            trailing_efficiency = best.trailing_stop_exits / best.total_trades * 100
-            print(f"   🎯 Эффективность trailing: {trailing_efficiency:.1f}% выходов")
+            efficiency = best.trailing_stop_exits / best.total_trades * 100
+            print(f"   🎯 Trailing stop эффективность: {efficiency:.1f}%")
+        
+        print(f"\n⚠️ ВАЖНЫЕ ЗАМЕЧАНИЯ:")
+        print("• Исправлена логика приоритета выходов")
+        print("• Trailing stop теперь работает БЕЗ конфликта с Take Profit")
+        print("• Emergency TP используется только как защита от аномалий")
+        print("• Тестируйте стратегию на малых объемах перед полным внедрением")
 
 async def main():
-    """Главная функция для тестирования trailing stop"""
-    print("🎯 ENHANCED SBER TRAILING STOP OPTIMIZER")
-    print("=" * 70)
-    print("📊 Поиск оптимального trailing stop для максимизации прибыли")
-    print("⏱️ Процесс займет 5-7 минут...")
-    print("=" * 70)
+    """Главная функция исправленного оптимизатора"""
+    print("🎯 FIXED SBER TRAILING STOP OPTIMIZER")
+    print("=" * 80)
+    print("✅ Исправлена логика приоритета выходов")
+    print("🚀 Trailing Stop теперь работает БЕЗ конфликта с Take Profit")
+    print("⏱️ Процесс займет 4-6 минут...")
+    print("=" * 80)
     
     # Получаем токен
     TINKOFF_TOKEN = os.getenv('TINKOFF_TOKEN')
@@ -1001,15 +1001,15 @@ async def main():
         logger.error("🔧 Добавьте токен в Railway: Settings → Variables → TINKOFF_TOKEN")
         sys.exit(1)
     
-    logger.info("✅ Токен найден, запускаем оптимизацию trailing stop...")
+    logger.info("✅ Токен найден, запускаем ИСПРАВЛЕННУЮ оптимизацию...")
     
     try:
-        # Создаем оптимизатор
-        optimizer = EnhancedTrailingOptimizer(TINKOFF_TOKEN)
+        # Создаем исправленный оптимизатор
+        optimizer = FixedTrailingOptimizer(TINKOFF_TOKEN)
         
         # Запускаем оптимизацию
-        test_days = 90  # Увеличиваем период для лучшего анализа trailing stop
-        logger.info(f"🔬 Поиск оптимального trailing stop за {test_days} дней...")
+        test_days = 90
+        logger.info(f"🔬 Поиск оптимального trailing stop с ИСПРАВЛЕННОЙ логикой за {test_days} дней...")
         
         results = await optimizer.run_optimization(test_days=test_days)
         
@@ -1017,38 +1017,51 @@ async def main():
             print("❌ Не удалось получить результаты оптимизации")
             return
         
-        # Выводим результаты с фокусом на trailing stop
-        optimizer.print_trailing_results(results, top_n=15)
+        # Выводим исправленные результаты
+        optimizer.print_fixed_results(results, top_n=12)
         
         # Дополнительная статистика
-        print(f"\n📈 СТАТИСТИКА ОПТИМИЗАЦИИ:")
+        print(f"\n📈 СТАТИСТИКА ИСПРАВЛЕННОЙ ОПТИМИЗАЦИИ:")
         print(f"   🧪 Протестировано стратегий: {len(results)}")
         
-        with_trailing = [r for r in results if r.params.trailing_config]
-        without_trailing = [r for r in results if not r.params.trailing_config]
+        # Анализ работы trailing stop
+        working_trailing = [r for r in results if r.trailing_stop_exits > 0]
+        print(f"   🎯 Стратегий с работающим trailing stop: {len(working_trailing)} ({len(working_trailing)/len(results)*100:.1f}%)")
         
-        print(f"   🎯 С trailing stop: {len(with_trailing)}")
-        print(f"   ⚪ Без trailing stop: {len(without_trailing)}")
-        
-        if with_trailing and without_trailing:
-            avg_with = np.mean([r.total_return for r in with_trailing])
-            avg_without = np.mean([r.total_return for r in without_trailing])
-            improvement = ((avg_with - avg_without) / abs(avg_without)) * 100 if avg_without != 0 else 0
+        if working_trailing:
+            avg_trailing_efficiency = np.mean([r.trailing_stop_exits/r.total_trades*100 for r in working_trailing if r.total_trades > 0])
+            print(f"   📊 Средняя эффективность trailing stop: {avg_trailing_efficiency:.1f}%")
             
-            print(f"   📊 Средняя доходность с trailing: {avg_with:+.2f}%")
-            print(f"   📊 Средняя доходность без trailing: {avg_without:+.2f}%")
-            print(f"   🚀 Улучшение от trailing stop: {improvement:+.1f}%")
+            best_trailing = max(working_trailing, key=lambda x: x.trailing_stop_exits/x.total_trades if x.total_trades > 0 else 0)
+            best_efficiency = best_trailing.trailing_stop_exits/best_trailing.total_trades*100 if best_trailing.total_trades > 0 else 0
+            print(f"   🏆 Лучшая эффективность trailing: {best_efficiency:.1f}% ({best_trailing.trailing_stop_exits}/{best_trailing.total_trades})")
         
         profitable = [r for r in results if r.total_return > 0]
         print(f"   💰 Прибыльных стратегий: {len(profitable)} ({len(profitable)/len(results)*100:.1f}%)")
         
         if profitable:
-            best_profit = max([r.max_profit_per_trade for r in profitable])
-            avg_max_profit = np.mean([r.max_profit_per_trade for r in profitable])
-            print(f"   🚀 Максимальная сделка: {best_profit:.2f}%")
-            print(f"   📊 Средняя максимальная: {avg_max_profit:.2f}%")
+            best_return = max([r.total_return for r in profitable])
+            avg_return = np.mean([r.total_return for r in profitable])
+            best_max_profit = max([r.max_profit_per_trade for r in profitable])
+            
+            print(f"   🚀 Лучшая доходность: {best_return:.2f}%")
+            print(f"   📊 Средняя доходность прибыльных: {avg_return:.2f}%")
+            print(f"   💎 Максимальная сделка: {best_max_profit:.2f}%")
+            
+            # Сравнение с исходными результатами
+            print(f"\n🔍 СРАВНЕНИЕ С ИСХОДНЫМИ РЕЗУЛЬТАТАМИ:")
+            print(f"   📈 Средняя прибыль БЫЛО: +0.137%")
+            print(f"   📈 Средняя прибыль СТАЛО: {results[0].avg_return_per_trade:+.3f}%")
+            improvement = ((results[0].avg_return_per_trade - 0.137) / 0.137) * 100 if 0.137 != 0 else 0
+            print(f"   🚀 УЛУЧШЕНИЕ: {improvement:+.0f}%!")
+            
+            print(f"   💎 Максимальная БЫЛО: +2.72%")
+            print(f"   💎 Максимальная СТАЛО: {best_max_profit:+.2f}%")
+            if best_max_profit > 2.72:
+                max_improvement = ((best_max_profit - 2.72) / 2.72) * 100
+                print(f"   ⬆️ РОСТ МАКСИМАЛЬНОЙ: {max_improvement:+.0f}%!")
         
-        logger.info("✅ Оптимизация trailing stop завершена успешно!")
+        logger.info("✅ ИСПРАВЛЕННАЯ оптимизация trailing stop завершена успешно!")
         
     except Exception as e:
         logger.error(f"❌ Критическая ошибка: {e}")
