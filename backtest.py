@@ -122,6 +122,7 @@ class BacktestEngine:
                 df = df.sort_values('timestamp').reset_index(drop=True)
                 
                 print(f"✅ Загружено {len(df)} часовых свечей")
+                print(f"📅 Период: {df['timestamp'].min()} - {df['timestamp'].max()}")
                 return df
                 
         except Exception as e:
@@ -136,10 +137,12 @@ class BacktestEngine:
         """Симуляция одной сделки"""
         
         # Создаем объект сделки
+        entry_time = pd.to_datetime(entry_signal['timestamp'])
+        
         trade = Trade(
-            signal_timestamp=entry_signal['timestamp'],
+            signal_timestamp=entry_time,
             entry_price=entry_signal['price'],
-            entry_time=entry_signal['timestamp'],
+            entry_time=entry_time,
             signal_strength=entry_signal['strength'],
             adx=entry_signal['adx'],
             di_diff=entry_signal['di_diff']
@@ -150,18 +153,37 @@ class BacktestEngine:
         target_price = trade.entry_price * (1 + self.setup.take_profit_pct / 100)
         partial_price = trade.entry_price * (1 + self.setup.partial_profit_pct / 100)
         
-        # Ищем данные после входа
-        entry_idx = price_data[price_data['timestamp'] >= trade.entry_time].index
-        if len(entry_idx) == 0:
+        # Ищем данные после входа (с небольшим буфером для поиска)
+        mask = price_data['timestamp'] >= (entry_time - pd.Timedelta(hours=1))
+        filtered_data = price_data[mask].reset_index(drop=True)
+        
+        if filtered_data.empty:
+            print(f"⚠️ Нет данных для сигнала {entry_time}")
             return trade
         
-        entry_idx = entry_idx[0]
+        # Находим ближайшую свечу для входа
+        entry_idx = 0
+        if len(filtered_data) > 1:
+            time_diffs = abs(filtered_data['timestamp'] - entry_time)
+            entry_idx = time_diffs.idxmin()
+        
+        # Корректируем цену входа (берем цену открытия следующей свечи)
+        if entry_idx + 1 < len(filtered_data):
+            actual_entry = filtered_data.iloc[entry_idx + 1]
+            trade.entry_price = actual_entry['open']
+            trade.entry_time = actual_entry['timestamp']
+            
+            # Пересчитываем уровни
+            stop_price = trade.entry_price * (1 + self.setup.stop_loss_pct / 100)
+            target_price = trade.entry_price * (1 + self.setup.take_profit_pct / 100)
+            partial_price = trade.entry_price * (1 + self.setup.partial_profit_pct / 100)
+        
         max_profit = 0
         max_drawdown = 0
         
         # Проверяем каждую свечу после входа
-        for i in range(entry_idx, min(entry_idx + self.setup.max_hold_hours, len(price_data))):
-            candle = price_data.iloc[i]
+        for i in range(entry_idx + 1, min(entry_idx + 1 + self.setup.max_hold_hours, len(filtered_data))):
+            candle = filtered_data.iloc[i]
             current_time = candle['timestamp']
             
             # Текущая прибыль/убыток
@@ -173,7 +195,7 @@ class BacktestEngine:
             max_profit = max(max_profit, high_profit)
             max_drawdown = min(max_drawdown, low_profit)
             
-            # Проверка стоп-лосса
+            # Проверка стоп-лосса (сначала проверяем худший сценарий)
             if candle['low'] <= stop_price:
                 trade.exit_price = stop_price
                 trade.exit_time = current_time
@@ -199,28 +221,32 @@ class BacktestEngine:
         
         # Если не закрылись - таймаут
         if trade.exit_price is None:
-            last_candle = price_data.iloc[min(entry_idx + self.setup.max_hold_hours - 1, len(price_data) - 1)]
+            last_idx = min(entry_idx + self.setup.max_hold_hours, len(filtered_data) - 1)
+            last_candle = filtered_data.iloc[last_idx]
             trade.exit_price = last_candle['close']
             trade.exit_time = last_candle['timestamp']
             trade.result = TradeResult.TIMEOUT
             trade.profit_pct = ((trade.exit_price - trade.entry_price) / trade.entry_price) * 100
         
         # Финальные расчеты
-        trade.profit_rub = (trade.exit_price - trade.entry_price)
-        trade.hold_hours = int((trade.exit_time - trade.entry_time).total_seconds() / 3600)
-        trade.max_profit_pct = max_profit
-        trade.max_drawdown_pct = max_drawdown
-        
-        # Вычитаем комиссию
-        trade.profit_pct -= self.setup.commission_pct
-        trade.profit_rub -= trade.entry_price * (self.setup.commission_pct / 100)
+        if trade.exit_price is not None:
+            trade.profit_rub = (trade.exit_price - trade.entry_price)
+            trade.hold_hours = int((trade.exit_time - trade.entry_time).total_seconds() / 3600)
+            trade.max_profit_pct = max_profit
+            trade.max_drawdown_pct = max_drawdown
+            
+            # Вычитаем комиссию
+            commission = trade.entry_price * (self.setup.commission_pct / 100) * 2  # Вход и выход
+            trade.profit_pct -= (commission / trade.entry_price) * 100
+            trade.profit_rub -= commission
         
         return trade
     
     def generate_sample_signals(self) -> List[Dict]:
         """Генерация тестовых сигналов на основе ваших данных"""
         # Используем параметры из ваших реальных сигналов
-        base_date = datetime(2025, 8, 5)
+        from datetime import timezone
+        base_date = datetime(2025, 8, 5, tzinfo=timezone.utc)
         signals = []
         
         # Топ сигналы из ваших логов
@@ -297,13 +323,27 @@ class BacktestEngine:
         
         # Симулируем все сделки
         trades = []
+        successful_trades = 0
+        
         for i, signal in enumerate(signals):
-            if i < 10 or i % 10 == 0:  # Прогресс
-                print(f"📈 Обрабатываем сигнал {i+1}/{len(signals)}...")
+            if i < 5 or i % 20 == 0:  # Более частый прогресс для отладки
+                print(f"📈 Обрабатываем сигнал {i+1}/{len(signals)} "
+                      f"(время: {signal['timestamp']}, сила: {signal['strength']:.1f}%)")
             
-            trade = self.simulate_trade(signal, price_data)
-            if trade.exit_price is not None:
-                trades.append(trade)
+            try:
+                trade = self.simulate_trade(signal, price_data)
+                if trade.exit_price is not None:
+                    trades.append(trade)
+                    successful_trades += 1
+                elif i < 10:  # Показываем детали первых неудачных сделок
+                    print(f"⚠️ Сделка {i+1} не выполнена: нет данных после {signal['timestamp']}")
+            except Exception as e:
+                print(f"❌ Ошибка в сделке {i+1}: {e}")
+                if i < 5:  # Подробности только для первых ошибок
+                    import traceback
+                    traceback.print_exc()
+        
+        print(f"\n✅ Успешно обработано {successful_trades} из {len(signals)} сигналов")
         
         if not trades:
             print("❌ Не удалось выполнить ни одной сделки")
