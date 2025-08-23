@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
-Railway запуск многотаймфреймового анализа SBER
-Возврат к основам - простая и эффективная стратегия
-ИСПРАВЛЕНЫ ТОЛЬКО ЛИМИТЫ API
+SBER 1H Strategy - Простая и эффективная стратегия
+Только часовые сигналы без переусложнения
 """
 
 import asyncio
@@ -20,14 +19,13 @@ from enum import Enum
 from tinkoff.invest import Client, RequestError, CandleInterval, HistoricCandle
 from tinkoff.invest.utils import now
 
-print("Starting Multi-Timeframe Analysis Container")
-print("🎯 SBER MULTI-TIMEFRAME STRATEGY ANALYZER")
-print("=" * 60)
-print("✅ Простая стратегия без переоптимизации")
-print("🎯 Многотаймфреймовый анализ для точных входов")  
-print("🔧 ИСПРАВЛЕНЫ API ЛИМИТЫ для коротких ТФ")
-print("⏱️ Анализ займет 3-4 минуты...")
-print("=" * 60)
+print("🎯 SBER 1H STRATEGY ANALYZER")
+print("=" * 50)
+print("✅ Только часовые сигналы")
+print("🎯 Простая стратегия без переоптимизации")  
+print("📊 Анализ силы сигналов")
+print("⏱️ Анализ займет 1-2 минуты...")
+print("=" * 50)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -35,13 +33,6 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(sys.stdout)]
 )
 logger = logging.getLogger(__name__)
-
-class TimeFrame(Enum):
-    """Таймфреймы для анализа"""
-    HOUR_1 = "1h"
-    MIN_30 = "30m" 
-    MIN_15 = "15m"
-    MIN_5 = "5m"
 
 @dataclass
 class SignalConditions:
@@ -52,9 +43,8 @@ class SignalConditions:
     ema_period: int = 20
 
 @dataclass
-class TimeFrameSignal:
-    """Сигнал на таймфрейме"""
-    timeframe: TimeFrame
+class Signal:
+    """Сигнал на 1h"""
     timestamp: datetime
     price: float
     adx: float
@@ -66,71 +56,51 @@ class TimeFrameSignal:
     
     def is_valid(self) -> bool:
         return all(self.conditions_met.values())
-
-@dataclass
-class MultiTimeFrameEntry:
-    """Точка входа с подтверждениями"""
-    main_signal: TimeFrameSignal
-    confirmation_signals: List[TimeFrameSignal]
-    entry_time: datetime
-    entry_price: float
-    confidence_score: float
     
-    def get_confirmation_count(self) -> int:
-        return len([s for s in self.confirmation_signals if s.is_valid()])
+    def get_strength_category(self) -> str:
+        if self.signal_strength >= 80:
+            return "ОЧЕНЬ СИЛЬНЫЙ"
+        elif self.signal_strength >= 60:
+            return "СИЛЬНЫЙ"
+        elif self.signal_strength >= 40:
+            return "СРЕДНИЙ"
+        elif self.signal_strength >= 20:
+            return "СЛАБЫЙ"
+        else:
+            return "ОЧЕНЬ СЛАБЫЙ"
 
 class DataProvider:
-    """Провайдер данных Tinkoff - ИСПРАВЛЕНЫ ЛИМИТЫ API"""
+    """Провайдер данных Tinkoff"""
     
     def __init__(self, token: str):
         self.token = token
         self.figi = "BBG004730N88"  # SBER
         
-    def get_interval_for_timeframe(self, timeframe: TimeFrame) -> CandleInterval:
-        mapping = {
-            TimeFrame.HOUR_1: CandleInterval.CANDLE_INTERVAL_HOUR,
-            TimeFrame.MIN_30: CandleInterval.CANDLE_INTERVAL_30_MIN,
-            TimeFrame.MIN_15: CandleInterval.CANDLE_INTERVAL_15_MIN,
-            TimeFrame.MIN_5: CandleInterval.CANDLE_INTERVAL_5_MIN
-        }
-        return mapping[timeframe]
-    
-    async def get_candles(self, timeframe: TimeFrame, days: int = 21) -> List[HistoricCandle]:
-        """Получение данных - ИСПРАВЛЕНЫ ЛИМИТЫ"""
+    async def get_candles(self, days: int = 21) -> List[HistoricCandle]:
+        """Получение часовых данных"""
         try:
             with Client(self.token) as client:
                 to_time = now()
-                
-                # ИСПРАВЛЕНИЕ: Правильные лимиты для API
-                if timeframe == TimeFrame.MIN_5:
-                    days = min(days, 1)  # 5м - максимум 1 день
-                elif timeframe == TimeFrame.MIN_15:
-                    days = min(days, 3)  # 15м - максимум 3 дня  
-                elif timeframe == TimeFrame.MIN_30:
-                    days = min(days, 7)  # 30м - максимум 7 дней
-                # 1h остается 21 день
-                
                 from_time = to_time - timedelta(days=days)
-                interval = self.get_interval_for_timeframe(timeframe)
                 
-                logger.info(f"📡 Загрузка {timeframe.value}: {days} дней ({from_time.strftime('%d.%m %H:%M')} - {to_time.strftime('%d.%m %H:%M')})")
+                logger.info(f"📡 Загрузка 1H: {days} дней ({from_time.strftime('%d.%m %H:%M')} - {to_time.strftime('%d.%m %H:%M')})")
                 
                 response = client.market_data.get_candles(
                     figi=self.figi,
                     from_=from_time,
                     to=to_time,
-                    interval=interval
+                    interval=CandleInterval.CANDLE_INTERVAL_HOUR
                 )
                 
                 if response.candles:
-                    logger.info(f"✅ {timeframe.value}: получено {len(response.candles)} свечей")
+                    logger.info(f"✅ Получено {len(response.candles)} часовых свечей")
                     return response.candles
                 else:
-                    logger.warning(f"⚠️ {timeframe.value}: пустой ответ")
+                    logger.warning("⚠️ Пустой ответ от API")
                     return []
                     
         except Exception as e:
-            logger.error(f"❌ Ошибка загрузки {timeframe.value}: {e}")
+            logger.error(f"❌ Ошибка загрузки данных: {e}")
             return []
     
     def candles_to_dataframe(self, candles: List[HistoricCandle]) -> pd.DataFrame:
@@ -169,7 +139,7 @@ class DataProvider:
             return 0.0
 
 class TechnicalIndicators:
-    """Технические индикаторы - БЕЗ ИЗМЕНЕНИЙ"""
+    """Технические индикаторы"""
     
     @staticmethod
     def calculate_ema(prices: List[float], period: int) -> List[float]:
@@ -240,12 +210,12 @@ class TechnicalIndicators:
         }
 
 class SignalAnalyzer:
-    """Анализатор сигналов - БЕЗ ИЗМЕНЕНИЙ"""
+    """Анализатор сигналов"""
     
     def __init__(self, conditions: SignalConditions = None):
         self.conditions = conditions or SignalConditions()
     
-    def analyze_timeframe(self, df: pd.DataFrame, timeframe: TimeFrame) -> List[TimeFrameSignal]:
+    def analyze_signals(self, df: pd.DataFrame) -> List[Signal]:
         if df.empty or len(df) < 50:
             return []
         
@@ -277,22 +247,28 @@ class SignalAnalyzer:
                     'di_plus_above_minus': plus_di > minus_di
                 }
                 
-                # Расчет силы сигнала
+                # Расчет силы сигнала с детализацией
                 signal_strength = 0
+                
+                # ADX компонент (40% от общей силы)
                 if conditions_met['adx_above_threshold']:
                     adx_excess = (current_adx - self.conditions.adx_threshold) / 20
-                    signal_strength += min(adx_excess * 40, 40)
+                    adx_component = min(adx_excess * 40, 40)
+                    signal_strength += adx_component
                 
+                # EMA компонент (30% от общей силы)
                 if conditions_met['price_above_ema']:
                     ema_distance = ((price - current_ema) / current_ema) * 100
-                    signal_strength += min(abs(ema_distance) * 15, 30)
+                    ema_component = min(abs(ema_distance) * 15, 30)
+                    signal_strength += ema_component
                 
+                # DI компонент (30% от общей силы)
                 if conditions_met['di_plus_above_minus']:
                     di_diff = plus_di - minus_di
-                    signal_strength += min(di_diff * 2, 30)
+                    di_component = min(di_diff * 2, 30)
+                    signal_strength += di_component
                 
-                signal = TimeFrameSignal(
-                    timeframe=timeframe,
+                signal = Signal(
                     timestamp=timestamps[i],
                     price=price,
                     adx=current_adx,
@@ -311,164 +287,183 @@ class SignalAnalyzer:
         
         return signals
 
-class MultiTimeFrameAnalyzer:
-    """Главный анализатор - ИСПРАВЛЕНА ТОЛЬКО ЗАГРУЗКА ДАННЫХ"""
+class StrategyAnalyzer:
+    """Анализатор стратегии"""
     
     def __init__(self, token: str):
         self.data_provider = DataProvider(token)
         self.signal_analyzer = SignalAnalyzer()
         
-    async def run_analysis(self, days: int = 21) -> None:
-        """Запуск полного анализа"""
-        logger.info(f"🚀 Запускаем многотаймфреймовый анализ за {days} дней...")
+    async def run_analysis(self, days: int = 21) -> List[Signal]:
+        """Запуск анализа"""
+        logger.info(f"🚀 Запускаем анализ 1H стратегии за {days} дней...")
         
-        timeframes = [TimeFrame.HOUR_1, TimeFrame.MIN_30, TimeFrame.MIN_15, TimeFrame.MIN_5]
-        all_signals = {}
+        # Загружаем данные
+        candles = await self.data_provider.get_candles(days)
+        if not candles:
+            logger.error("❌ Не удалось загрузить данные")
+            return []
         
-        # Загружаем данные по всем таймфреймам
-        for timeframe in timeframes:
-            try:
-                candles = await self.data_provider.get_candles(timeframe, days)
-                if not candles:
-                    all_signals[timeframe] = []
-                    continue
-                
-                df = self.data_provider.candles_to_dataframe(candles)
-                if df.empty:
-                    all_signals[timeframe] = []
-                    continue
-                
-                signals = self.signal_analyzer.analyze_timeframe(df, timeframe)
-                all_signals[timeframe] = signals
-                
-                await asyncio.sleep(0.5)  # Небольшая пауза
-                
-            except Exception as e:
-                logger.error(f"❌ Ошибка {timeframe.value}: {e}")
-                all_signals[timeframe] = []
+        df = self.data_provider.candles_to_dataframe(candles)
+        if df.empty:
+            logger.error("❌ Пустой DataFrame")
+            return []
         
-        # Ищем точки входа
-        entries = self.find_multi_timeframe_entries(all_signals)
+        # Анализируем сигналы
+        signals = self.signal_analyzer.analyze_signals(df)
         
         # Выводим результаты
-        self.print_results(all_signals, entries)
+        self.print_results(signals)
         
-        return entries
+        return signals
     
-    def find_multi_timeframe_entries(self, all_signals: Dict[TimeFrame, List[TimeFrameSignal]]) -> List[MultiTimeFrameEntry]:
-        entries = []
-        main_signals = all_signals.get(TimeFrame.HOUR_1, [])
+    def print_results(self, signals: List[Signal]):
+        """Детальный вывод результатов с анализом силы"""
         
-        logger.info(f"🎯 Анализ {len(main_signals)} основных сигналов на 1h...")
+        print(f"\n{'='*80}")
+        print("🎯 АНАЛИЗ СИГНАЛОВ SBER 1H СТРАТЕГИИ")
+        print(f"{'='*80}")
         
-        for main_signal in main_signals:
-            confirmation_window_start = main_signal.timestamp
-            confirmation_window_end = main_signal.timestamp + timedelta(hours=1)
-            
-            confirmations = []
-            
-            for timeframe in [TimeFrame.MIN_30, TimeFrame.MIN_15, TimeFrame.MIN_5]:
-                timeframe_signals = all_signals.get(timeframe, [])
-                
-                for signal in timeframe_signals:
-                    if confirmation_window_start <= signal.timestamp <= confirmation_window_end:
-                        confirmations.append(signal)
-                        break
-            
-            confirmation_count = len([c for c in confirmations if c.is_valid()])
-            base_confidence = main_signal.signal_strength
-            confirmation_bonus = confirmation_count * 15
-            confidence_score = min(base_confidence + confirmation_bonus, 100)
-            
-            if confirmations:
-                entry = MultiTimeFrameEntry(
-                    main_signal=main_signal,
-                    confirmation_signals=confirmations,
-                    entry_time=main_signal.timestamp,
-                    entry_price=main_signal.price,
-                    confidence_score=confidence_score
-                )
-                entries.append(entry)
-        
-        entries.sort(key=lambda x: x.confidence_score, reverse=True)
-        logger.info(f"✅ Найдено {len(entries)} точек входа")
-        return entries
-    
-    def print_results(self, all_signals: Dict[TimeFrame, List[TimeFrameSignal]], 
-                     entries: List[MultiTimeFrameEntry]):
-        """Вывод результатов - БЕЗ ИЗМЕНЕНИЙ"""
-        
-        print(f"\n{'='*90}")
-        print("🎯 РЕЗУЛЬТАТЫ МНОГОТАЙМФРЕЙМОВОГО АНАЛИЗА SBER")
-        print(f"{'='*90}")
-        
-        # Статистика по таймфреймам
-        print("\n📊 СИГНАЛЫ ПО ТАЙМФРЕЙМАМ:")
-        total_signals = 0
-        for timeframe, signals in all_signals.items():
-            valid = len([s for s in signals if s.is_valid()])
-            avg_strength = np.mean([s.signal_strength for s in signals]) if signals else 0
-            total_signals += valid
-            
-            print(f"   {timeframe.value:>6}: {valid:>3} валидных сигналов (средняя сила: {avg_strength:.1f}%)")
-        
-        print(f"\n📈 ОБЩАЯ СТАТИСТИКА:")
-        print(f"   💎 Всего сигналов: {total_signals}")
-        print(f"   🎯 Точек входа с подтверждениями: {len(entries)}")
-        
-        if not entries:
-            print("\n❌ ТОЧКИ ВХОДА НЕ НАЙДЕНЫ")
-            print("Возможные причины:")
-            print("• Период неподходящий для стратегии")
-            print("• Нужно снизить пороги или расширить окно")
+        if not signals:
+            print("❌ СИГНАЛЫ НЕ НАЙДЕНЫ")
             return
         
-        # ТОП точек входа
-        print(f"\n{'='*90}")
-        print("🏆 ТОП-15 ЛУЧШИХ ТОЧЕК ВХОДА С ПАРАМЕТРАМИ")
-        print(f"{'='*90}")
-        print(f"{'#':<2} {'Дата/Время':<17} {'Цена':<8} {'Увер%':<5} {'Подт':<4} {'ADX':<6} {'DI+':<6} {'DI-':<6} {'EMA':<8}")
-        print("-" * 90)
+        # Общая статистика
+        total_signals = len(signals)
+        avg_strength = np.mean([s.signal_strength for s in signals])
         
-        for i, entry in enumerate(entries[:15], 1):
-            main = entry.main_signal
-            conf_count = entry.get_confirmation_count()
-            timestamp_str = main.timestamp.strftime('%d.%m %H:%M')
+        print(f"\n📊 ОБЩАЯ СТАТИСТИКА:")
+        print(f"   💎 Всего валидных сигналов: {total_signals}")
+        print(f"   📈 Средняя сила: {avg_strength:.1f}%")
+        
+        # Распределение по силе
+        strength_ranges = {
+            "ОЧЕНЬ СИЛЬНЫЕ (80-100%)": [s for s in signals if s.signal_strength >= 80],
+            "СИЛЬНЫЕ (60-80%)": [s for s in signals if 60 <= s.signal_strength < 80],
+            "СРЕДНИЕ (40-60%)": [s for s in signals if 40 <= s.signal_strength < 60],
+            "СЛАБЫЕ (20-40%)": [s for s in signals if 20 <= s.signal_strength < 40],
+            "ОЧЕНЬ СЛАБЫЕ (0-20%)": [s for s in signals if s.signal_strength < 20]
+        }
+        
+        print(f"\n📊 РАСПРЕДЕЛЕНИЕ ПО СИЛЕ:")
+        for category, group in strength_ranges.items():
+            count = len(group)
+            pct = (count / total_signals) * 100 if total_signals > 0 else 0
+            avg_str = np.mean([s.signal_strength for s in group]) if group else 0
+            print(f"   • {category}: {count:>2} сигналов ({pct:>4.1f}%, ср.сила {avg_str:.1f}%)")
+        
+        # Топ сигналы
+        sorted_signals = sorted(signals, key=lambda x: x.signal_strength, reverse=True)
+        
+        print(f"\n{'='*80}")
+        print("🏆 ТОП-20 САМЫХ СИЛЬНЫХ СИГНАЛОВ")
+        print(f"{'='*80}")
+        print(f"{'#':<2} {'Дата/Время':<17} {'Цена':<8} {'Сила%':<6} {'ADX':<6} {'DI+':<6} {'DI-':<6} {'EMA':<8} {'Категория'}")
+        print("-" * 80)
+        
+        for i, signal in enumerate(sorted_signals[:20], 1):
+            timestamp_str = signal.timestamp.strftime('%d.%m %H:%M')
+            category = signal.get_strength_category()
             
-            print(f"{i:<2} {timestamp_str:<17} {main.price:<8.2f} "
-                  f"{entry.confidence_score:<5.0f} {conf_count:<4} "
-                  f"{main.adx:<6.1f} {main.plus_di:<6.1f} {main.minus_di:<6.1f} {main.ema:<8.2f}")
+            print(f"{i:<2} {timestamp_str:<17} {signal.price:<8.2f} "
+                  f"{signal.signal_strength:<6.1f} {signal.adx:<6.1f} "
+                  f"{signal.plus_di:<6.1f} {signal.minus_di:<6.1f} {signal.ema:<8.2f} {category}")
         
         # Детальный анализ ТОП-5
-        print(f"\n{'='*90}")
-        print("🔍 ДЕТАЛЬНЫЙ АНАЛИЗ ТОП-5 ТОЧЕК ВХОДА")
-        print(f"{'='*90}")
+        print(f"\n{'='*80}")
+        print("🔍 ДЕТАЛЬНЫЙ АНАЛИЗ ТОП-5 СИГНАЛОВ")
+        print(f"{'='*80}")
         
-        for i, entry in enumerate(entries[:5], 1):
-            main = entry.main_signal
-            ema_distance = ((main.price - main.ema) / main.ema) * 100
-            di_spread = main.plus_di - main.minus_di
+        for i, signal in enumerate(sorted_signals[:5], 1):
+            ema_distance = ((signal.price - signal.ema) / signal.ema) * 100
+            di_spread = signal.plus_di - signal.minus_di
+            adx_excess = signal.adx - 23.0
             
-            print(f"\n🏆 #{i} - УВЕРЕННОСТЬ: {entry.confidence_score:.1f}%")
-            print(f"   📅 Время: {main.timestamp.strftime('%d.%m.%Y %H:%M')} (МСК)")
-            print(f"   💰 Цена входа: {main.price:.2f} руб")
-            print(f"   📊 Параметры сигнала:")
-            print(f"       • ADX: {main.adx:.1f} (превышение порога на {main.adx-23:.1f})")
-            print(f"       • DI+: {main.plus_di:.1f}, DI-: {main.minus_di:.1f} (спред: +{di_spread:.1f})")
-            print(f"       • EMA20: {main.ema:.2f} руб (цена выше на {ema_distance:.2f}%)")
-            print(f"       • Сила основного сигнала: {main.signal_strength:.1f}%")
+            print(f"\n🏆 #{i} - СИЛА: {signal.signal_strength:.1f}% ({signal.get_strength_category()})")
+            print(f"   📅 Время: {signal.timestamp.strftime('%d.%m.%Y %H:%M')} (МСК)")
+            print(f"   💰 Цена: {signal.price:.2f} руб")
             
-            if entry.confirmation_signals:
-                print(f"   ✅ Подтверждения ({len(entry.confirmation_signals)} ТФ):")
-                for conf in entry.confirmation_signals:
-                    time_diff = (conf.timestamp - main.timestamp).total_seconds() / 60
-                    conf_ema_dist = ((conf.price - conf.ema) / conf.ema) * 100
-                    print(f"       • {conf.timeframe.value}: +{time_diff:.0f}мин, ADX {conf.adx:.1f}, "
-                          f"EMA+{conf_ema_dist:.1f}%, сила {conf.signal_strength:.0f}%")
+            print(f"   📊 РАЗБОР СИЛЫ СИГНАЛА:")
             
-            print(f"   🎯 Код для входа:")
-            print(f"       if adx > {main.adx:.0f} and price > ema20 and di_plus > di_minus:")
-            print(f"           enter_long({main.price:.2f})  # Уверенность {entry.confidence_score:.0f}%")
+            # ADX компонент
+            adx_component = min((adx_excess / 20) * 40, 40) if adx_excess > 0 else 0
+            print(f"       • ADX: {signal.adx:.1f} (порог 23.0, превышение на {adx_excess:.1f})")
+            print(f"         Вклад в силу: {adx_component:.1f} баллов из 40")
+            
+            # EMA компонент
+            ema_component = min(abs(ema_distance) * 15, 30) if ema_distance > 0 else 0
+            print(f"       • EMA20: {signal.ema:.2f} руб (цена выше на {ema_distance:.3f}%)")
+            print(f"         Вклад в силу: {ema_component:.1f} баллов из 30")
+            
+            # DI компонент
+            di_component = min(di_spread * 2, 30) if di_spread > 0 else 0
+            print(f"       • DI: +{signal.plus_di:.1f} vs -{signal.minus_di:.1f} (разница +{di_spread:.1f})")
+            print(f"         Вклад в силу: {di_component:.1f} баллов из 30")
+            
+            print(f"       • ИТОГО: {adx_component:.1f} + {ema_component:.1f} + {di_component:.1f} = {signal.signal_strength:.1f}%")
+            
+            print(f"   🎯 Торговые параметры:")
+            print(f"       • Точка входа: {signal.price:.2f} руб")
+            print(f"       • Стоп-лосс: ~{signal.price * 0.97:.2f} руб (-3%)")
+            print(f"       • Тейк-профит: ~{signal.price * 1.06:.2f} руб (+6%, R:R = 2:1)")
+        
+        # Анализ компонентов силы
+        print(f"\n{'='*80}")
+        print("📈 АНАЛИЗ КОМПОНЕНТОВ СИЛЫ СИГНАЛОВ")
+        print(f"{'='*80}")
+        
+        adx_values = [s.adx for s in signals]
+        ema_distances = [((s.price - s.ema) / s.ema) * 100 for s in signals]
+        di_spreads = [s.plus_di - s.minus_di for s in signals]
+        
+        print(f"\n📊 СТАТИСТИКА ADX:")
+        print(f"   • Среднее: {np.mean(adx_values):.1f}")
+        print(f"   • Минимум: {np.min(adx_values):.1f} (порог: 23.0)")
+        print(f"   • Максимум: {np.max(adx_values):.1f}")
+        print(f"   • Медиана: {np.median(adx_values):.1f}")
+        
+        print(f"\n📊 СТАТИСТИКА ДИСТАНЦИИ ОТ EMA:")
+        print(f"   • Среднее превышение: {np.mean(ema_distances):.3f}%")
+        print(f"   • Минимум: {np.min(ema_distances):.3f}%")
+        print(f"   • Максимум: {np.max(ema_distances):.3f}%")
+        print(f"   • Медиана: {np.median(ema_distances):.3f}%")
+        
+        print(f"\n📊 СТАТИСТИКА DI РАЗНОСТИ:")
+        print(f"   • Средняя разность: {np.mean(di_spreads):.1f}")
+        print(f"   • Минимум: {np.min(di_spreads):.1f}")
+        print(f"   • Максимум: {np.max(di_spreads):.1f}")
+        print(f"   • Медиана: {np.median(di_spreads):.1f}")
+        
+        # Рекомендации
+        strong_signals = [s for s in signals if s.signal_strength >= 60]
+        
+        print(f"\n{'='*80}")
+        print("💡 РЕКОМЕНДАЦИИ")
+        print(f"{'='*80}")
+        
+        print(f"🎯 ДЛЯ ТОРГОВЛИ:")
+        print(f"   • Используйте сигналы с силой ≥ 60% ({len(strong_signals)} из {total_signals})")
+        print(f"   • Лучшие сигналы имеют ADX > 30 и DI разность > 5")
+        print(f"   • Избегайте сигналов с силой < 40%")
+        
+        if strong_signals:
+            best_signal = sorted_signals[0]
+            print(f"\n🏆 ЭТАЛОННЫЙ СИГНАЛ:")
+            print(f"   📅 Дата: {best_signal.timestamp.strftime('%d.%m.%Y %H:%M')}")
+            print(f"   💰 Цена: {best_signal.price:.2f} руб")
+            print(f"   🎯 Сила: {best_signal.signal_strength:.1f}%")
+            print(f"   📊 ADX: {best_signal.adx:.1f}, DI разность: {best_signal.plus_di - best_signal.minus_di:.1f}")
+        
+        print(f"\n🤖 КОД ДЛЯ ФИЛЬТРАЦИИ:")
+        print(f"   # Базовые условия")
+        print(f"   if adx > 23.0 and price > ema20 and di_plus > di_minus:")
+        print(f"       # Дополнительные фильтры для качества")
+        print(f"       if adx > 30.0 and (di_plus - di_minus) > 5.0:")
+        print(f"           signal_strength = 'HIGH'")
+        print(f"       elif adx > 25.0 and (di_plus - di_minus) > 2.0:")
+        print(f"           signal_strength = 'MEDIUM'")
+        print(f"       else:")
+        print(f"           signal_strength = 'LOW'")
 
 async def main():
     """Главная функция"""
@@ -481,10 +476,10 @@ async def main():
         sys.exit(1)
     
     try:
-        analyzer = MultiTimeFrameAnalyzer(TINKOFF_TOKEN)
-        entries = await analyzer.run_analysis(days=21)
+        analyzer = StrategyAnalyzer(TINKOFF_TOKEN)
+        signals = await analyzer.run_analysis(days=21)
         
-        logger.info("✅ Многотаймфреймовый анализ завершен успешно!")
+        logger.info("✅ Анализ 1H стратегии завершен успешно!")
         
     except Exception as e:
         logger.error(f"❌ Критическая ошибка: {e}")
