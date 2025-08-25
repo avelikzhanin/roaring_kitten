@@ -691,153 +691,26 @@ async def main():
         
         print(f"\n✅ Анализ завершен!")
         
-        # Для Railway - простой веб-сервер
+        # Для Railway - держим процесс живым
         if railway_env:
-            await serve_web_results(port, results)
+            print(f"\n🚂 Приложение развернуто на Railway")
+            print(f"🔌 Порт {port} готов к подключению")
+            print("💤 Засыпаем, чтобы Railway не убил процесс...")
+            
+            # Простое ожидание вместо веб-сервера
+            try:
+                while True:
+                    await asyncio.sleep(3600)  # Спим час
+                    print(f"💓 Процесс жив: {datetime.now().strftime('%H:%M:%S')}")
+            except KeyboardInterrupt:
+                print("👋 Процесс остановлен")
     
     except Exception as e:
         logger.error(f"❌ Критическая ошибка: {e}")
         print(f"❌ Ошибка выполнения: {e}")
 
-async def serve_web_results(port: str, results: Dict):
-    """Простой веб-сервер для Railway"""
-    print(f"\n🌐 Запуск веб-сервера на порту {port}...")
-    
-    import http.server
-    import socketserver
-    from urllib.parse import parse_qs
-    
-    class CustomHandler(http.server.SimpleHTTPRequestHandler):
-        def do_GET(self):
-            if self.path == '/':
-                self.send_response(200)
-                self.send_header('Content-type', 'text/html; charset=utf-8')
-                self.end_headers()
-                
-                if results and results.get('analysis'):
-                    analysis = results['analysis']
-                    signals_count = analysis.get('total_signals', 0)
-                    avg_strength = analysis.get('signal_strength', {}).get('average', 0)
-                    signals_per_day = analysis.get('signals_per_day', 0)
-                    data_source = results.get('data_source', 'unknown')
-                    
-                    # Топ-3 сигнала для отображения
-                    top_signals = sorted(results['signals'], key=lambda x: x.signal_strength, reverse=True)[:3]
-                    
-                    signals_html = ""
-                    for i, signal in enumerate(top_signals, 1):
-                        signals_html += f"""
-                        <div class="signal">
-                            <h4>#{i} Сигнал - Сила: {signal.signal_strength}%</h4>
-                            <p><strong>Время:</strong> {signal.timestamp}</p>
-                            <p><strong>Цена:</strong> {signal.price} ₽ (EMA20: {signal.ema20} ₽)</p>
-                            <p><strong>ADX:</strong> {signal.adx} | <strong>+DI:</strong> {signal.plus_di} | <strong>-DI:</strong> {signal.minus_di}</p>
-                            <p><strong>Превышение EMA:</strong> +{signal.price_vs_ema_pct}%</p>
-                        </div>
-                        """
-                    
-                else:
-                    signals_count = 0
-                    avg_strength = 0
-                    signals_per_day = 0
-                    data_source = 'none'
-                    signals_html = "<p>Данные не найдены</p>"
-                
-                html = f"""
-                <!DOCTYPE html>
-                <html>
-                <head>
-                    <title>SBER Signals Backtest Results</title>
-                    <meta charset="utf-8">
-                    <meta name="viewport" content="width=device-width, initial-scale=1">
-                    <style>
-                        body {{ 
-                            font-family: 'Segoe UI', Arial, sans-serif; 
-                            margin: 0; 
-                            padding: 20px; 
-                            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                            color: #333;
-                            min-height: 100vh;
-                        }}
-                        .container {{
-                            max-width: 1000px;
-                            margin: 0 auto;
-                            background: white;
-                            border-radius: 15px;
-                            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
-                            padding: 30px;
-                        }}
-                        h1 {{ 
-                            color: #2c3e50; 
-                            text-align: center;
-                            margin-bottom: 10px;
-                            font-size: 2.5em;
-                        }}
-                        .subtitle {{
-                            text-align: center;
-                            color: #7f8c8d;
-                            margin-bottom: 30px;
-                            font-size: 1.1em;
-                        }}
-                        .stats {{ 
-                            display: grid;
-                            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-                            gap: 20px;
-                            margin-bottom: 30px;
-                        }}
-                        .stat-card {{
-                            background: linear-gradient(135deg, #74b9ff, #0984e3);
-                            color: white;
-                            padding: 20px;
-                            border-radius: 10px;
-                            text-align: center;
-                            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
-                        }}
-                        .stat-value {{
-                            font-size: 2.5em;
-                            font-weight: bold;
-                            margin-bottom: 5px;
-                        }}
-                        .stat-label {{
-                            font-size: 1em;
-                            opacity: 0.9;
-                        }}
-                        .signals-section {{
-                            margin-top: 30px;
-                        }}
-                        .signal {{ 
-                            border: 2px solid #74b9ff;
-                            margin: 15px 0; 
-                            padding: 20px; 
-                            border-radius: 10px;
-                            background: #f8f9fa;
-                            transition: transform 0.2s;
-                        }}
-                        .signal:hover {{
-                            transform: translateY(-2px);
-                            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
-                        }}
-                        .signal h4 {{
-                            color: #2c3e50;
-                            margin: 0 0 15px 0;
-                            font-size: 1.3em;
-                        }}
-                        .signal p {{
-                            margin: 8px 0;
-                            color: #555;
-                        }}
-                        .conditions {{
-                            background: #e8f5e8;
-                            padding: 20px;
-                            border-radius: 10px;
-                            margin: 20px 0;
-                            border-left: 5px solid #27ae60;
-                        }}
-                        .footer {{
-                            text-align: center;
-                            margin-top: 30px;
-                            padding-top: 20px;
-                            border-top: 2px solid #eee;
+if __name__ == "__main__":
+    asyncio.run(main()) solid #eee;
                             color: #7f8c8d;
                         }}
                         .data-source {{
