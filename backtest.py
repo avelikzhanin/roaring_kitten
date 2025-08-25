@@ -445,7 +445,7 @@ async def main():
         signals = find_signals(df)
         
         # Вывод результатов
-        print_results(signals, len(df))
+        print_results(signals, len(df), df)
         
         force_print(f"\n✅ Анализ завершен успешно!")
         
