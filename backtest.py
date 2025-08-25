@@ -86,14 +86,14 @@ def calculate_ema(prices: List[float], period: int = 20) -> List[float]:
         return [np.nan] * len(prices)
 
 def calculate_adx_simple(highs: List[float], lows: List[float], closes: List[float], period: int = 14):
-    """Упрощенный расчет ADX"""
+    """Правильный расчет ADX по формуле Уайлдера"""
     try:
         n = len(highs)
-        if n < period * 2:
+        if n < period + 1:
             return [np.nan] * n, [np.nan] * n, [np.nan] * n
         
         # True Range
-        tr_list = []
+        tr_list = [0]  # Первый элемент
         for i in range(1, n):
             hl = highs[i] - lows[i]
             hc = abs(highs[i] - closes[i-1])
@@ -101,11 +101,9 @@ def calculate_adx_simple(highs: List[float], lows: List[float], closes: List[flo
             tr = max(hl, hc, lc)
             tr_list.append(tr)
         
-        tr_list = [0] + tr_list
-        
         # Directional Movement
-        plus_dm = []
-        minus_dm = []
+        plus_dm = [0]  # Первый элемент
+        minus_dm = [0]  # Первый элемент
         
         for i in range(1, n):
             up_move = highs[i] - highs[i-1]
@@ -121,67 +119,95 @@ def calculate_adx_simple(highs: List[float], lows: List[float], closes: List[flo
             else:
                 minus_dm.append(0)
         
-        plus_dm = [0] + plus_dm
-        minus_dm = [0] + minus_dm
+        # Сглаживание по Уайлдеру (EMA с alpha = 1/period)
+        alpha = 1.0 / period
         
-        # Простое сглаживание
-        atr = []
-        plus_dm_smooth = []
-        minus_dm_smooth = []
+        # Инициализация сглаженных значений
+        atr = [np.nan] * period
+        plus_dm_smooth = [np.nan] * period
+        minus_dm_smooth = [np.nan] * period
         
-        for i in range(n):
-            if i < period:
-                atr.append(np.nan)
-                plus_dm_smooth.append(np.nan)
-                minus_dm_smooth.append(np.nan)
-            else:
-                start_idx = max(0, i - period + 1)
-                atr.append(sum(tr_list[start_idx:i+1]) / period)
-                plus_dm_smooth.append(sum(plus_dm[start_idx:i+1]) / period)
-                minus_dm_smooth.append(sum(minus_dm[start_idx:i+1]) / period)
+        # Первое значение - простое среднее за period
+        if n > period:
+            atr.append(sum(tr_list[1:period+1]) / period)
+            plus_dm_smooth.append(sum(plus_dm[1:period+1]) / period)
+            minus_dm_smooth.append(sum(minus_dm[1:period+1]) / period)
+            
+            # Дальше используем сглаживание Уайлдера
+            for i in range(period+1, n):
+                atr.append(atr[-1] * (1 - alpha) + tr_list[i] * alpha)
+                plus_dm_smooth.append(plus_dm_smooth[-1] * (1 - alpha) + plus_dm[i] * alpha)
+                minus_dm_smooth.append(minus_dm_smooth[-1] * (1 - alpha) + minus_dm[i] * alpha)
+        else:
+            # Недостаточно данных
+            atr.extend([np.nan] * (n - period))
+            plus_dm_smooth.extend([np.nan] * (n - period))
+            minus_dm_smooth.extend([np.nan] * (n - period))
         
-        # DI calculation
+        # Расчет DI
         plus_di = []
         minus_di = []
-        adx = []
+        dx_values = []
         
         for i in range(n):
-            if np.isnan(atr[i]) or atr[i] == 0:
+            if i < period or np.isnan(atr[i]) or atr[i] == 0:
                 plus_di.append(np.nan)
                 minus_di.append(np.nan)
-                adx.append(np.nan)
+                dx_values.append(np.nan)
             else:
                 pdi = (plus_dm_smooth[i] / atr[i]) * 100
                 mdi = (minus_dm_smooth[i] / atr[i]) * 100
                 plus_di.append(pdi)
                 minus_di.append(mdi)
                 
-                # Простой ADX
+                # DX расчет
                 if pdi + mdi == 0:
-                    adx.append(0)
+                    dx_values.append(0)
                 else:
                     dx = abs(pdi - mdi) / (pdi + mdi) * 100
-                    
-                    if i < period * 2:
-                        adx.append(np.nan)
+                    dx_values.append(dx)
+        
+        # Расчет ADX - сглаживание DX
+        adx = [np.nan] * (period * 2 - 1)  # Нужно больше данных для ADX
+        
+        # Найдем первое валидное DX значение для начала ADX
+        first_valid_idx = None
+        for i in range(period, len(dx_values)):
+            if not np.isnan(dx_values[i]):
+                first_valid_idx = i
+                break
+        
+        if first_valid_idx is not None and first_valid_idx + period < n:
+            # Первое значение ADX - среднее из первых period DX
+            valid_dx = []
+            for i in range(first_valid_idx, min(first_valid_idx + period, n)):
+                if not np.isnan(dx_values[i]):
+                    valid_dx.append(dx_values[i])
+            
+            if len(valid_dx) >= period // 2:  # Хотя бы половина значений
+                first_adx = sum(valid_dx) / len(valid_dx)
+                adx.append(first_adx)
+                
+                # Дальше сглаживание Уайлдера
+                for i in range(len(adx), n):
+                    if i < len(dx_values) and not np.isnan(dx_values[i]):
+                        new_adx = adx[-1] * (1 - alpha) + dx_values[i] * alpha
+                        adx.append(new_adx)
                     else:
-                        start_idx = max(0, i - period + 1)
-                        adx_values = []
-                        for j in range(start_idx, i + 1):
-                            if j < len(plus_di) and not np.isnan(plus_di[j]) and not np.isnan(minus_di[j]):
-                                if plus_di[j] + minus_di[j] != 0:
-                                    dx_j = abs(plus_di[j] - minus_di[j]) / (plus_di[j] + minus_di[j]) * 100
-                                    adx_values.append(dx_j)
-                        
-                        if adx_values:
-                            adx.append(sum(adx_values) / len(adx_values))
-                        else:
-                            adx.append(np.nan)
+                        adx.append(adx[-1])  # Оставляем предыдущее значение
+            else:
+                adx.extend([np.nan] * (n - len(adx)))
+        else:
+            adx.extend([np.nan] * (n - len(adx)))
+        
+        # Обрезаем до нужной длины
+        adx = adx[:n]
         
         return adx, plus_di, minus_di
         
     except Exception as e:
         force_print(f"❌ Ошибка расчета ADX: {e}")
+        traceback.print_exc()
         n = len(highs)
         return [np.nan] * n, [np.nan] * n, [np.nan] * n
 
@@ -193,6 +219,9 @@ def generate_test_data(days: int = 30) -> pd.DataFrame:
         hours = days * 8
         timestamps = []
         base_time = datetime.now(timezone.utc) - timedelta(days=days)
+        # Конвертируем базовое время в московское
+        moscow_tz = timezone(timedelta(hours=3))
+        base_time = base_time.replace(tzinfo=timezone.utc).astimezone(moscow_tz)
         
         for i in range(hours):
             timestamps.append(base_time + timedelta(hours=i))
@@ -281,6 +310,8 @@ async def get_real_data() -> pd.DataFrame:
             
             df = pd.DataFrame(data)
             df['timestamp'] = pd.to_datetime(df['timestamp'], utc=True)
+            # Конвертируем в московское время
+            df['timestamp'] = df['timestamp'].dt.tz_convert('Europe/Moscow')
             df = df.sort_values('timestamp').reset_index(drop=True)
             
             force_print(f"✅ Получено {len(df)} реальных свечей")
@@ -335,7 +366,7 @@ def find_signals(df: pd.DataFrame) -> List[SignalData]:
                     strength += 10
                     
                     signal = SignalData(
-                        timestamp=row['timestamp'].strftime('%Y-%m-%d %H:%M:%S'),
+                        timestamp=row['timestamp'].strftime('%Y-%m-%d %H:%M MSK'),
                         price=round(row['close'], 2),
                         ema20=round(row['ema20'], 2),
                         adx=round(row['adx'], 2),
@@ -367,8 +398,8 @@ def print_results(signals: List[SignalData], total_candles: int, df: pd.DataFram
         
         # Период данных
         if not df.empty:
-            start_time = df['timestamp'].min().strftime('%Y-%m-%d %H:%M')
-            end_time = df['timestamp'].max().strftime('%Y-%m-%d %H:%M')
+            start_time = df['timestamp'].min().strftime('%Y-%m-%d %H:%M MSK')
+            end_time = df['timestamp'].max().strftime('%Y-%m-%d %H:%M MSK')
             force_print(f"\n📅 ПЕРИОД: {start_time} - {end_time}")
             force_print(f"📊 Всего свечей: {total_candles}")
         
@@ -444,7 +475,7 @@ async def main():
         # Поиск сигналов
         signals = find_signals(df)
         
-        # Вывод результатов
+        # Вывод результатов - ИСПРАВЛЕНО!
         print_results(signals, len(df), df)
         
         force_print(f"\n✅ Анализ завершен успешно!")
