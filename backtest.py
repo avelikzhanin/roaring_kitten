@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
-Бэктест поиска сигналов: цена > EMA20, ADX > 25, +DI > -DI
-Для развертывания на Railway без Dockerfile
+Простой бэктест поиска сигналов SBER для Railway
+Упрощенная версия с детальным логированием
 """
 
 import os
+import sys
 import asyncio
 import pandas as pd
 import numpy as np
@@ -13,793 +14,494 @@ from typing import List, Dict, Optional
 import json
 from dataclasses import dataclass, asdict
 import logging
+import traceback
 
-# Для работы с Tinkoff API
+# Настройка детального логирования
+logging.basicConfig(
+    level=logging.INFO, 
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.StreamHandler(sys.stderr)
+    ]
+)
+logger = logging.getLogger(__name__)
+
+# Проверка импортов
+print("🔍 Проверка импортов...")
+print(f"Python версия: {sys.version}")
+print(f"Pandas версия: {pd.__version__}")
+print(f"Numpy версия: {np.__version__}")
+
 try:
     from tinkoff.invest import Client, RequestError, CandleInterval, HistoricCandle
     from tinkoff.invest.utils import now
     TINKOFF_AVAILABLE = True
-except ImportError:
-    print("⚠️ tinkoff-investments не установлен, используем симулированные данные")
+    print("✅ tinkoff-investments импортирован")
+except ImportError as e:
+    print(f"⚠️ tinkoff-investments НЕ доступен: {e}")
     TINKOFF_AVAILABLE = False
-
-# Настройка логирования
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
 
 @dataclass
 class SignalData:
-    """Структура данных сигнала"""
+    """Простая структура сигнала"""
     timestamp: str
-    symbol: str
     price: float
     ema20: float
     adx: float
     plus_di: float
     minus_di: float
-    volume: int
-    price_vs_ema_pct: float
     di_diff: float
     signal_strength: float
 
-class TechnicalIndicators:
-    """Класс для расчета технических индикаторов"""
-    
-    @staticmethod
-    def ema(data: pd.Series, period: int) -> pd.Series:
-        """Экспоненциальная скользящая средняя"""
-        return data.ewm(span=period, adjust=False).mean()
-    
-    @staticmethod
-    def wilder_smoothing(values: pd.Series, period: int) -> pd.Series:
-        """Сглаживание Уайлдера для ADX"""
-        result = pd.Series(index=values.index, dtype=float)
+def calculate_ema(prices: List[float], period: int = 20) -> List[float]:
+    """Простой расчет EMA"""
+    try:
+        if len(prices) < period:
+            return [np.nan] * len(prices)
         
-        # Первое значение - среднее за период
-        if len(values) >= period:
-            first_avg = values.iloc[:period].mean()
-            result.iloc[period-1] = first_avg
-            
-            # Остальные по формуле Уайлдера
-            for i in range(period, len(values)):
-                result.iloc[i] = (result.iloc[i-1] * (period - 1) + values.iloc[i]) / period
-        
-        return result
-    
-    @staticmethod
-    def adx_calculation(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14):
-        """Расчет ADX и Directional Indicators"""
+        series = pd.Series(prices)
+        ema = series.ewm(span=period, adjust=False).mean()
+        return ema.fillna(np.nan).tolist()
+    except Exception as e:
+        print(f"❌ Ошибка расчета EMA: {e}")
+        return [np.nan] * len(prices)
+
+def calculate_adx_simple(highs: List[float], lows: List[float], closes: List[float], period: int = 14):
+    """Упрощенный расчет ADX"""
+    try:
+        n = len(highs)
+        if n < period * 2:
+            return [np.nan] * n, [np.nan] * n, [np.nan] * n
         
         # True Range
-        prev_close = close.shift(1)
-        tr1 = high - low
-        tr2 = abs(high - prev_close)
-        tr3 = abs(low - prev_close)
-        tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+        tr_list = []
+        for i in range(1, n):
+            hl = highs[i] - lows[i]
+            hc = abs(highs[i] - closes[i-1])
+            lc = abs(lows[i] - closes[i-1])
+            tr = max(hl, hc, lc)
+            tr_list.append(tr)
+        
+        tr_list = [0] + tr_list  # Добавляем 0 для первого элемента
         
         # Directional Movement
-        high_diff = high - high.shift(1)
-        low_diff = low.shift(1) - low
+        plus_dm = []
+        minus_dm = []
         
-        plus_dm = np.where((high_diff > low_diff) & (high_diff > 0), high_diff, 0)
-        minus_dm = np.where((low_diff > high_diff) & (low_diff > 0), low_diff, 0)
+        for i in range(1, n):
+            up_move = highs[i] - highs[i-1]
+            down_move = lows[i-1] - lows[i]
+            
+            if up_move > down_move and up_move > 0:
+                plus_dm.append(up_move)
+            else:
+                plus_dm.append(0)
+                
+            if down_move > up_move and down_move > 0:
+                minus_dm.append(down_move)
+            else:
+                minus_dm.append(0)
         
-        plus_dm = pd.Series(plus_dm, index=high.index)
-        minus_dm = pd.Series(minus_dm, index=high.index)
+        plus_dm = [0] + plus_dm
+        minus_dm = [0] + minus_dm
         
-        # Сглаживание по Уайлдеру
-        atr = TechnicalIndicators.wilder_smoothing(tr, period)
-        plus_dm_smooth = TechnicalIndicators.wilder_smoothing(plus_dm, period)
-        minus_dm_smooth = TechnicalIndicators.wilder_smoothing(minus_dm, period)
+        # Простое сглаживание (скользящее среднее вместо Уайлдера)
+        atr = []
+        plus_dm_smooth = []
+        minus_dm_smooth = []
+        
+        for i in range(n):
+            if i < period:
+                atr.append(np.nan)
+                plus_dm_smooth.append(np.nan)
+                minus_dm_smooth.append(np.nan)
+            else:
+                start_idx = max(0, i - period + 1)
+                atr.append(sum(tr_list[start_idx:i+1]) / period)
+                plus_dm_smooth.append(sum(plus_dm[start_idx:i+1]) / period)
+                minus_dm_smooth.append(sum(minus_dm[start_idx:i+1]) / period)
         
         # DI calculation
-        plus_di = (plus_dm_smooth / atr) * 100
-        minus_di = (minus_dm_smooth / atr) * 100
+        plus_di = []
+        minus_di = []
+        adx = []
         
-        # DX и ADX calculation
-        di_sum = plus_di + minus_di
-        di_diff = abs(plus_di - minus_di)
-        dx = np.where(di_sum != 0, (di_diff / di_sum) * 100, 0)
-        dx_series = pd.Series(dx, index=high.index)
-        
-        adx = TechnicalIndicators.wilder_smoothing(dx_series, period)
+        for i in range(n):
+            if np.isnan(atr[i]) or atr[i] == 0:
+                plus_di.append(np.nan)
+                minus_di.append(np.nan)
+                adx.append(np.nan)
+            else:
+                pdi = (plus_dm_smooth[i] / atr[i]) * 100
+                mdi = (minus_dm_smooth[i] / atr[i]) * 100
+                plus_di.append(pdi)
+                minus_di.append(mdi)
+                
+                # Простой ADX
+                if pdi + mdi == 0:
+                    adx.append(0)
+                else:
+                    dx = abs(pdi - mdi) / (pdi + mdi) * 100
+                    
+                    # Сглаживание ADX
+                    if i < period * 2:
+                        adx.append(np.nan)
+                    else:
+                        start_idx = max(0, i - period + 1)
+                        adx_values = []
+                        for j in range(start_idx, i + 1):
+                            if j < len(plus_di) and not np.isnan(plus_di[j]) and not np.isnan(minus_di[j]):
+                                if plus_di[j] + minus_di[j] != 0:
+                                    dx_j = abs(plus_di[j] - minus_di[j]) / (plus_di[j] + minus_di[j]) * 100
+                                    adx_values.append(dx_j)
+                        
+                        if adx_values:
+                            adx.append(sum(adx_values) / len(adx_values))
+                        else:
+                            adx.append(np.nan)
         
         return adx, plus_di, minus_di
+        
+    except Exception as e:
+        print(f"❌ Ошибка расчета ADX: {e}")
+        n = len(highs)
+        return [np.nan] * n, [np.nan] * n, [np.nan] * n
 
-class TinkoffDataProvider:
-    """Провайдер данных Tinkoff (если доступен)"""
-    
-    def __init__(self, token: str):
-        self.token = token
-        self.figi = "BBG004730N88"  # SBER
-    
-    async def get_real_data(self, hours: int = 200) -> pd.DataFrame:
-        """Получение реальных данных через API"""
-        if not TINKOFF_AVAILABLE or not self.token:
-            return pd.DataFrame()
+def generate_test_data(days: int = 30) -> pd.DataFrame:
+    """Генерация простых тестовых данных"""
+    try:
+        print(f"🔧 Генерация тестовых данных на {days} дней...")
         
-        try:
-            with Client(self.token) as client:
-                to_time = now()
-                from_time = to_time - timedelta(hours=hours)
-                
-                logger.info(f"📡 Запрос реальных данных SBER с {from_time.strftime('%d.%m %H:%M')} по {to_time.strftime('%d.%m %H:%M')}")
-                
-                response = client.market_data.get_candles(
-                    figi=self.figi,
-                    from_=from_time,
-                    to=to_time,
-                    interval=CandleInterval.CANDLE_INTERVAL_HOUR
-                )
-                
-                if response.candles:
-                    logger.info(f"✅ Получено {len(response.candles)} реальных свечей")
-                    return self.candles_to_dataframe(response.candles)
-                else:
-                    logger.warning("⚠️ Получен пустой ответ от API")
-                    return pd.DataFrame()
-                    
-        except Exception as e:
-            logger.error(f"❌ Ошибка получения данных: {e}")
-            return pd.DataFrame()
-    
-    def candles_to_dataframe(self, candles) -> pd.DataFrame:
-        """Преобразование в DataFrame"""
-        data = []
-        for candle in candles:
-            try:
-                data.append({
-                    'timestamp': candle.time,
-                    'open': self.quotation_to_decimal(candle.open),
-                    'high': self.quotation_to_decimal(candle.high),
-                    'low': self.quotation_to_decimal(candle.low),
-                    'close': self.quotation_to_decimal(candle.close),
-                    'volume': candle.volume
-                })
-            except Exception as e:
-                logger.error(f"Ошибка обработки свечи: {e}")
-                continue
-        
-        if not data:
-            return pd.DataFrame()
-        
-        df = pd.DataFrame(data)
-        df['timestamp'] = pd.to_datetime(df['timestamp'], utc=True)
-        df = df.sort_values('timestamp').reset_index(drop=True)
-        df = df.drop_duplicates(subset=['timestamp'], keep='last')
-        
-        return df
-    
-    @staticmethod
-    def quotation_to_decimal(quotation) -> float:
-        """Преобразование quotation в decimal"""
-        try:
-            return float(quotation.units + quotation.nano / 1e9)
-        except (AttributeError, TypeError):
-            return 0.0
-
-class DataGenerator:
-    """Генератор данных для бэктеста"""
-    
-    def __init__(self, symbol: str = "SBER"):
-        self.symbol = symbol
-    
-    def generate_sample_data(self, days: int = 90) -> pd.DataFrame:
-        """Генерация образцов данных для тестирования"""
-        logger.info(f"🔧 Генерация симулированных данных для {self.symbol} на {days} дней...")
-        
-        # Создаем временной индекс (каждый час торговых дней)
-        end_date = datetime.now(timezone.utc)
-        start_date = end_date - timedelta(days=days)
-        
-        # Генерируем временные метки для торговых часов (10:00-18:30 МСК)
+        # Простая генерация часовых данных
+        hours = days * 8  # 8 торговых часов в день
         timestamps = []
-        current_date = start_date
+        base_time = datetime.now(timezone.utc) - timedelta(days=days)
         
-        while current_date <= end_date:
-            # Пропускаем выходные
-            if current_date.weekday() < 5:  # 0-4 это понедельник-пятница
-                for hour in range(10, 19):  # 10:00-18:00
-                    timestamps.append(current_date.replace(hour=hour, minute=0, second=0))
-                # Добавляем 18:30
-                timestamps.append(current_date.replace(hour=18, minute=30, second=0))
-            current_date += timedelta(days=1)
+        for i in range(hours):
+            timestamps.append(base_time + timedelta(hours=i))
         
-        n_points = len(timestamps)
-        
-        # Генерируем реалистичные данные SBER
-        np.random.seed(42)  # Для воспроизводимости
-        
-        # Базовая цена SBER ~280 руб
+        # Простые цены с трендом
+        np.random.seed(42)
         base_price = 280.0
+        prices = []
         
-        # Генерируем случайные изменения цены с трендами
-        returns = np.random.normal(0, 0.008, n_points)  # Волатильность ~0.8%
-        trend = np.sin(np.linspace(0, 4*np.pi, n_points)) * 0.015  # Циклические тренды
-        returns += trend
+        for i in range(hours):
+            if i == 0:
+                prices.append(base_price)
+            else:
+                change = np.random.normal(0, 2)  # Изменение ±2 рубля
+                new_price = max(prices[-1] + change, 250)  # Мин цена 250
+                prices.append(new_price)
         
-        # Рассчитываем цены
-        prices = [base_price]
-        for i in range(1, n_points):
-            new_price = prices[-1] * (1 + returns[i])
-            prices.append(max(new_price, 250))  # Минимальная цена 250
-        
-        # Генерируем OHLC данные
-        high_prices = [p * np.random.uniform(1.001, 1.015) for p in prices]
-        low_prices = [p * np.random.uniform(0.985, 0.999) for p in prices]
-        volumes = np.random.randint(800000, 5000000, n_points)
+        # Генерируем OHLC
+        highs = [p + np.random.uniform(0.5, 3) for p in prices]
+        lows = [p - np.random.uniform(0.5, 3) for p in prices]
+        volumes = [np.random.randint(1000000, 5000000) for _ in range(hours)]
         
         df = pd.DataFrame({
             'timestamp': timestamps,
             'open': prices,
-            'high': high_prices,
-            'low': low_prices,
+            'high': highs,
+            'low': lows,
             'close': prices,
             'volume': volumes
         })
         
-        logger.info(f"✅ Сгенерировано {len(df)} свечей")
+        print(f"✅ Создано {len(df)} тестовых свечей")
         return df
+        
+    except Exception as e:
+        print(f"❌ Ошибка генерации данных: {e}")
+        traceback.print_exc()
+        return pd.DataFrame()
 
-class SignalScanner:
-    """Сканер торговых сигналов"""
+async def get_real_data() -> pd.DataFrame:
+    """Получение реальных данных (если возможно)"""
+    token = os.getenv('TINKOFF_TOKEN')
     
-    def __init__(self, symbol: str = "SBER"):
-        self.symbol = symbol
-        self.indicators = TechnicalIndicators()
+    if not token or not TINKOFF_AVAILABLE:
+        print("📝 Токен не найден или tinkoff-investments недоступен")
+        return pd.DataFrame()
     
-    def calculate_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Расчет всех технических индикаторов"""
-        logger.info("📊 Расчет технических индикаторов...")
+    try:
+        print("📡 Попытка получить реальные данные...")
         
-        # EMA20
-        df['ema20'] = self.indicators.ema(df['close'], 20)
-        
-        # ADX и DI
-        adx, plus_di, minus_di = self.indicators.adx_calculation(
-            df['high'], df['low'], df['close'], 14
-        )
-        
-        df['adx'] = adx
-        df['plus_di'] = plus_di
-        df['minus_di'] = minus_di
-        
-        # Дополнительные метрики
-        df['price_vs_ema_pct'] = ((df['close'] - df['ema20']) / df['ema20'] * 100)
-        df['di_diff'] = df['plus_di'] - df['minus_di']
-        
-        logger.info("✅ Индикаторы рассчитаны")
-        return df
-    
-    def find_signals(self, df: pd.DataFrame) -> List[SignalData]:
-        """Поиск торговых сигналов по условиям: цена > EMA20, ADX > 25, +DI > -DI"""
-        logger.info("🔍 Поиск сигналов по условиям...")
-        
-        signals = []
-        
-        # Фильтруем данные по условиям
-        conditions = (
-            (df['close'] > df['ema20']) &      # Цена выше EMA20
-            (df['adx'] > 25) &                 # ADX > 25
-            (df['plus_di'] > df['minus_di']) & # +DI > -DI
-            (df['ema20'].notna()) &            # Есть данные для EMA
-            (df['adx'].notna())                # Есть данные для ADX
-        )
-        
-        filtered_df = df[conditions].copy()
-        
-        logger.info(f"📈 Найдено {len(filtered_df)} точек, удовлетворяющих условиям")
-        
-        # Создаем объекты сигналов
-        for idx, row in filtered_df.iterrows():
+        with Client(token) as client:
+            to_time = now()
+            from_time = to_time - timedelta(hours=200)
             
-            # Расчет силы сигнала (0-100%)
-            signal_strength = self.calculate_signal_strength(row)
-            
-            signal = SignalData(
-                timestamp=row['timestamp'].strftime('%Y-%m-%d %H:%M:%S'),
-                symbol=self.symbol,
-                price=round(row['close'], 2),
-                ema20=round(row['ema20'], 2),
-                adx=round(row['adx'], 2),
-                plus_di=round(row['plus_di'], 2),
-                minus_di=round(row['minus_di'], 2),
-                volume=int(row['volume']),
-                price_vs_ema_pct=round(row['price_vs_ema_pct'], 2),
-                di_diff=round(row['di_diff'], 2),
-                signal_strength=round(signal_strength, 1)
+            response = client.market_data.get_candles(
+                figi="BBG004730N88",  # SBER
+                from_=from_time,
+                to=to_time,
+                interval=CandleInterval.CANDLE_INTERVAL_HOUR
             )
             
-            signals.append(signal)
-        
-        logger.info(f"🎯 Создано {len(signals)} сигналов")
-        return signals
-    
-    def calculate_signal_strength(self, row) -> float:
-        """Расчет силы сигнала (0-100%)"""
-        strength = 0
-        
-        # 1. Сила тренда по ADX (0-30 баллов)
-        if row['adx'] >= 50:
-            adx_strength = 30
-        elif row['adx'] >= 40:
-            adx_strength = 25
-        elif row['adx'] >= 30:
-            adx_strength = 20
-        else:
-            adx_strength = max(0, (row['adx'] - 25) / 25 * 15)
-        
-        strength += adx_strength
-        
-        # 2. Доминирование покупателей по DI (0-25 баллов)
-        di_dominance = min(row['di_diff'] / 20 * 25, 25)
-        strength += di_dominance
-        
-        # 3. Превышение EMA (0-25 баллов)
-        ema_distance = abs(row['price_vs_ema_pct'])
-        if ema_distance < 0.5:
-            ema_strength = 25  # Очень близко к EMA
-        elif ema_distance < 1.0:
-            ema_strength = 20
-        elif ema_distance < 2.0:
-            ema_strength = 15
-        elif ema_distance < 5.0:
-            ema_strength = 10
-        else:
-            ema_strength = 5  # Далеко от EMA
-        
-        strength += ema_strength
-        
-        # 4. Объем торгов (0-20 баллов)
-        if row['volume'] > 4000000:
-            volume_strength = 20
-        elif row['volume'] > 3000000:
-            volume_strength = 15
-        elif row['volume'] > 2000000:
-            volume_strength = 12
-        elif row['volume'] > 1500000:
-            volume_strength = 8
-        else:
-            volume_strength = 5
-        
-        strength += volume_strength
-        
-        return min(strength, 100)
+            if not response.candles:
+                print("⚠️ Нет данных от API")
+                return pd.DataFrame()
+            
+            data = []
+            for candle in response.candles:
+                try:
+                    price = float(candle.close.units + candle.close.nano / 1e9)
+                    high = float(candle.high.units + candle.high.nano / 1e9)
+                    low = float(candle.low.units + candle.low.nano / 1e9)
+                    
+                    data.append({
+                        'timestamp': candle.time,
+                        'open': price,
+                        'high': high,
+                        'low': low,
+                        'close': price,
+                        'volume': candle.volume
+                    })
+                except Exception as e:
+                    print(f"⚠️ Ошибка обработки свечи: {e}")
+                    continue
+            
+            if not data:
+                print("❌ Не удалось обработать данные")
+                return pd.DataFrame()
+            
+            df = pd.DataFrame(data)
+            df['timestamp'] = pd.to_datetime(df['timestamp'], utc=True)
+            df = df.sort_values('timestamp').reset_index(drop=True)
+            
+            print(f"✅ Получено {len(df)} реальных свечей")
+            return df
+            
+    except Exception as e:
+        print(f"❌ Ошибка получения реальных данных: {e}")
+        traceback.print_exc()
+        return pd.DataFrame()
 
-class BacktestEngine:
-    """Основной движок бэктеста"""
-    
-    def __init__(self, symbol: str = "SBER", use_real_data: bool = True):
-        self.symbol = symbol
-        self.use_real_data = use_real_data
+def find_signals(df: pd.DataFrame) -> List[SignalData]:
+    """Поиск сигналов: цена > EMA20, ADX > 25, +DI > -DI"""
+    try:
+        print("🔍 Начинаем поиск сигналов...")
         
-        # Инициализируем провайдеры данных
-        token = os.getenv('TINKOFF_TOKEN')
-        self.tinkoff_provider = TinkoffDataProvider(token) if token else None
-        self.data_generator = DataGenerator(symbol)
-        self.scanner = SignalScanner(symbol)
-    
-    async def run_backtest(self, days: int = 90) -> Dict:
-        """Запуск полного бэктеста"""
-        logger.info(f"🚀 Запуск бэктеста для {self.symbol}")
-        logger.info("=" * 80)
+        if df.empty:
+            print("❌ Пустой DataFrame")
+            return []
         
-        try:
-            # 1. Получение данных
-            if self.use_real_data and self.tinkoff_provider and TINKOFF_AVAILABLE:
-                df = await self.tinkoff_provider.get_real_data(days * 24 + 100)
-                if df.empty:
-                    logger.warning("⚠️ Не удалось получить реальные данные, используем симулированные")
-                    df = self.data_generator.generate_sample_data(days)
-            else:
-                df = self.data_generator.generate_sample_data(days)
-            
-            if df.empty:
-                raise Exception("Не удалось получить данные")
-            
-            # 2. Расчет индикаторов
-            df_with_indicators = self.scanner.calculate_indicators(df)
-            
-            # 3. Поиск сигналов
-            signals = self.scanner.find_signals(df_with_indicators)
-            
-            # 4. Анализ результатов
-            analysis = self.analyze_signals(signals, df_with_indicators)
-            
-            return {
-                'signals': signals,
-                'analysis': analysis,
-                'total_candles': len(df),
-                'data_period': f"{df['timestamp'].min()} - {df['timestamp'].max()}",
-                'data_source': 'real' if (self.use_real_data and self.tinkoff_provider) else 'simulated'
-            }
-            
-        except Exception as e:
-            logger.error(f"❌ Ошибка в бэктесте: {e}")
-            return {}
-    
-    def analyze_signals(self, signals: List[SignalData], df: pd.DataFrame) -> Dict:
-        """Анализ найденных сигналов"""
-        if not signals:
-            return {"error": "Сигналы не найдены"}
+        # Расчет индикаторов
+        print("📊 Расчет EMA20...")
+        closes = df['close'].tolist()
+        ema20_list = calculate_ema(closes, 20)
         
-        # Статистика по силе сигналов
+        print("📊 Расчет ADX...")
+        highs = df['high'].tolist()
+        lows = df['low'].tolist()
+        adx_list, plus_di_list, minus_di_list = calculate_adx_simple(highs, lows, closes, 14)
+        
+        # Добавляем в DataFrame
+        df['ema20'] = ema20_list
+        df['adx'] = adx_list
+        df['plus_di'] = plus_di_list
+        df['minus_di'] = minus_di_list
+        
+        print("🎯 Поиск условий сигналов...")
+        signals = []
+        
+        for i, row in df.iterrows():
+            try:
+                # Проверяем на NaN
+                if (pd.isna(row['ema20']) or pd.isna(row['adx']) or 
+                    pd.isna(row['plus_di']) or pd.isna(row['minus_di'])):
+                    continue
+                
+                # Условия
+                price_above_ema = row['close'] > row['ema20']
+                adx_strong = row['adx'] > 25
+                bullish_di = row['plus_di'] > row['minus_di']
+                
+                if price_above_ema and adx_strong and bullish_di:
+                    # Расчет силы сигнала
+                    strength = 0
+                    strength += min(row['adx'] / 50 * 40, 40)  # ADX component
+                    strength += min((row['plus_di'] - row['minus_di']) / 20 * 30, 30)  # DI component
+                    strength += min(((row['close'] - row['ema20']) / row['ema20'] * 100) / 2 * 20, 20)  # EMA component
+                    strength += 10  # Base score
+                    
+                    signal = SignalData(
+                        timestamp=row['timestamp'].strftime('%Y-%m-%d %H:%M:%S'),
+                        price=round(row['close'], 2),
+                        ema20=round(row['ema20'], 2),
+                        adx=round(row['adx'], 2),
+                        plus_di=round(row['plus_di'], 2),
+                        minus_di=round(row['minus_di'], 2),
+                        di_diff=round(row['plus_di'] - row['minus_di'], 2),
+                        signal_strength=round(min(strength, 100), 1)
+                    )
+                    signals.append(signal)
+                    
+            except Exception as e:
+                print(f"⚠️ Ошибка обработки строки {i}: {e}")
+                continue
+        
+        print(f"🎯 Найдено {len(signals)} сигналов")
+        return signals
+        
+    except Exception as e:
+        print(f"❌ Критическая ошибка поиска сигналов: {e}")
+        traceback.print_exc()
+        return []
+
+def print_results(signals: List[SignalData], total_candles: int):
+    """Вывод результатов"""
+    try:
+        print("\n" + "="*80)
+        print("🎯 РЕЗУЛЬТАТЫ ПОИСКА СИГНАЛОВ SBER")
+        print("="*80)
+        
+        print(f"\n📊 ОБЩАЯ СТАТИСТИКА:")
+        print(f"   • Всего свечей: {total_candles}")
+        print(f"   • Найдено сигналов: {len(signals)}")
+        
+        if len(signals) == 0:
+            print("\n❌ СИГНАЛЫ НЕ НАЙДЕНЫ")
+            print("   Возможные причины:")
+            print("   • Слишком строгие условия (ADX > 25)")
+            print("   • Недостаточно данных для расчета индикаторов")
+            print("   • Рынок в боковике")
+            return
+        
+        signal_pct = len(signals) / total_candles * 100
+        print(f"   • Процент времени в сигнале: {signal_pct:.2f}%")
+        
+        # Статистика по силе
         strengths = [s.signal_strength for s in signals]
+        avg_strength = sum(strengths) / len(strengths)
+        max_strength = max(strengths)
+        min_strength = min(strengths)
         
-        # Распределение по времени
-        timestamps = [datetime.strptime(s.timestamp, '%Y-%m-%d %H:%M:%S') for s in signals]
-        hours = [ts.hour for ts in timestamps]
-        hour_distribution = {}
-        for hour in hours:
-            hour_distribution[hour] = hour_distribution.get(hour, 0) + 1
-        
-        # Распределение по дням недели
-        weekdays = [ts.weekday() for ts in timestamps]  # 0=понедельник
-        weekday_names = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']
-        weekday_distribution = {}
-        for wd in weekdays:
-            name = weekday_names[wd]
-            weekday_distribution[name] = weekday_distribution.get(name, 0) + 1
+        print(f"\n💪 СИЛА СИГНАЛОВ:")
+        print(f"   • Средняя: {avg_strength:.1f}%")
+        print(f"   • Диапазон: {min_strength:.1f}% - {max_strength:.1f}%")
         
         # Статистика ADX
         adx_values = [s.adx for s in signals]
+        avg_adx = sum(adx_values) / len(adx_values)
+        strong_adx = len([x for x in adx_values if x > 35])
         
-        # Статистика DI
-        di_diffs = [s.di_diff for s in signals]
+        print(f"\n📈 ADX СТАТИСТИКА:")
+        print(f"   • Средний ADX: {avg_adx:.1f}")
+        print(f"   • Сигналов с ADX > 35: {strong_adx} ({strong_adx/len(signals)*100:.1f}%)")
         
-        # Статистика превышения EMA
-        ema_distances = [s.price_vs_ema_pct for s in signals]
+        # ТОП-5 сигналов
+        print(f"\n🏆 ТОП-5 СИЛЬНЕЙШИХ СИГНАЛОВ:")
+        top_signals = sorted(signals, key=lambda x: x.signal_strength, reverse=True)[:5]
         
-        analysis = {
+        for i, signal in enumerate(top_signals, 1):
+            print(f"\n   {i}. {signal.timestamp}")
+            print(f"      💪 Сила: {signal.signal_strength}%")
+            print(f"      💰 Цена: {signal.price} ₽ (EMA20: {signal.ema20} ₽)")
+            print(f"      📊 ADX: {signal.adx}, +DI: {signal.plus_di}, -DI: {signal.minus_di}")
+            print(f"      🎯 DI разность: {signal.di_diff}")
+        
+        # Сохранение результатов
+        results_data = {
             'total_signals': len(signals),
-            'signal_strength': {
-                'min': min(strengths),
-                'max': max(strengths),
-                'average': sum(strengths) / len(strengths),
-                'median': sorted(strengths)[len(strengths)//2]
-            },
-            'adx_stats': {
-                'min': min(adx_values),
-                'max': max(adx_values),
-                'average': sum(adx_values) / len(adx_values),
-                'above_35': len([x for x in adx_values if x > 35]),
-                'above_50': len([x for x in adx_values if x > 50])
-            },
-            'di_dominance': {
-                'min': min(di_diffs),
-                'max': max(di_diffs),
-                'average': sum(di_diffs) / len(di_diffs),
-                'above_10': len([x for x in di_diffs if x > 10]),
-                'above_20': len([x for x in di_diffs if x > 20])
-            },
-            'ema_distance': {
-                'min': min(ema_distances),
-                'max': max(ema_distances),
-                'average': sum(ema_distances) / len(ema_distances)
-            },
-            'time_distribution': hour_distribution,
-            'weekday_distribution': weekday_distribution,
-            'signals_per_day': len(signals) / 90  # За период
+            'total_candles': total_candles,
+            'signal_percentage': signal_pct,
+            'average_strength': avg_strength,
+            'average_adx': avg_adx,
+            'strong_adx_count': strong_adx,
+            'signals': [asdict(signal) for signal in signals]
         }
         
-        return analysis
-
-def print_results(results: Dict):
-    """Вывод результатов бэктеста"""
-    if not results:
-        print("❌ Результаты не получены")
-        return
-    
-    signals = results['signals']
-    analysis = results['analysis']
-    
-    print(f"\n{'='*80}")
-    print(f"📊 РЕЗУЛЬТАТЫ ПОИСКА СИГНАЛОВ - {results.get('data_period', 'Неизвестный период')}")
-    print(f"📡 Источник данных: {'РЕАЛЬНЫЕ' if results.get('data_source') == 'real' else 'СИМУЛИРОВАННЫЕ'}")
-    print(f"{'='*80}")
-    
-    print(f"\n🎯 УСЛОВИЯ ПОИСКА:")
-    print(f"   • Цена > EMA20")
-    print(f"   • ADX > 25")
-    print(f"   • +DI > -DI")
-    
-    print(f"\n🔍 ОБЩАЯ СТАТИСТИКА:")
-    print(f"   • Всего свечей проанализировано: {results['total_candles']:,}")
-    print(f"   • Найдено сигналов: {analysis['total_signals']}")
-    print(f"   • Процент времени в сигнале: {(analysis['total_signals'] / results['total_candles'] * 100):.2f}%")
-    print(f"   • Сигналов в день: {analysis['signals_per_day']:.1f}")
-    
-    print(f"\n📈 СИЛА СИГНАЛОВ:")
-    strength_stats = analysis['signal_strength']
-    print(f"   • Средняя сила: {strength_stats['average']:.1f}%")
-    print(f"   • Медиана: {strength_stats['median']:.1f}%")
-    print(f"   • Диапазон: {strength_stats['min']:.1f}% - {strength_stats['max']:.1f}%")
-    
-    # Распределение по силе
-    strong_signals = [s for s in signals if s.signal_strength >= 80]
-    medium_signals = [s for s in signals if 60 <= s.signal_strength < 80]
-    weak_signals = [s for s in signals if s.signal_strength < 60]
-    
-    print(f"\n🔥 РАСПРЕДЕЛЕНИЕ ПО СИЛЕ:")
-    print(f"   • Сильные (≥80%): {len(strong_signals)} ({len(strong_signals)/len(signals)*100:.1f}%)")
-    print(f"   • Средние (60-80%): {len(medium_signals)} ({len(medium_signals)/len(signals)*100:.1f}%)")
-    print(f"   • Слабые (<60%): {len(weak_signals)} ({len(weak_signals)/len(signals)*100:.1f}%)")
-    
-    print(f"\n📊 ADX СТАТИСТИКА:")
-    adx_stats = analysis['adx_stats']
-    print(f"   • Средний ADX: {adx_stats['average']:.1f}")
-    print(f"   • Диапазон: {adx_stats['min']:.1f} - {adx_stats['max']:.1f}")
-    print(f"   • ADX > 35: {adx_stats['above_35']} сигналов ({adx_stats['above_35']/len(signals)*100:.1f}%)")
-    print(f"   • ADX > 50: {adx_stats['above_50']} сигналов ({adx_stats['above_50']/len(signals)*100:.1f}%)")
-    
-    print(f"\n🎯 ДОМИНИРОВАНИЕ ПОКУПАТЕЛЕЙ (+DI > -DI):")
-    di_stats = analysis['di_dominance']
-    print(f"   • Средняя разность: {di_stats['average']:.1f}")
-    print(f"   • Диапазон: {di_stats['min']:.1f} - {di_stats['max']:.1f}")
-    print(f"   • Разность > 10: {di_stats['above_10']} сигналов ({di_stats['above_10']/len(signals)*100:.1f}%)")
-    print(f"   • Разность > 20: {di_stats['above_20']} сигналов ({di_stats['above_20']/len(signals)*100:.1f}%)")
-    
-    print(f"\n📏 ПРЕВЫШЕНИЕ EMA20:")
-    ema_stats = analysis['ema_distance']
-    print(f"   • Среднее превышение: {ema_stats['average']:.2f}%")
-    print(f"   • Диапазон: {ema_stats['min']:.2f}% - {ema_stats['max']:.2f}%")
-    
-    print(f"\n⏰ РАСПРЕДЕЛЕНИЕ ПО ВРЕМЕНИ (часы):")
-    time_dist = analysis['time_distribution']
-    for hour in sorted(time_dist.keys()):
-        count = time_dist[hour]
-        percentage = (count / analysis['total_signals'] * 100)
-        bar = "█" * int(percentage / 3)  # Масштабированная гистограмма
-        print(f"   {hour:02d}:00 | {count:3d} сигналов ({percentage:4.1f}%) {bar}")
-    
-    print(f"\n📅 РАСПРЕДЕЛЕНИЕ ПО ДНЯМ НЕДЕЛИ:")
-    weekday_dist = analysis['weekday_distribution']
-    for day in ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']:
-        count = weekday_dist.get(day, 0)
-        if count > 0:
-            percentage = (count / analysis['total_signals'] * 100)
-            bar = "█" * int(percentage / 3)
-            print(f"   {day} | {count:3d} сигналов ({percentage:4.1f}%) {bar}")
-    
-    # Топ-10 сильнейших сигналов
-    print(f"\n🏆 ТОП-10 СИЛЬНЕЙШИХ СИГНАЛОВ:")
-    sorted_signals = sorted(signals, key=lambda x: x.signal_strength, reverse=True)[:10]
-    
-    for i, signal in enumerate(sorted_signals, 1):
-        dt = datetime.strptime(signal.timestamp, '%Y-%m-%d %H:%M:%S')
-        weekday = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'][dt.weekday()]
+        with open('backtest_results.json', 'w', encoding='utf-8') as f:
+            json.dump(results_data, f, ensure_ascii=False, indent=2)
         
-        print(f"\n   {i:2d}. {dt.strftime('%d.%m.%Y %H:%M')} ({weekday})")
-        print(f"       💪 Сила: {signal.signal_strength:.1f}%")
-        print(f"       💰 Цена: {signal.price} ₽ (EMA20: {signal.ema20} ₽)")
-        print(f"       📈 ADX: {signal.adx:.1f}, +DI: {signal.plus_di:.1f}, -DI: {signal.minus_di:.1f}")
-        print(f"       📊 Превышение EMA: +{signal.price_vs_ema_pct:.2f}%, DI разность: {signal.di_diff:.1f}")
-        print(f"       📦 Объем: {signal.volume:,}")
-    
-    # Сохранение в JSON
-    output_data = {
-        'summary': analysis,
-        'signals': [asdict(signal) for signal in signals],
-        'search_conditions': {
-            'price_above_ema20': True,
-            'adx_above': 25,
-            'plus_di_above_minus_di': True
-        },
-        'metadata': {
-            'total_candles': results['total_candles'],
-            'data_period': results['data_period'],
-            'data_source': results.get('data_source', 'unknown')
-        }
-    }
-    
-    with open('sber_signals_backtest.json', 'w', encoding='utf-8') as f:
-        json.dump(output_data, f, ensure_ascii=False, indent=2)
-    
-    print(f"\n💾 Результаты сохранены в sber_signals_backtest.json")
-    print(f"{'='*80}")
+        print(f"\n💾 Результаты сохранены в backtest_results.json")
+        print("="*80)
+        
+    except Exception as e:
+        print(f"❌ Ошибка вывода результатов: {e}")
+        traceback.print_exc()
 
 async def main():
-    """Основная функция"""
-    print("🎯 БЭКТЕСТ ПОИСКА СИГНАЛОВ SBER")
-    print("Условия: цена > EMA20, ADX > 25, +DI > -DI")
-    print("="*80)
-    
-    # Проверяем токен Tinkoff
-    tinkoff_token = os.getenv('TINKOFF_TOKEN')
-    use_real_data = bool(tinkoff_token and TINKOFF_AVAILABLE)
-    
-    if use_real_data:
-        print("📡 Будем использовать РЕАЛЬНЫЕ данные через Tinkoff API")
-    else:
-        print("🔧 Будем использовать СИМУЛИРОВАННЫЕ данные")
-        if not TINKOFF_AVAILABLE:
-            print("   (tinkoff-investments не установлен)")
-        if not tinkoff_token:
-            print("   (TINKOFF_TOKEN не найден в переменных окружения)")
-    
-    print("-" * 80)
-    
-    # Проверяем переменные окружения для Railway
-    port = os.getenv('PORT', '8000')
-    railway_env = os.getenv('RAILWAY_ENVIRONMENT')
-    
-    if railway_env:
-        print(f"🚂 Запуск на Railway в окружении: {railway_env}")
-        print(f"🔌 Порт: {port}")
-    
+    """Главная функция"""
     try:
-        # Создаем движок бэктеста
-        engine = BacktestEngine("SBER", use_real_data=use_real_data)
+        print("🚀 ЗАПУСК SBER BACKTEST")
+        print(f"⏰ Время запуска: {datetime.now()}")
+        print("-"*60)
         
-        # Запускаем бэктест на 90 дней
-        print("\n🔄 Запуск анализа за 90 дней...")
-        results = await engine.run_backtest(days=90)
+        # Проверяем окружение
+        railway_env = os.getenv('RAILWAY_ENVIRONMENT')
+        port = os.getenv('PORT', '8000')
         
-        # Выводим результаты
-        if results:
-            print_results(results)
-            
-            # Краткие выводы
-            analysis = results['analysis']
-            if analysis.get('total_signals', 0) > 0:
-                print(f"\n💡 КРАТКИЕ ВЫВОДЫ:")
-                
-                strong_pct = len([s for s in results['signals'] if s.signal_strength >= 80]) / len(results['signals']) * 100
-                avg_adx = analysis['adx_stats']['average']
-                avg_di_diff = analysis['di_dominance']['average']
-                signals_per_day = analysis['signals_per_day']
-                
-                print(f"   📈 Сигналы появляются {signals_per_day:.1f} раз в день")
-                print(f"   🔥 {strong_pct:.1f}% сигналов имеют силу ≥80%")
-                print(f"   📊 Средний ADX: {avg_adx:.1f} (тренд {'сильный' if avg_adx > 35 else 'умеренный'})")
-                print(f"   🎯 Средняя разность DI: {avg_di_diff:.1f} (доминирование {'сильное' if avg_di_diff > 15 else 'умеренное'})")
-                
-                # Лучшее время для торговли
-                time_dist = analysis['time_distribution']
-                if time_dist:
-                    best_hour = max(time_dist.items(), key=lambda x: x[1])
-                    print(f"   ⏰ Больше всего сигналов в {best_hour[0]:02d}:00 ({best_hour[1]} сигналов)")
-                
-                # Рекомендации
-                print(f"\n🎯 РЕКОМЕНДАЦИИ:")
-                if strong_pct >= 30:
-                    print(f"   ✅ Качество сигналов хорошее - много сильных сигналов")
-                else:
-                    print(f"   ⚠️ Рассмотрите дополнительные фильтры для улучшения качества")
-                
-                if avg_adx >= 35:
-                    print(f"   ✅ ADX показывает сильные тренды")
-                else:
-                    print(f"   ⚠️ ADX умеренный - возможны ложные сигналы в боковике")
-                
-                if signals_per_day >= 3:
-                    print(f"   ⚠️ Много сигналов в день - рассмотрите дополнительную фильтрацию")
-                elif signals_per_day >= 1:
-                    print(f"   ✅ Оптимальная частота сигналов")
-                else:
-                    print(f"   ⚠️ Мало сигналов - возможно, стоит смягчить условия")
-            
-            else:
-                print(f"\n❌ Сигналы не найдены!")
-                print(f"   Попробуйте изменить параметры:")
-                print(f"   • Уменьшить ADX с 25 до 20-23")
-                print(f"   • Добавить объемный фильтр")
-                print(f"   • Изменить период анализа")
-        
-        else:
-            print("❌ Не удалось получить результаты бэктеста")
-        
-        print(f"\n✅ Анализ завершен!")
-        
-        # Для Railway - держим процесс живым
         if railway_env:
-            print(f"\n🚂 Приложение развернуто на Railway")
-            print(f"🔌 Порт {port} готов к подключению")
-            print("💤 Засыпаем, чтобы Railway не убил процесс...")
+            print(f"🚂 Railway окружение: {railway_env}")
+            print(f"🔌 Порт: {port}")
+        
+        print("🔄 Получение данных...")
+        
+        # Пробуем получить реальные данные
+        df = await get_real_data()
+        
+        # Если не получилось - используем тестовые
+        if df.empty:
+            print("🔧 Используем тестовые данные...")
+            df = generate_test_data(30)
+        
+        if df.empty:
+            print("❌ Не удалось получить данные")
+            return
+        
+        print(f"✅ Данные получены: {len(df)} свечей")
+        print(f"📅 Период: {df['timestamp'].min()} - {df['timestamp'].max()}")
+        
+        # Поиск сигналов
+        signals = find_signals(df)
+        
+        # Вывод результатов
+        print_results(signals, len(df))
+        
+        print(f"\n✅ Анализ завершен успешно!")
+        
+        # Для Railway - остаемся живыми
+        if railway_env:
+            print(f"\n🚂 Держим процесс живым для Railway...")
             
-            # Простое ожидание вместо веб-сервера
+            count = 0
+            while True:
+                await asyncio.sleep(300)  # 5 минут
+                count += 1
+                print(f"💓 Heartbeat #{count}: {datetime.now().strftime('%H:%M:%S')}")
+                
+                # Каждые 30 минут показываем статистику
+                if count % 6 == 0:
+                    print(f"📊 Статистика: найдено {len(signals)} сигналов из {len(df)} свечей")
+        
+    except KeyboardInterrupt:
+        print("\n👋 Процесс остановлен пользователем")
+    except Exception as e:
+        print(f"❌ КРИТИЧЕСКАЯ ОШИБКА: {e}")
+        traceback.print_exc()
+        
+        # Даже при ошибке пытаемся остаться живыми для Railway
+        railway_env = os.getenv('RAILWAY_ENVIRONMENT')
+        if railway_env:
+            print("🚂 Пытаемся остаться живыми несмотря на ошибку...")
             try:
                 while True:
-                    await asyncio.sleep(3600)  # Спим час
-                    print(f"💓 Процесс жив: {datetime.now().strftime('%H:%M:%S')}")
-            except KeyboardInterrupt:
-                print("👋 Процесс остановлен")
-    
-    except Exception as e:
-        logger.error(f"❌ Критическая ошибка: {e}")
-        print(f"❌ Ошибка выполнения: {e}")
+                    await asyncio.sleep(600)  # 10 минут
+                    print(f"💔 Процесс с ошибкой жив: {datetime.now().strftime('%H:%M:%S')}")
+            except:
+                pass
 
 if __name__ == "__main__":
-    asyncio.run(main()) solid #eee;
-                            color: #7f8c8d;
-                        }}
-                        .data-source {{
-                            display: inline-block;
-                            padding: 5px 15px;
-                            background: {'#27ae60' if data_source == 'real' else '#f39c12'};
-                            color: white;
-                            border-radius: 20px;
-                            font-size: 0.9em;
-                            margin: 10px 5px;
-                        }}
-                    </style>
-                </head>
-                <body>
-                    <div class="container">
-                        <h1>🎯 SBER Signals Backtest</h1>
-                        <div class="subtitle">Поиск сигналов: цена > EMA20, ADX > 25, +DI > -DI</div>
-                        
-                        <div class="conditions">
-                            <h3>📋 Условия поиска:</h3>
-                            <ul>
-                                <li><strong>Цена выше EMA20</strong> - восходящий тренд</li>
-                                <li><strong>ADX > 25</strong> - достаточная сила тренда</li>  
-                                <li><strong>+DI > -DI</strong> - доминирование покупателей</li>
-                            </ul>
-                        </div>
-                        
-                        <div class="stats">
-                            <div class="stat-card">
-                                <div class="stat-value">{signals_count}</div>
-                                <div class="stat-label">Найдено сигналов</div>
-                            </div>
-                            <div class="stat-card">
-                                <div class="stat-value">{avg_strength:.1f}%</div>
-                                <div class="stat-label">Средняя сила</div>
-                            </div>
-                            <div class="stat-card">
-                                <div class="stat-value">{signals_per_day:.1f}</div>
-                                <div class="stat-label">Сигналов в день</div>
-                            </div>
-                        </div>
-                        
-                        <div class="data-source">
-                            📡 Источник: {{'Реальные данные Tinkoff' if data_source == 'real' else 'Симулированные данные'}}
-                        </div>
-                        
-                        <div class="signals-section">
-                            <h2>🏆 Топ сильнейших сигналов:</h2>
-                            {signals_html}
-                        </div>
-                        
-                        <div class="footer">
-                            <p>Полные результаты доступны в логах приложения и файле sber_signals_backtest.json</p>
-                            <p>Обновлено: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')} UTC</p>
-                        </div>
-                    </div>
-                </body>
-                </html>
-                """
-                self.wfile.write(html.encode('utf-8'))
-            
-            elif self.path == '/json':
-                # API endpoint для получения данных в JSON
-                self.send_response(200)
-                self.send_header('Content-type', 'application/json; charset=utf-8')
-                self.send_header('Access-Control-Allow-Origin', '*')
-                self.end_headers()
-                
-                if results:
-                    json_data = json.dumps(results, default=str, ensure_ascii=False, indent=2)
-                    self.wfile.write(json_data.encode('utf-8'))
-                else:
-                    self.wfile.write(b'{"error": "No results available"}')
-            
-            else:
-                super().do_GET()
+    print("🎯 SBER BACKTEST - СТАРТ")
+    print(f"🐍 Python: {sys.executable}")
+    print(f"📁 Рабочая папка: {os.getcwd()}")
+    print(f"🔧 Переменные окружения: PORT={os.getenv('PORT')}, RAILWAY={os.getenv('RAILWAY_ENVIRONMENT')}")
     
-    # Запускаем сервер
     try:
-        with socketserver.TCPServer(("", int(port)), CustomHandler) as httpd:
-            print(f"🌐 Сервер запущен на http://0.0.0.0:{port}")
-            print(f"📊 Веб-интерфейс: http://0.0.0.0:{port}")
-            print(f"📁 JSON API: http://0.0.0.0:{port}/json")
-            print("Нажмите Ctrl+C для остановки...")
-            httpd.serve_forever()
-    except KeyboardInterrupt:
-        print("\n👋 Сервер остановлен")
+        asyncio.run(main())
     except Exception as e:
-        print(f"❌ Ошибка веб-сервера: {e}")
-
-if __name__ == "__main__":
-    asyncio.run(main())
+        print(f"❌ Ошибка asyncio.run: {e}")
+        traceback.print_exc()
+        sys.exit(1)
