@@ -358,64 +358,43 @@ def find_signals(df: pd.DataFrame) -> List[SignalData]:
         traceback.print_exc()
         return []
 
-def print_results(signals: List[SignalData], total_candles: int):
-    """Вывод результатов"""
+def print_results(signals: List[SignalData], total_candles: int, df: pd.DataFrame):
+    """Вывод результатов - только период и все сигналы"""
     try:
         force_print("\n" + "="*80)
-        force_print("🎯 РЕЗУЛЬТАТЫ ПОИСКА СИГНАЛОВ SBER")
+        force_print("🎯 СИГНАЛЫ SBER")
         force_print("="*80)
         
-        force_print(f"\n📊 ОБЩАЯ СТАТИСТИКА:")
-        force_print(f"   • Всего свечей: {total_candles}")
-        force_print(f"   • Найдено сигналов: {len(signals)}")
+        # Период данных
+        if not df.empty:
+            start_time = df['timestamp'].min().strftime('%Y-%m-%d %H:%M')
+            end_time = df['timestamp'].max().strftime('%Y-%m-%d %H:%M')
+            force_print(f"\n📅 ПЕРИОД: {start_time} - {end_time}")
+            force_print(f"📊 Всего свечей: {total_candles}")
         
         if len(signals) == 0:
+            force_print(f"📈 Найдено сигналов: 0")
             force_print("\n❌ СИГНАЛЫ НЕ НАЙДЕНЫ")
-            force_print("   Возможные причины:")
-            force_print("   • Слишком строгие условия (ADX > 25)")
-            force_print("   • Недостаточно данных для расчета индикаторов")
-            force_print("   • Рынок в боковике")
             return
         
-        signal_pct = len(signals) / total_candles * 100
-        force_print(f"   • Процент времени в сигнале: {signal_pct:.2f}%")
+        force_print(f"📈 Найдено сигналов: {len(signals)}")
+        force_print(f"\n🎯 ВСЕ СИГНАЛЫ:")
+        force_print("="*80)
         
-        strengths = [s.signal_strength for s in signals]
-        avg_strength = sum(strengths) / len(strengths)
-        max_strength = max(strengths)
-        min_strength = min(strengths)
-        
-        force_print(f"\n💪 СИЛА СИГНАЛОВ:")
-        force_print(f"   • Средняя: {avg_strength:.1f}%")
-        force_print(f"   • Диапазон: {min_strength:.1f}% - {max_strength:.1f}%")
-        
-        adx_values = [s.adx for s in signals]
-        avg_adx = sum(adx_values) / len(adx_values)
-        strong_adx = len([x for x in adx_values if x > 35])
-        
-        force_print(f"\n📈 ADX СТАТИСТИКА:")
-        force_print(f"   • Средний ADX: {avg_adx:.1f}")
-        force_print(f"   • Сигналов с ADX > 35: {strong_adx} ({strong_adx/len(signals)*100:.1f}%)")
-        
-        force_print(f"\n🏆 ТОП-5 СИЛЬНЕЙШИХ СИГНАЛОВ:")
-        top_signals = sorted(signals, key=lambda x: x.signal_strength, reverse=True)[:5]
-        
-        for i, signal in enumerate(top_signals, 1):
-            force_print(f"\n   {i}. {signal.timestamp}")
-            force_print(f"      💪 Сила: {signal.signal_strength}%")
-            force_print(f"      💰 Цена: {signal.price} ₽ (EMA20: {signal.ema20} ₽)")
-            force_print(f"      📊 ADX: {signal.adx}, +DI: {signal.plus_di}, -DI: {signal.minus_di}")
-            force_print(f"      🎯 DI разность: {signal.di_diff}")
+        # Выводим все сигналы в хронологическом порядке
+        for i, signal in enumerate(signals, 1):
+            force_print(f"\n{i:2d}. {signal.timestamp}")
+            force_print(f"    💰 Цена: {signal.price:7.2f} ₽  |  EMA20: {signal.ema20:7.2f} ₽")
+            force_print(f"    📊 ADX: {signal.adx:5.1f}  |  +DI: {signal.plus_di:5.1f}  |  -DI: {signal.minus_di:5.1f}")
+            force_print(f"    💪 Сила сигнала: {signal.signal_strength:5.1f}%")
         
         # Сохранение результатов
         results_data = {
+            'period_start': df['timestamp'].min().isoformat() if not df.empty else None,
+            'period_end': df['timestamp'].max().isoformat() if not df.empty else None,
             'total_signals': len(signals),
             'total_candles': total_candles,
-            'signal_percentage': signal_pct,
-            'average_strength': avg_strength,
-            'average_adx': avg_adx,
-            'strong_adx_count': strong_adx,
-            'timestamp': datetime.now().isoformat(),
+            'analysis_timestamp': datetime.now().isoformat(),
             'signals': [asdict(signal) for signal in signals]
         }
         
