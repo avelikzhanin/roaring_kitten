@@ -361,11 +361,15 @@ def find_signals(df: pd.DataFrame) -> List[SignalData]:
         valid_found = False
         
         for idx, row in last_rows.iterrows():
+            # Безопасное форматирование значений
+            ema_val = f"{row.get('ema20'):.1f}" if not pd.isna(row.get('ema20', np.nan)) else 'NaN'
+            adx_val = f"{row.get('adx'):.1f}" if not pd.isna(row.get('adx', np.nan)) else 'NaN'
+            plus_di_val = f"{row.get('plus_di'):.1f}" if not pd.isna(row.get('plus_di', np.nan)) else 'NaN'
+            minus_di_val = f"{row.get('minus_di'):.1f}" if not pd.isna(row.get('minus_di', np.nan)) else 'NaN'
+            
             force_print(f"  {row['timestamp'].strftime('%m-%d %H:%M')}: "
-                      f"P={row['close']:.1f} EMA={row.get('ema20', 'NaN'):.1f if not pd.isna(row.get('ema20')) else 'NaN'} "
-                      f"ADX={row.get('adx', 'NaN'):.1f if not pd.isna(row.get('adx')) else 'NaN'} "
-                      f"+DI={row.get('plus_di', 'NaN'):.1f if not pd.isna(row.get('plus_di')) else 'NaN'} "
-                      f"-DI={row.get('minus_di', 'NaN'):.1f if not pd.isna(row.get('minus_di')) else 'NaN'}")
+                      f"P={row['close']:.1f} EMA={ema_val} "
+                      f"ADX={adx_val} +DI={plus_di_val} -DI={minus_di_val}")
             
             if not (pd.isna(row.get('ema20')) or pd.isna(row.get('adx')) or 
                     pd.isna(row.get('plus_di')) or pd.isna(row.get('minus_di'))):
