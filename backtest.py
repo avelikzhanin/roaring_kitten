@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 Простой бэктест поиска сигналов SBER для Railway
-Исправленная версия с принудительным выводом логов
+Только реальные данные через Tinkoff API за весь август
+Анализ сигналов с 15 по 26 августа
 """
 
 import os
@@ -11,8 +12,7 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Optional
-import json
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 import logging
 import traceback
 
@@ -57,8 +57,9 @@ try:
     TINKOFF_AVAILABLE = True
     force_print("✅ tinkoff-investments импортирован успешно")
 except ImportError as e:
-    force_print(f"⚠️ tinkoff-investments НЕ доступен: {e}")
-    TINKOFF_AVAILABLE = False
+    force_print(f"❌ tinkoff-investments НЕ доступен: {e}")
+    force_print("❌ КРИТИЧЕСКАЯ ОШИБКА: Без Tinkoff API работа невозможна!")
+    sys.exit(1)
 
 @dataclass
 class SignalData:
@@ -86,7 +87,7 @@ def calculate_ema(prices: List[float], period: int = 20) -> List[float]:
         return [np.nan] * len(prices)
 
 def calculate_adx_simple(highs: List[float], lows: List[float], closes: List[float], period: int = 14):
-    """Классический расчет ADX по формуле Уайлдера - упрощенная версия"""
+    """Классический расчет ADX по формуле Уайлдера"""
     try:
         n = len(highs)
         if n < period * 2:
@@ -128,13 +129,11 @@ def calculate_adx_simple(highs: List[float], lows: List[float], closes: List[flo
         
         # 3. Сглаживание Уайлдера
         def smooth_wilder(values, period):
-            result = [np.nan] * len(values)  # Создаем массив той же длины
+            result = [np.nan] * len(values)
             
-            # Первое значение - среднее первых period элементов
             if len(values) >= period:
                 result[period-1] = sum(values[:period]) / period
                 
-                # Дальше по формуле Уайлдера
                 for i in range(period, len(values)):
                     result[i] = (result[i-1] * (period-1) + values[i]) / period
             
@@ -161,17 +160,15 @@ def calculate_adx_simple(highs: List[float], lows: List[float], closes: List[flo
                 plus_di.append(pdi)
                 minus_di.append(mdi)
                 
-                # DX = |+DI - -DI| / (+DI + -DI) * 100
                 if (pdi + mdi) == 0:
                     dx_values.append(0)
                 else:
                     dx = abs(pdi - mdi) / (pdi + mdi) * 100
                     dx_values.append(dx)
         
-        # 5. ADX - сглаживание DX (исправлено)
+        # 5. ADX - сглаживание DX
         adx_values = [np.nan] * len(dx_values)
         
-        # Находим первый валидный DX
         first_valid_idx = None
         for i in range(len(dx_values)):
             if not np.isnan(dx_values[i]):
@@ -179,7 +176,6 @@ def calculate_adx_simple(highs: List[float], lows: List[float], closes: List[flo
                 break
         
         if first_valid_idx is not None and first_valid_idx + period <= len(dx_values):
-            # Первое значение ADX - среднее первых period валидных DX
             valid_dx = []
             start_idx = first_valid_idx
             
@@ -193,7 +189,6 @@ def calculate_adx_simple(highs: List[float], lows: List[float], closes: List[flo
                 if adx_idx < len(adx_values):
                     adx_values[adx_idx] = first_adx
                     
-                    # Дальше по формуле Уайлдера
                     for i in range(adx_idx + 1, len(dx_values)):
                         if not np.isnan(dx_values[i]):
                             adx_values[i] = (adx_values[i-1] * (period-1) + dx_values[i]) / period
@@ -208,68 +203,24 @@ def calculate_adx_simple(highs: List[float], lows: List[float], closes: List[flo
         n = len(highs)
         return [np.nan] * n, [np.nan] * n, [np.nan] * n
 
-def generate_test_data(days: int = 60) -> pd.DataFrame:
-    """Генерация простых тестовых данных"""
-    try:
-        force_print(f"🔧 Генерация тестовых данных на {days} дней...")
-        
-        hours = days * 8
-        timestamps = []
-        base_time = datetime.now(timezone.utc) - timedelta(days=days)
-        # Конвертируем базовое время в московское
-        moscow_tz = timezone(timedelta(hours=3))
-        base_time = base_time.replace(tzinfo=timezone.utc).astimezone(moscow_tz)
-        
-        for i in range(hours):
-            timestamps.append(base_time + timedelta(hours=i))
-        
-        np.random.seed(42)
-        base_price = 280.0
-        prices = []
-        
-        for i in range(hours):
-            if i == 0:
-                prices.append(base_price)
-            else:
-                change = np.random.normal(0, 2)
-                new_price = max(prices[-1] + change, 250)
-                prices.append(new_price)
-        
-        highs = [p + np.random.uniform(0.5, 3) for p in prices]
-        lows = [p - np.random.uniform(0.5, 3) for p in prices]
-        volumes = [np.random.randint(1000000, 5000000) for _ in range(hours)]
-        
-        df = pd.DataFrame({
-            'timestamp': timestamps,
-            'open': prices,
-            'high': highs,
-            'low': lows,
-            'close': prices,
-            'volume': volumes
-        })
-        
-        force_print(f"✅ Создано {len(df)} тестовых свечей")
-        return df
-        
-    except Exception as e:
-        force_print(f"❌ Ошибка генерации данных: {e}")
-        traceback.print_exc()
-        return pd.DataFrame()
-
 async def get_real_data() -> pd.DataFrame:
-    """Получение реальных данных"""
+    """Получение реальных данных за весь август через Tinkoff API"""
     token = os.getenv('TINKOFF_TOKEN')
     
-    if not token or not TINKOFF_AVAILABLE:
-        force_print("📝 Токен не найден или tinkoff-investments недоступен")
+    if not token:
+        force_print("❌ TINKOFF_TOKEN не найден в переменных окружения!")
         return pd.DataFrame()
     
     try:
-        force_print("📡 Попытка получить реальные данные...")
+        force_print("📡 Получение реальных данных за весь август 2025...")
         
         with Client(token) as client:
-            to_time = now()
-            from_time = to_time - timedelta(days=30)  # 30 дней вместо 200 часов
+            # Получаем данные за весь август для точного расчета индикаторов
+            moscow_tz = timezone(timedelta(hours=3))
+            from_time = datetime(2025, 8, 1, 0, 0, tzinfo=moscow_tz).astimezone(timezone.utc)
+            to_time = datetime(2025, 8, 31, 23, 59, tzinfo=moscow_tz).astimezone(timezone.utc)
+            
+            force_print(f"📅 Запрос данных: весь август 2025")
             
             response = client.market_data.get_candles(
                 figi="BBG004730N88",  # SBER
@@ -279,7 +230,7 @@ async def get_real_data() -> pd.DataFrame:
             )
             
             if not response.candles:
-                force_print("⚠️ Нет данных от API")
+                force_print("❌ Нет данных от Tinkoff API")
                 return pd.DataFrame()
             
             data = []
@@ -288,10 +239,11 @@ async def get_real_data() -> pd.DataFrame:
                     price = float(candle.close.units + candle.close.nano / 1e9)
                     high = float(candle.high.units + candle.high.nano / 1e9)
                     low = float(candle.low.units + candle.low.nano / 1e9)
+                    open_price = float(candle.open.units + candle.open.nano / 1e9)
                     
                     data.append({
                         'timestamp': candle.time,
-                        'open': price,
+                        'open': open_price,
                         'high': high,
                         'low': low,
                         'close': price,
@@ -302,37 +254,36 @@ async def get_real_data() -> pd.DataFrame:
                     continue
             
             if not data:
-                force_print("❌ Не удалось обработать данные")
+                force_print("❌ Не удалось обработать данные от API")
                 return pd.DataFrame()
             
             df = pd.DataFrame(data)
             df['timestamp'] = pd.to_datetime(df['timestamp'], utc=True)
-            # Конвертируем в московское время
             df['timestamp'] = df['timestamp'].dt.tz_convert('Europe/Moscow')
             df = df.sort_values('timestamp').reset_index(drop=True)
             
-            force_print(f"✅ Получено {len(df)} реальных свечей")
+            force_print(f"✅ Получено {len(df)} свечей за август")
+            force_print(f"📅 Период данных: {df['timestamp'].min()} - {df['timestamp'].max()}")
             return df
             
     except Exception as e:
-        force_print(f"❌ Ошибка получения реальных данных: {e}")
+        force_print(f"❌ Ошибка получения данных от Tinkoff API: {e}")
         traceback.print_exc()
         return pd.DataFrame()
 
 def find_signals(df: pd.DataFrame) -> List[SignalData]:
-    """Поиск сигналов"""
+    """Поиск сигналов в период с 15 по 26 августа"""
     try:
-        force_print("🔍 Начинаем поиск сигналов...")
+        force_print("🔍 Начинаем анализ сигналов...")
         
         if df.empty:
             force_print("❌ Пустой DataFrame")
             return []
         
-        force_print("📊 Расчет EMA20...")
+        force_print("📊 Расчет индикаторов...")
         closes = df['close'].tolist()
         ema20_list = calculate_ema(closes, 20)
         
-        force_print("📊 Расчет ADX...")
         highs = df['high'].tolist()
         lows = df['low'].tolist()
         adx_list, plus_di_list, minus_di_list = calculate_adx_simple(highs, lows, closes, 14)
@@ -342,38 +293,32 @@ def find_signals(df: pd.DataFrame) -> List[SignalData]:
         df['plus_di'] = plus_di_list
         df['minus_di'] = minus_di_list
         
-        force_print("🎯 Поиск условий сигналов...")
+        # Фильтруем данные только за период анализа (15-26 августа)
+        analysis_start = datetime(2025, 8, 15, 0, 0, tzinfo=timezone(timedelta(hours=3)))
+        analysis_end = datetime(2025, 8, 26, 23, 59, tzinfo=timezone(timedelta(hours=3)))
+        
+        # Конвертируем timestamp в timezone-aware если нужно
+        if df['timestamp'].dt.tz is None:
+            df['timestamp'] = df['timestamp'].dt.tz_localize('Europe/Moscow')
+        
+        analysis_df = df[
+            (df['timestamp'] >= analysis_start) & 
+            (df['timestamp'] <= analysis_end)
+        ].copy()
+        
+        force_print(f"🎯 Анализируем период 15-26 августа: {len(analysis_df)} свечей")
+        
         signals = []
         
-        # Простая статистика
-        valid_rows = 0
-        analyzed_rows = 0
-        condition_stats = {
-            'price_above_ema': 0,
-            'adx_strong': 0,
-            'bullish_di': 0,
-            'all_conditions': 0
-        }
-        
-        for i, row in df.iterrows():
+        for i, row in analysis_df.iterrows():
             try:
-                analyzed_rows += 1
-                
                 if (pd.isna(row['ema20']) or pd.isna(row['adx']) or 
                     pd.isna(row['plus_di']) or pd.isna(row['minus_di'])):
                     continue
                 
-                valid_rows += 1
-                
                 price_above_ema = row['close'] > row['ema20']
                 adx_strong = row['adx'] > 25
                 bullish_di = row['plus_di'] > row['minus_di']
-                
-                # Считаем статистику
-                if price_above_ema: condition_stats['price_above_ema'] += 1
-                if adx_strong: condition_stats['adx_strong'] += 1
-                if bullish_di: condition_stats['bullish_di'] += 1
-                if price_above_ema and adx_strong and bullish_di: condition_stats['all_conditions'] += 1
                 
                 if price_above_ema and adx_strong and bullish_di:
                     strength = 0
@@ -381,11 +326,6 @@ def find_signals(df: pd.DataFrame) -> List[SignalData]:
                     strength += min((row['plus_di'] - row['minus_di']) / 20 * 30, 30)
                     strength += min(((row['close'] - row['ema20']) / row['ema20'] * 100) / 2 * 20, 20)
                     strength += 10
-                    
-                    # Отладочная информация только для найденных сигналов
-                    force_print(f"🔍 НАЙДЕН СИГНАЛ: {row['timestamp'].strftime('%Y-%m-%d %H:%M')}")
-                    force_print(f"    Цена: {row['close']:.2f}, EMA20: {row['ema20']:.2f}")
-                    force_print(f"    ADX: {row['adx']:.1f}, +DI: {row['plus_di']:.1f}, -DI: {row['minus_di']:.1f}")
                     
                     signal = SignalData(
                         timestamp=row['timestamp'].strftime('%Y-%m-%d %H:%M MSK'),
@@ -403,14 +343,7 @@ def find_signals(df: pd.DataFrame) -> List[SignalData]:
                 force_print(f"⚠️ Ошибка обработки строки {i}: {e}")
                 continue
         
-        force_print(f"📊 Статистика анализа:")
-        force_print(f"    Всего строк: {analyzed_rows}")
-        force_print(f"    Валидных строк: {valid_rows}")
-        force_print(f"    Цена > EMA20: {condition_stats['price_above_ema']} ({condition_stats['price_above_ema']/max(valid_rows,1)*100:.1f}%)")
-        force_print(f"    ADX > 25: {condition_stats['adx_strong']} ({condition_stats['adx_strong']/max(valid_rows,1)*100:.1f}%)")
-        force_print(f"    +DI > -DI: {condition_stats['bullish_di']} ({condition_stats['bullish_di']/max(valid_rows,1)*100:.1f}%)")
-        force_print(f"    Все условия: {condition_stats['all_conditions']}")
-        force_print(f"🎯 Найдено {len(signals)} сигналов")
+        force_print(f"🎯 Найдено {len(signals)} сигналов за период 15-26 августа")
         return signals
         
     except Exception as e:
@@ -418,50 +351,55 @@ def find_signals(df: pd.DataFrame) -> List[SignalData]:
         traceback.print_exc()
         return []
 
-def print_results(signals: List[SignalData], total_candles: int, df: pd.DataFrame):
-    """Вывод результатов - только период и все сигналы"""
+def print_results(signals: List[SignalData], df: pd.DataFrame):
+    """Вывод результатов в логи"""
     try:
         force_print("\n" + "="*80)
-        force_print("🎯 СИГНАЛЫ SBER")
+        force_print("🎯 РЕЗУЛЬТАТЫ АНАЛИЗА SBER (15-26 АВГУСТА 2025)")
         force_print("="*80)
         
-        # Период данных
         if not df.empty:
-            start_time = df['timestamp'].min().strftime('%Y-%m-%d %H:%M MSK')
-            end_time = df['timestamp'].max().strftime('%Y-%m-%d %H:%M MSK')
-            force_print(f"\n📅 ПЕРИОД: {start_time} - {end_time}")
-            force_print(f"📊 Всего свечей: {total_candles}")
+            # Общий период данных
+            force_print(f"📊 Получено данных за: {df['timestamp'].min().strftime('%Y-%m-%d %H:%M')} - {df['timestamp'].max().strftime('%Y-%m-%d %H:%M')} MSK")
+            force_print(f"📈 Всего свечей: {len(df)}")
+            
+            # Период анализа
+            analysis_start = datetime(2025, 8, 15, 0, 0, tzinfo=timezone(timedelta(hours=3)))
+            analysis_end = datetime(2025, 8, 26, 23, 59, tzinfo=timezone(timedelta(hours=3)))
+            
+            if df['timestamp'].dt.tz is None:
+                df_temp = df.copy()
+                df_temp['timestamp'] = df_temp['timestamp'].dt.tz_localize('Europe/Moscow')
+            else:
+                df_temp = df
+                
+            analysis_candles = len(df_temp[
+                (df_temp['timestamp'] >= analysis_start) & 
+                (df_temp['timestamp'] <= analysis_end)
+            ])
+            
+            force_print(f"🎯 Анализируемый период: 15-26 августа 2025")
+            force_print(f"🕐 Свечей в периоде анализа: {analysis_candles}")
         
         if len(signals) == 0:
-            force_print(f"📈 Найдено сигналов: 0")
-            force_print("\n❌ СИГНАЛЫ НЕ НАЙДЕНЫ")
+            force_print(f"\n❌ СИГНАЛЫ НЕ НАЙДЕНЫ")
+            force_print("💡 В период 15-26 августа не было условий для генерации сигналов")
             return
         
-        force_print(f"📈 Найдено сигналов: {len(signals)}")
-        force_print(f"\n🎯 ВСЕ СИГНАЛЫ:")
+        force_print(f"\n✅ НАЙДЕНО СИГНАЛОВ: {len(signals)}")
         force_print("="*80)
         
-        # Выводим все сигналы в хронологическом порядке
         for i, signal in enumerate(signals, 1):
-            force_print(f"\n{i:2d}. {signal.timestamp}")
-            force_print(f"    💰 Цена: {signal.price:7.2f} ₽  |  EMA20: {signal.ema20:7.2f} ₽")
-            force_print(f"    📊 ADX: {signal.adx:5.1f}  |  +DI: {signal.plus_di:5.1f}  |  -DI: {signal.minus_di:5.1f}")
-            force_print(f"    💪 Сила сигнала: {signal.signal_strength:5.1f}%")
+            force_print(f"\n🚀 СИГНАЛ #{i}")
+            force_print(f"📅 Время: {signal.timestamp}")
+            force_print(f"💰 Цена: {signal.price} ₽")
+            force_print(f"📊 EMA20: {signal.ema20} ₽")
+            force_print(f"📈 ADX: {signal.adx}")
+            force_print(f"📊 +DI: {signal.plus_di} | -DI: {signal.minus_di}")
+            force_print(f"💪 Сила сигнала: {signal.signal_strength}%")
         
-        # Сохранение результатов
-        results_data = {
-            'period_start': df['timestamp'].min().isoformat() if not df.empty else None,
-            'period_end': df['timestamp'].max().isoformat() if not df.empty else None,
-            'total_signals': len(signals),
-            'total_candles': total_candles,
-            'analysis_timestamp': datetime.now().isoformat(),
-            'signals': [asdict(signal) for signal in signals]
-        }
-        
-        with open('backtest_results.json', 'w', encoding='utf-8') as f:
-            json.dump(results_data, f, ensure_ascii=False, indent=2)
-        
-        force_print(f"\n💾 Результаты сохранены в backtest_results.json")
+        force_print("\n" + "="*80)
+        force_print(f"📋 ИТОГО: {len(signals)} сигналов найдено")
         force_print("="*80)
         
     except Exception as e:
@@ -472,79 +410,53 @@ async def main():
     """Главная функция"""
     try:
         force_print("🚀 ЗАПУСК SBER BACKTEST")
+        force_print("📊 Получение данных за весь август для точных расчетов")
+        force_print("🎯 Анализ сигналов: 15-26 августа 2025")
         force_print(f"⏰ Время запуска: {datetime.now()}")
         force_print("-"*60)
         
         railway_env = os.getenv('RAILWAY_ENVIRONMENT')
-        port = os.getenv('PORT', '8000')
-        
         if railway_env:
             force_print(f"🚂 Railway окружение: {railway_env}")
-            force_print(f"🔌 Порт: {port}")
         else:
             force_print("🏠 Локальное окружение")
         
-        force_print("🔄 Получение данных...")
-        
-        # Пробуем получить реальные данные
+        # Получение данных через Tinkoff API
         df = await get_real_data()
         
-        # Если не получилось - используем тестовые
         if df.empty:
-            force_print("🔧 Используем тестовые данные...")
-            df = generate_test_data(60)
-        
-        if df.empty:
-            force_print("❌ Не удалось получить данные")
+            force_print("❌ КРИТИЧЕСКАЯ ОШИБКА: Не удалось получить данные от Tinkoff API")
+            force_print("🔧 Проверьте:")
+            force_print("   1. Переменную окружения TINKOFF_TOKEN")
+            force_print("   2. Подключение к интернету")
+            force_print("   3. Статус Tinkoff API")
             return
-        
-        force_print(f"✅ Данные получены: {len(df)} свечей")
-        force_print(f"📅 Период: {df['timestamp'].min()} - {df['timestamp'].max()}")
         
         # Поиск сигналов
         signals = find_signals(df)
         
-        # Вывод результатов
-        print_results(signals, len(df), df)
+        # Вывод результатов в логи
+        print_results(signals, df)
         
-        force_print(f"\n✅ Анализ завершен успешно!")
-        
-        # Для Railway - можно убрать, если не нужно держать процесс живым
-        # if railway_env:
-        #     force_print(f"\n🚂 Держим процесс живым для Railway...")
-        #     
-        #     count = 0
-        #     while True:
-        #         await asyncio.sleep(300)  # 5 минут
-        #         count += 1
-        #         force_print(f"💓 Heartbeat #{count}: {datetime.now().strftime('%H:%M:%S')}")
-        #         
-        #         # Каждые 30 минут показываем статистику
-        #         if count % 6 == 0:
-        #             force_print(f"📊 Статистика: найдено {len(signals)} сигналов из {len(df)} свечей")
+        force_print(f"\n✅ АНАЛИЗ ЗАВЕРШЕН УСПЕШНО!")
         
     except KeyboardInterrupt:
         force_print("\n👋 Процесс остановлен пользователем")
     except Exception as e:
         force_print(f"❌ КРИТИЧЕСКАЯ ОШИБКА: {e}")
         traceback.print_exc()
-        
-        # Даже при ошибке можно убрать эту часть
-        # railway_env = os.getenv('RAILWAY_ENVIRONMENT')
-        # if railway_env:
-        #     force_print("🚂 Пытаемся остаться живыми несмотря на ошибку...")
-        #     try:
-        #         while True:
-        #             await asyncio.sleep(600)  # 10 минут
-        #             force_print(f"💔 Процесс с ошибкой жив: {datetime.now().strftime('%H:%M:%S')}")
-        #     except:
-        #         pass
 
 if __name__ == "__main__":
-    force_print("🎯 SBER BACKTEST - СТАРТ")
+    force_print("🎯 SBER BACKTEST - ТОЛЬКО РЕАЛЬНЫЕ ДАННЫЕ")
     force_print(f"🐍 Python: {sys.executable}")
     force_print(f"📁 Рабочая папка: {os.getcwd()}")
-    force_print(f"🔧 Переменные: PORT={os.getenv('PORT')}, RAILWAY={os.getenv('RAILWAY_ENVIRONMENT')}")
+    
+    token_status = "✅ Установлен" if os.getenv('TINKOFF_TOKEN') else "❌ Отсутствует"
+    force_print(f"🔑 TINKOFF_TOKEN: {token_status}")
+    
+    if not os.getenv('TINKOFF_TOKEN'):
+        force_print("❌ ОСТАНОВ: Необходимо установить TINKOFF_TOKEN!")
+        sys.exit(1)
     
     try:
         asyncio.run(main())
