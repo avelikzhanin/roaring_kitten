@@ -122,7 +122,7 @@ def calculate_adx_simple(highs: List[float], lows: List[float], closes: List[flo
         
         # Сглаживание Уайлдера (исправленная формула)
         def wilder_smoothing(values, period):
-            result = [np.nan] * period
+            result = [np.nan] * len(values)
             
             if len(values) >= period + 1:
                 # Первое сглаженное значение - простое среднее периода
@@ -132,15 +132,10 @@ def calculate_adx_simple(highs: List[float], lows: List[float], closes: List[flo
                 
                 # Применяем формулу Уайлдера: новое = (старое * (период-1) + текущее) / период
                 for i in range(period + 1, len(values)):
-                    if i < len(result):
-                        smoothed = (result[i-1] * (period - 1) + values[i]) / period
-                        result.append(smoothed)
-                    else:
-                        smoothed = (result[-1] * (period - 1) + values[i]) / period
-                        result.append(smoothed)
+                    smoothed = (result[i-1] * (period - 1) + values[i]) / period
+                    result[i] = smoothed
             
-            # Обрезаем до нужной длины
-            return result[:len(values)]
+            return result
         
         # Применяем сглаживание
         atr = wilder_smoothing(tr_list, period)
