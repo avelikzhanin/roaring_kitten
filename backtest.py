@@ -1,22 +1,4 @@
-def calculate_adx_simple(highs: List[float], lows: List[float], closes: List[float], period: int = 14):
-    """Классический расчет ADX по формуле Уайлдера"""
-    try:
-        n = len(highs)
-        if n < period + 1:
-            return [np.nan] * n, [np.nan] * n, [np.nan] * n
-        
-        # True Range
-        tr_list = [0]  # Первый элемент
-        for i in range(1, n):
-            hl = highs[i] - lows[i]
-            hc = abs(highs[i] - closes[i-1])
-            lc = abs(lows[i] - closes[i-1])
-            tr = max(hl, hc, lc)
-            tr_list.append(tr)
-        
-        # Directional Movement
-        plus_dm = [0]  # Первый элемент
-        minus_dm = [0]  # Первый элемент#!/usr/bin/env python3
+#!/usr/bin/env python3
 """
 Простой бэктест поиска сигналов SBER для Railway
 Исправленная версия с принудительным выводом логов
@@ -486,7 +468,7 @@ async def main():
         # Поиск сигналов
         signals = find_signals(df)
         
-        # Вывод результатов - ИСПРАВЛЕНО!
+        # Вывод результатов
         print_results(signals, len(df), df)
         
         force_print(f"\n✅ Анализ завершен успешно!")
