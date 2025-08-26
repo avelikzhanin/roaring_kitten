@@ -179,7 +179,7 @@ def calculate_adx_simple(highs: List[float], lows: List[float], closes: List[flo
         n = len(highs)
         return [np.nan] * n, [np.nan] * n, [np.nan] * n
 
-def generate_test_data(days: int = 30) -> pd.DataFrame:
+def generate_test_data(days: int = 60) -> pd.DataFrame:
     """Генерация простых тестовых данных"""
     try:
         force_print(f"🔧 Генерация тестовых данных на {days} дней...")
@@ -240,7 +240,7 @@ async def get_real_data() -> pd.DataFrame:
         
         with Client(token) as client:
             to_time = now()
-            from_time = to_time - timedelta(hours=200)
+            from_time = to_time - timedelta(days=30)  # 30 дней вместо 200 часов
             
             response = client.market_data.get_candles(
                 figi="BBG004730N88",  # SBER
@@ -316,15 +316,35 @@ def find_signals(df: pd.DataFrame) -> List[SignalData]:
         force_print("🎯 Поиск условий сигналов...")
         signals = []
         
+        # Добавляем отладку для понимания данных
+        valid_rows = 0
+        analyzed_rows = 0
+        
         for i, row in df.iterrows():
             try:
+                analyzed_rows += 1
+                
                 if (pd.isna(row['ema20']) or pd.isna(row['adx']) or 
                     pd.isna(row['plus_di']) or pd.isna(row['minus_di'])):
                     continue
                 
+                valid_rows += 1
+                
+                # Показываем некоторые значения для отладки
+                if valid_rows % 50 == 0:  # каждые 50 строк
+                    force_print(f"📈 Строка {valid_rows}: ADX={row['adx']:.1f}, +DI={row['plus_di']:.1f}, -DI={row['minus_di']:.1f}")
+                
                 price_above_ema = row['close'] > row['ema20']
                 adx_strong = row['adx'] > 25
                 bullish_di = row['plus_di'] > row['minus_di']
+                
+                # Покажем сколько условий выполняется
+                conditions_met = sum([price_above_ema, adx_strong, bullish_di])
+                
+                if conditions_met >= 2:  # Временно снижаем требования для тестирования
+                    force_print(f"🔍 ПОТЕНЦИАЛЬНЫЙ СИГНАЛ: {row['timestamp'].strftime('%Y-%m-%d %H:%M')}")
+                    force_print(f"    Цена>EMA: {price_above_ema}, ADX>25: {adx_strong}, +DI>-DI: {bullish_di}")
+                    force_print(f"    Значения: ADX={row['adx']:.1f}, +DI={row['plus_di']:.1f}, -DI={row['minus_di']:.1f}")
                 
                 if price_above_ema and adx_strong and bullish_di:
                     strength = 0
@@ -354,6 +374,9 @@ def find_signals(df: pd.DataFrame) -> List[SignalData]:
                 force_print(f"⚠️ Ошибка обработки строки {i}: {e}")
                 continue
         
+        force_print(f"📊 Статистика анализа:")
+        force_print(f"    Всего строк: {analyzed_rows}")
+        force_print(f"    Валидных строк: {valid_rows}")
         force_print(f"🎯 Найдено {len(signals)} сигналов")
         return signals
         
@@ -436,7 +459,7 @@ async def main():
         # Если не получилось - используем тестовые
         if df.empty:
             force_print("🔧 Используем тестовые данные...")
-            df = generate_test_data(30)
+            df = generate_test_data(60)
         
         if df.empty:
             force_print("❌ Не удалось получить данные")
