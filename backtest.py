@@ -128,14 +128,14 @@ def calculate_adx_simple(highs: List[float], lows: List[float], closes: List[flo
         
         # 3. Сглаживание Уайлдера
         def smooth_wilder(values, period):
-            result = [np.nan] * n
+            result = [np.nan] * len(values)  # Создаем массив той же длины
             
-            # Первое значение - среднее
-            if n >= period:
+            # Первое значение - среднее первых period элементов
+            if len(values) >= period:
                 result[period-1] = sum(values[:period]) / period
                 
                 # Дальше по формуле Уайлдера
-                for i in range(period, n):
+                for i in range(period, len(values)):
                     result[i] = (result[i-1] * (period-1) + values[i]) / period
             
             return result
@@ -168,8 +168,37 @@ def calculate_adx_simple(highs: List[float], lows: List[float], closes: List[flo
                     dx = abs(pdi - mdi) / (pdi + mdi) * 100
                     dx_values.append(dx)
         
-        # 5. ADX - сглаживание DX
-        adx_values = smooth_wilder(dx_values, period)
+        # 5. ADX - сглаживание DX (исправлено)
+        adx_values = [np.nan] * len(dx_values)
+        
+        # Находим первый валидный DX
+        first_valid_idx = None
+        for i in range(len(dx_values)):
+            if not np.isnan(dx_values[i]):
+                first_valid_idx = i
+                break
+        
+        if first_valid_idx is not None and first_valid_idx + period <= len(dx_values):
+            # Первое значение ADX - среднее первых period валидных DX
+            valid_dx = []
+            start_idx = first_valid_idx
+            
+            for i in range(start_idx, min(start_idx + period, len(dx_values))):
+                if not np.isnan(dx_values[i]):
+                    valid_dx.append(dx_values[i])
+            
+            if len(valid_dx) >= period:
+                first_adx = sum(valid_dx[:period]) / period
+                adx_idx = start_idx + period - 1
+                if adx_idx < len(adx_values):
+                    adx_values[adx_idx] = first_adx
+                    
+                    # Дальше по формуле Уайлдера
+                    for i in range(adx_idx + 1, len(dx_values)):
+                        if not np.isnan(dx_values[i]):
+                            adx_values[i] = (adx_values[i-1] * (period-1) + dx_values[i]) / period
+                        else:
+                            adx_values[i] = adx_values[i-1] if i > 0 else np.nan
         
         return adx_values, plus_di, minus_di
         
@@ -329,17 +358,39 @@ def find_signals(df: pd.DataFrame) -> List[SignalData]:
         # Сначала посмотрим на последние 10 строк данных
         force_print("🔍 ДИАГНОСТИКА - последние 10 строк:")
         last_rows = df.tail(10)
+        valid_found = False
+        
         for idx, row in last_rows.iterrows():
-            if not (pd.isna(row['ema20']) or pd.isna(row['adx']) or 
-                    pd.isna(row['plus_di']) or pd.isna(row['minus_di'])):
+            force_print(f"  {row['timestamp'].strftime('%m-%d %H:%M')}: "
+                      f"P={row['close']:.1f} EMA={row.get('ema20', 'NaN'):.1f if not pd.isna(row.get('ema20')) else 'NaN'} "
+                      f"ADX={row.get('adx', 'NaN'):.1f if not pd.isna(row.get('adx')) else 'NaN'} "
+                      f"+DI={row.get('plus_di', 'NaN'):.1f if not pd.isna(row.get('plus_di')) else 'NaN'} "
+                      f"-DI={row.get('minus_di', 'NaN'):.1f if not pd.isna(row.get('minus_di')) else 'NaN'}")
+            
+            if not (pd.isna(row.get('ema20')) or pd.isna(row.get('adx')) or 
+                    pd.isna(row.get('plus_di')) or pd.isna(row.get('minus_di'))):
+                valid_found = True
                 price_above_ema = row['close'] > row['ema20']
                 adx_strong = row['adx'] > 25
                 bullish_di = row['plus_di'] > row['minus_di']
-                
-                force_print(f"  {row['timestamp'].strftime('%m-%d %H:%M')}: "
-                          f"P={row['close']:.1f} EMA={row['ema20']:.1f} "
-                          f"ADX={row['adx']:.1f} +DI={row['plus_di']:.1f} -DI={row['minus_di']:.1f}")
-                force_print(f"    Условия: P>EMA={price_above_ema}, ADX>25={adx_strong}, +DI>-DI={bullish_di}")
+                force_print(f"    ✅ Валидная строка! Условия: P>EMA={price_above_ema}, ADX>25={adx_strong}, +DI>-DI={bullish_di}")
+        
+        if not valid_found:
+            force_print("❌ НЕ НАЙДЕНО НИ ОДНОЙ ВАЛИДНОЙ СТРОКИ В ПОСЛЕДНИХ 10!")
+            force_print("🔧 Проверим весь DataFrame...")
+            
+            # Проверим есть ли вообще валидные значения
+            ema_valid = df['ema20'].notna().sum()
+            adx_valid = df['adx'].notna().sum() 
+            plus_di_valid = df['plus_di'].notna().sum()
+            minus_di_valid = df['minus_di'].notna().sum()
+            
+            force_print(f"📊 Валидные значения: EMA20={ema_valid}, ADX={adx_valid}, +DI={plus_di_valid}, -DI={minus_di_valid}")
+            
+            # Показать первые несколько значений каждого индикатора
+            force_print(f"🔍 Первые 5 EMA20: {df['ema20'].head().tolist()}")
+            force_print(f"🔍 Первые 5 ADX: {df['adx'].head().tolist()}")
+            force_print(f"🔍 Последние 5 ADX: {df['adx'].tail().tolist()}")
         
         for i, row in df.iterrows():
             try:
