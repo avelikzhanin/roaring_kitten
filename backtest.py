@@ -101,7 +101,7 @@ def calculate_adx_simple(highs: List[float], lows: List[float], closes: List[flo
             tr = max(hl, hc, lc)
             tr_list.append(tr)
         
-        # Directional Movement
+        # Directional Movement (исправленный алгоритм)
         plus_dm = [0]
         minus_dm = [0]
         
@@ -109,35 +109,38 @@ def calculate_adx_simple(highs: List[float], lows: List[float], closes: List[flo
             up_move = highs[i] - highs[i-1]
             down_move = lows[i-1] - lows[i]
             
+            # Правильная логика расчета DM
             if up_move > down_move and up_move > 0:
                 plus_dm.append(up_move)
-            else:
+                minus_dm.append(0)
+            elif down_move > up_move and down_move > 0:
                 plus_dm.append(0)
-                
-            if down_move > up_move and down_move > 0:
                 minus_dm.append(down_move)
             else:
+                plus_dm.append(0)
                 minus_dm.append(0)
         
-        # Сглаживание Уайлдера: Smoothed = (Previous * (Period-1) + Current) / Period
+        # Сглаживание Уайлдера (исправленная формула)
         def wilder_smoothing(values, period):
-            result = [np.nan] * (period - 1)
+            result = [np.nan] * period
             
-            # Первое значение - простое среднее
-            if len(values) >= period:
-                first_avg = sum(values[1:period+1]) / period  # Начинаем с 1, т.к. 0-й элемент = 0
-                result.append(first_avg)
+            if len(values) >= period + 1:
+                # Первое сглаженное значение - простое среднее периода
+                first_sum = sum(values[1:period+1])  # начинаем с индекса 1
+                first_avg = first_sum / period
+                result[period] = first_avg
                 
-                # Дальше применяем формулу Уайлдера
+                # Применяем формулу Уайлдера: новое = (старое * (период-1) + текущее) / период
                 for i in range(period + 1, len(values)):
-                    smoothed = (result[-1] * (period - 1) + values[i]) / period
-                    result.append(smoothed)
+                    if i < len(result):
+                        smoothed = (result[i-1] * (period - 1) + values[i]) / period
+                        result.append(smoothed)
+                    else:
+                        smoothed = (result[-1] * (period - 1) + values[i]) / period
+                        result.append(smoothed)
             
-            # Дополняем до нужной длины
-            while len(result) < len(values):
-                result.append(np.nan)
-                
-            return result
+            # Обрезаем до нужной длины
+            return result[:len(values)]
         
         # Применяем сглаживание
         atr = wilder_smoothing(tr_list, period)
@@ -357,6 +360,11 @@ def find_signals(df: pd.DataFrame) -> List[SignalData]:
                     strength += min((row['plus_di'] - row['minus_di']) / 20 * 30, 30)
                     strength += min(((row['close'] - row['ema20']) / row['ema20'] * 100) / 2 * 20, 20)
                     strength += 10
+                    
+                    # Отладочная информация
+                    force_print(f"🔍 НАЙДЕН СИГНАЛ: {row['timestamp'].strftime('%Y-%m-%d %H:%M')}")
+                    force_print(f"    Цена: {row['close']:.2f}, EMA20: {row['ema20']:.2f}")
+                    force_print(f"    ADX: {row['adx']:.1f}, +DI: {row['plus_di']:.1f}, -DI: {row['minus_di']:.1f}")
                     
                     signal = SignalData(
                         timestamp=row['timestamp'].strftime('%Y-%m-%d %H:%M MSK'),
