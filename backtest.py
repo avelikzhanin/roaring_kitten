@@ -316,9 +316,30 @@ def find_signals(df: pd.DataFrame) -> List[SignalData]:
         force_print("🎯 Поиск условий сигналов...")
         signals = []
         
-        # Добавляем отладку для понимания данных
+        # Добавляем детальную диагностику
         valid_rows = 0
         analyzed_rows = 0
+        condition_stats = {
+            'price_above_ema': 0,
+            'adx_strong': 0,
+            'bullish_di': 0,
+            'all_conditions': 0
+        }
+        
+        # Сначала посмотрим на последние 10 строк данных
+        force_print("🔍 ДИАГНОСТИКА - последние 10 строк:")
+        last_rows = df.tail(10)
+        for idx, row in last_rows.iterrows():
+            if not (pd.isna(row['ema20']) or pd.isna(row['adx']) or 
+                    pd.isna(row['plus_di']) or pd.isna(row['minus_di'])):
+                price_above_ema = row['close'] > row['ema20']
+                adx_strong = row['adx'] > 25
+                bullish_di = row['plus_di'] > row['minus_di']
+                
+                force_print(f"  {row['timestamp'].strftime('%m-%d %H:%M')}: "
+                          f"P={row['close']:.1f} EMA={row['ema20']:.1f} "
+                          f"ADX={row['adx']:.1f} +DI={row['plus_di']:.1f} -DI={row['minus_di']:.1f}")
+                force_print(f"    Условия: P>EMA={price_above_ema}, ADX>25={adx_strong}, +DI>-DI={bullish_di}")
         
         for i, row in df.iterrows():
             try:
@@ -330,21 +351,28 @@ def find_signals(df: pd.DataFrame) -> List[SignalData]:
                 
                 valid_rows += 1
                 
-                # Показываем некоторые значения для отладки
-                if valid_rows % 50 == 0:  # каждые 50 строк
-                    force_print(f"📈 Строка {valid_rows}: ADX={row['adx']:.1f}, +DI={row['plus_di']:.1f}, -DI={row['minus_di']:.1f}")
-                
                 price_above_ema = row['close'] > row['ema20']
                 adx_strong = row['adx'] > 25
                 bullish_di = row['plus_di'] > row['minus_di']
                 
-                # Покажем сколько условий выполняется
+                # Считаем статистику
+                if price_above_ema: condition_stats['price_above_ema'] += 1
+                if adx_strong: condition_stats['adx_strong'] += 1
+                if bullish_di: condition_stats['bullish_di'] += 1
+                if price_above_ema and adx_strong and bullish_di: condition_stats['all_conditions'] += 1
+                
+                # Показываем некоторые значения для отладки
+                if valid_rows <= 5 or valid_rows % 100 == 0:  # первые 5 и каждые 100 строк
+                    force_print(f"📈 Строка {valid_rows}: ADX={row['adx']:.1f}, +DI={row['plus_di']:.1f}, -DI={row['minus_di']:.1f}")
+                    force_print(f"    Условия: P>EMA={price_above_ema}, ADX>25={adx_strong}, +DI>-DI={bullish_di}")
+                
+                # Покажем потенциальные сигналы (2 из 3 условий)
                 conditions_met = sum([price_above_ema, adx_strong, bullish_di])
                 
                 if conditions_met >= 2:  # Временно снижаем требования для тестирования
-                    force_print(f"🔍 ПОТЕНЦИАЛЬНЫЙ СИГНАЛ: {row['timestamp'].strftime('%Y-%m-%d %H:%M')}")
+                    force_print(f"🟡 БЛИЗКИЙ СИГНАЛ: {row['timestamp'].strftime('%Y-%m-%d %H:%M')}")
                     force_print(f"    Цена>EMA: {price_above_ema}, ADX>25: {adx_strong}, +DI>-DI: {bullish_di}")
-                    force_print(f"    Значения: ADX={row['adx']:.1f}, +DI={row['plus_di']:.1f}, -DI={row['minus_di']:.1f}")
+                    force_print(f"    Значения: P={row['close']:.1f}, EMA={row['ema20']:.1f}, ADX={row['adx']:.1f}, +DI={row['plus_di']:.1f}, -DI={row['minus_di']:.1f}")
                 
                 if price_above_ema and adx_strong and bullish_di:
                     strength = 0
@@ -377,6 +405,10 @@ def find_signals(df: pd.DataFrame) -> List[SignalData]:
         force_print(f"📊 Статистика анализа:")
         force_print(f"    Всего строк: {analyzed_rows}")
         force_print(f"    Валидных строк: {valid_rows}")
+        force_print(f"    Цена > EMA20: {condition_stats['price_above_ema']} ({condition_stats['price_above_ema']/max(valid_rows,1)*100:.1f}%)")
+        force_print(f"    ADX > 25: {condition_stats['adx_strong']} ({condition_stats['adx_strong']/max(valid_rows,1)*100:.1f}%)")
+        force_print(f"    +DI > -DI: {condition_stats['bullish_di']} ({condition_stats['bullish_di']/max(valid_rows,1)*100:.1f}%)")
+        force_print(f"    Все условия: {condition_stats['all_conditions']}")
         force_print(f"🎯 Найдено {len(signals)} сигналов")
         return signals
         
