@@ -86,115 +86,92 @@ def calculate_ema(prices: List[float], period: int = 20) -> List[float]:
         return [np.nan] * len(prices)
 
 def calculate_adx_simple(highs: List[float], lows: List[float], closes: List[float], period: int = 14):
-    """Классический расчет ADX по формуле Уайлдера"""
+    """Классический расчет ADX по формуле Уайлдера - упрощенная версия"""
     try:
         n = len(highs)
-        if n < period + 1:
+        if n < period * 2:
             return [np.nan] * n, [np.nan] * n, [np.nan] * n
         
-        # True Range
-        tr_list = [0]  # Первый элемент
-        for i in range(1, n):
-            hl = highs[i] - lows[i]
-            hc = abs(highs[i] - closes[i-1])
-            lc = abs(lows[i] - closes[i-1])
-            tr = max(hl, hc, lc)
+        # 1. True Range
+        tr_list = []
+        for i in range(n):
+            if i == 0:
+                tr = highs[i] - lows[i]
+            else:
+                hl = highs[i] - lows[i]
+                hc = abs(highs[i] - closes[i-1])
+                lc = abs(lows[i] - closes[i-1])
+                tr = max(hl, hc, lc)
             tr_list.append(tr)
         
-        # Directional Movement (исправленный алгоритм)
-        plus_dm = [0]
-        minus_dm = [0]
+        # 2. Directional Movement
+        plus_dm = []
+        minus_dm = []
         
-        for i in range(1, n):
-            up_move = highs[i] - highs[i-1]
-            down_move = lows[i-1] - lows[i]
-            
-            # Правильная логика расчета DM
-            if up_move > down_move and up_move > 0:
-                plus_dm.append(up_move)
-                minus_dm.append(0)
-            elif down_move > up_move and down_move > 0:
+        for i in range(n):
+            if i == 0:
                 plus_dm.append(0)
-                minus_dm.append(down_move)
+                minus_dm.append(0)
             else:
-                plus_dm.append(0)
-                minus_dm.append(0)
-        
-        # Сглаживание Уайлдера (исправленная формула)
-        def wilder_smoothing(values, period):
-            result = [np.nan] * len(values)
-            
-            if len(values) >= period + 1:
-                # Первое сглаженное значение - простое среднее периода
-                first_sum = sum(values[1:period+1])  # начинаем с индекса 1
-                first_avg = first_sum / period
-                result[period] = first_avg
+                up_move = highs[i] - highs[i-1]
+                down_move = lows[i-1] - lows[i]
                 
-                # Применяем формулу Уайлдера: новое = (старое * (период-1) + текущее) / период
-                for i in range(period + 1, len(values)):
-                    smoothed = (result[i-1] * (period - 1) + values[i]) / period
-                    result[i] = smoothed
+                if up_move > down_move and up_move > 0:
+                    plus_dm.append(up_move)
+                    minus_dm.append(0)
+                elif down_move > up_move and down_move > 0:
+                    plus_dm.append(0)
+                    minus_dm.append(down_move)
+                else:
+                    plus_dm.append(0)
+                    minus_dm.append(0)
+        
+        # 3. Сглаживание Уайлдера
+        def smooth_wilder(values, period):
+            result = [np.nan] * n
+            
+            # Первое значение - среднее
+            if n >= period:
+                result[period-1] = sum(values[:period]) / period
+                
+                # Дальше по формуле Уайлдера
+                for i in range(period, n):
+                    result[i] = (result[i-1] * (period-1) + values[i]) / period
             
             return result
         
-        # Применяем сглаживание
-        atr = wilder_smoothing(tr_list, period)
-        plus_dm_smooth = wilder_smoothing(plus_dm, period)
-        minus_dm_smooth = wilder_smoothing(minus_dm, period)
+        # Сглаживаем TR, +DM, -DM
+        atr_smooth = smooth_wilder(tr_list, period)
+        plus_dm_smooth = smooth_wilder(plus_dm, period)
+        minus_dm_smooth = smooth_wilder(minus_dm, period)
         
-        # Расчет DI
+        # 4. Расчет +DI и -DI
         plus_di = []
         minus_di = []
         dx_values = []
         
         for i in range(n):
-            if i < period or np.isnan(atr[i]) or atr[i] == 0:
+            if i < period-1 or atr_smooth[i] == 0 or np.isnan(atr_smooth[i]):
                 plus_di.append(np.nan)
                 minus_di.append(np.nan)
                 dx_values.append(np.nan)
             else:
-                pdi = (plus_dm_smooth[i] / atr[i]) * 100
-                mdi = (minus_dm_smooth[i] / atr[i]) * 100
+                pdi = (plus_dm_smooth[i] / atr_smooth[i]) * 100
+                mdi = (minus_dm_smooth[i] / atr_smooth[i]) * 100
                 plus_di.append(pdi)
                 minus_di.append(mdi)
                 
-                # DX расчет
-                if pdi + mdi == 0:
+                # DX = |+DI - -DI| / (+DI + -DI) * 100
+                if (pdi + mdi) == 0:
                     dx_values.append(0)
                 else:
                     dx = abs(pdi - mdi) / (pdi + mdi) * 100
                     dx_values.append(dx)
         
-        # Расчет ADX - сглаживание DX по Уайлдеру
-        adx = [np.nan] * (period * 2 - 1)  # ADX начинается позже
+        # 5. ADX - сглаживание DX
+        adx_values = smooth_wilder(dx_values, period)
         
-        # Найдем валидные DX для первого ADX
-        valid_dx_start = period
-        valid_dx = []
-        
-        for i in range(valid_dx_start, min(valid_dx_start + period, n)):
-            if i < len(dx_values) and not np.isnan(dx_values[i]):
-                valid_dx.append(dx_values[i])
-        
-        if len(valid_dx) >= period:
-            # Первое значение ADX
-            first_adx = sum(valid_dx[:period]) / period
-            adx.append(first_adx)
-            
-            # Дальше сглаживание Уайлдера для ADX
-            for i in range(len(adx), n):
-                if i < len(dx_values) and not np.isnan(dx_values[i]):
-                    new_adx = (adx[-1] * (period - 1) + dx_values[i]) / period
-                    adx.append(new_adx)
-                else:
-                    adx.append(np.nan)
-        
-        # Обрезаем до нужной длины
-        adx = adx[:n]
-        if len(adx) < n:
-            adx.extend([np.nan] * (n - len(adx)))
-        
-        return adx, plus_di, minus_di
+        return adx_values, plus_di, minus_di
         
     except Exception as e:
         force_print(f"❌ Ошибка расчета ADX: {e}")
@@ -476,19 +453,19 @@ async def main():
         
         force_print(f"\n✅ Анализ завершен успешно!")
         
-        # Для Railway - остаемся живыми
-        if railway_env:
-            force_print(f"\n🚂 Держим процесс живым для Railway...")
-            
-            count = 0
-            while True:
-                await asyncio.sleep(300)  # 5 минут
-                count += 1
-                force_print(f"💓 Heartbeat #{count}: {datetime.now().strftime('%H:%M:%S')}")
-                
-                # Каждые 30 минут показываем статистику
-                if count % 6 == 0:
-                    force_print(f"📊 Статистика: найдено {len(signals)} сигналов из {len(df)} свечей")
+        # Для Railway - можно убрать, если не нужно держать процесс живым
+        # if railway_env:
+        #     force_print(f"\n🚂 Держим процесс живым для Railway...")
+        #     
+        #     count = 0
+        #     while True:
+        #         await asyncio.sleep(300)  # 5 минут
+        #         count += 1
+        #         force_print(f"💓 Heartbeat #{count}: {datetime.now().strftime('%H:%M:%S')}")
+        #         
+        #         # Каждые 30 минут показываем статистику
+        #         if count % 6 == 0:
+        #             force_print(f"📊 Статистика: найдено {len(signals)} сигналов из {len(df)} свечей")
         
     except KeyboardInterrupt:
         force_print("\n👋 Процесс остановлен пользователем")
@@ -496,16 +473,16 @@ async def main():
         force_print(f"❌ КРИТИЧЕСКАЯ ОШИБКА: {e}")
         traceback.print_exc()
         
-        # Даже при ошибке пытаемся остаться живыми для Railway
-        railway_env = os.getenv('RAILWAY_ENVIRONMENT')
-        if railway_env:
-            force_print("🚂 Пытаемся остаться живыми несмотря на ошибку...")
-            try:
-                while True:
-                    await asyncio.sleep(600)  # 10 минут
-                    force_print(f"💔 Процесс с ошибкой жив: {datetime.now().strftime('%H:%M:%S')}")
-            except:
-                pass
+        # Даже при ошибке можно убрать эту часть
+        # railway_env = os.getenv('RAILWAY_ENVIRONMENT')
+        # if railway_env:
+        #     force_print("🚂 Пытаемся остаться живыми несмотря на ошибку...")
+        #     try:
+        #         while True:
+        #             await asyncio.sleep(600)  # 10 минут
+        #             force_print(f"💔 Процесс с ошибкой жив: {datetime.now().strftime('%H:%M:%S')}")
+        #     except:
+        #         pass
 
 if __name__ == "__main__":
     force_print("🎯 SBER BACKTEST - СТАРТ")
