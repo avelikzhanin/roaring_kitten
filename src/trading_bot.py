@@ -23,9 +23,6 @@ class TradingSignal:
     adx: float
     plus_di: float
     minus_di: float
-    volume: int
-    avg_volume: float
-    volume_ratio: float
 
 class TradingBot:
     """Основной класс торгового бота"""
@@ -47,7 +44,7 @@ class TradingBot:
             # Создаем приложение Telegram
             self.app = Application.builder().token(self.telegram_token).build()
             
-            # Добавляем обработчики команд (без /status)
+            # Добавляем обработчики команд
             self.app.add_handler(CommandHandler("start", self.start_command))
             self.app.add_handler(CommandHandler("stop", self.stop_command))
             self.app.add_handler(CommandHandler("signal", self.signal_command))
@@ -114,9 +111,8 @@ class TradingBot:
                 "🔔 Бот будет уведомлять о сигналах покупки и их отмене\n\n"
                 "<b>Параметры стратегии:</b>\n"
                 "• EMA20 - цена выше средней\n"
-                "• ADX > 23 - сильный тренд\n"
-                "• +DI > -DI - восходящее движение\n"
-                "• Объем > среднего × 1.47\n\n"
+                "• ADX > 25 - сильный тренд\n"
+                "• +DI > -DI (разница > 1) - восходящее движение\n\n"
                 "<b>Команды:</b>\n"
                 "/stop - отписаться от сигналов\n"
                 "/signal - проверить текущий сигнал",
@@ -171,14 +167,10 @@ class TradingBot:
                             closes = df['close'].tolist()
                             highs = df['high'].tolist()
                             lows = df['low'].tolist()
-                            volumes = df['volume'].tolist()
                             
                             # Расчет индикаторов
                             ema20 = TechnicalIndicators.calculate_ema(closes, 20)
                             adx_data = TechnicalIndicators.calculate_adx(highs, lows, closes, 14)
-                            
-                            # Средний объем
-                            df['avg_volume_20'] = df['volume'].rolling(window=20, min_periods=1).mean()
                             
                             # Последние значения
                             current_price = closes[-1]
@@ -186,15 +178,12 @@ class TradingBot:
                             current_adx = adx_data['adx'][-1]
                             current_plus_di = adx_data['plus_di'][-1]
                             current_minus_di = adx_data['minus_di'][-1]
-                            current_volume = volumes[-1]
-                            current_avg_volume = df.iloc[-1]['avg_volume_20']
                             
                             # Проверяем условия
                             price_above_ema = current_price > current_ema20 if not pd.isna(current_ema20) else False
-                            strong_trend = current_adx > 23 if not pd.isna(current_adx) else False
+                            strong_trend = current_adx > 25 if not pd.isna(current_adx) else False
                             positive_direction = current_plus_di > current_minus_di if not pd.isna(current_plus_di) and not pd.isna(current_minus_di) else False
-                            di_difference = (current_plus_di - current_minus_di) > 5 if not pd.isna(current_plus_di) and not pd.isna(current_minus_di) else False
-                            high_volume = current_volume > current_avg_volume * 1.47
+                            di_difference = (current_plus_di - current_minus_di) > 1 if not pd.isna(current_plus_di) and not pd.isna(current_minus_di) else False
                             
                             # Формируем сообщение с текущим состоянием
                             message = f"""📊 <b>ТЕКУЩЕЕ СОСТОЯНИЕ РЫНКА SBER</b>
@@ -203,17 +192,12 @@ class TradingBot:
 📈 <b>EMA20:</b> {current_ema20:.2f} ₽ {'✅' if price_above_ema else '❌'}
 
 📊 <b>Индикаторы:</b>
-• <b>ADX:</b> {current_adx:.1f} {'✅' if strong_trend else '❌'} (нужно >23)
+• <b>ADX:</b> {current_adx:.1f} {'✅' if strong_trend else '❌'} (нужно >25)
 • <b>+DI:</b> {current_plus_di:.1f}
 • <b>-DI:</b> {current_minus_di:.1f} {'✅' if positive_direction else '❌'}
-• <b>Разница DI:</b> {current_plus_di - current_minus_di:.1f} {'✅' if di_difference else '❌'} (нужно >5)
+• <b>Разница DI:</b> {current_plus_di - current_minus_di:.1f} {'✅' if di_difference else '❌'} (нужно >1)
 
-📈 <b>Объем:</b>
-• <b>Текущий:</b> {current_volume:,}
-• <b>Средний:</b> {current_avg_volume:,.0f}
-• <b>Коэффициент:</b> {current_volume/current_avg_volume:.2f} {'✅' if high_volume else '❌'} (нужно >1.47)
-
-{'🔔 <b>Все условия выполнены - ожидайте сигнал!</b>' if all([price_above_ema, strong_trend, positive_direction, di_difference, high_volume]) else '⏳ <b>Ожидаем улучшения показателей...</b>'}"""
+{'🔔 <b>Все условия выполнены - ожидайте сигнал!</b>' if all([price_above_ema, strong_trend, positive_direction, di_difference]) else '⏳ <b>Ожидаем улучшения показателей...</b>'}"""
                 
                 except Exception as e:
                     logger.error(f"Ошибка в детальном анализе: {e}")
@@ -249,16 +233,12 @@ class TradingBot:
             closes = df['close'].tolist()
             highs = df['high'].tolist()
             lows = df['low'].tolist()
-            volumes = df['volume'].tolist()
             
             # EMA20
             ema20 = TechnicalIndicators.calculate_ema(closes, 20)
             
             # ADX, +DI, -DI
             adx_data = TechnicalIndicators.calculate_adx(highs, lows, closes, 14)
-            
-            # Средний объем за 20 часов
-            df['avg_volume_20'] = df['volume'].rolling(window=20, min_periods=1).mean()
             
             # Проверка последней свечи
             last_idx = -1
@@ -267,15 +247,13 @@ class TradingBot:
             current_adx = adx_data['adx'][last_idx]
             current_plus_di = adx_data['plus_di'][last_idx]
             current_minus_di = adx_data['minus_di'][last_idx]
-            current_volume = volumes[last_idx]
-            current_avg_volume = df.iloc[last_idx]['avg_volume_20']
             
             # Проверка на NaN
             if any(pd.isna(val) for val in [current_ema20, current_adx, current_plus_di, current_minus_di]):
                 logger.warning("Не все индикаторы рассчитаны")
                 return None
             
-            # Расширенное логирование для отладки ADX
+            # Расширенное логирование для отладки
             logger.info(
                 f"🔍 ОТЛАДКА ИНДИКАТОРОВ:"
             )
@@ -285,21 +263,18 @@ class TradingBot:
             logger.info(
                 f"📊 ADX: {current_adx:.2f} | +DI: {current_plus_di:.2f} | -DI: {current_minus_di:.2f}"
             )
-            logger.info(
-                f"📈 Объем: {current_volume:,} | Средний: {current_avg_volume:,.0f} | Коэфф: {current_volume/current_avg_volume:.2f}"
-            )
             
             # Показываем последние несколько значений ADX для отладки
             adx_last_5 = adx_data['adx'][-5:]
             logger.info(f"🔢 Последние 5 значений ADX: {[f'{x:.2f}' if not pd.isna(x) else 'NaN' for x in adx_last_5]}")
             
-            # Проверка условий сигнала
+            # Проверка условий сигнала (ОБНОВЛЕННЫЕ)
             conditions = [
                 current_price > current_ema20,              # Цена выше EMA20
-                current_adx > 23,                          # ADX больше 23
-                current_plus_di > current_minus_di,        # +DI больше -DI
-                current_plus_di - current_minus_di > 5,    # Существенная разница
-                current_volume > current_avg_volume * 1.47 # Объем на 47% выше среднего
+                current_adx > 25,                           # ADX больше 25 (было 23)
+                current_plus_di > current_minus_di,         # +DI больше -DI
+                current_plus_di - current_minus_di > 1      # Разница больше 1 (было 5)
+                # Убрали условие по объему
             ]
             
             logger.info(f"Условия сигнала: {conditions}")
@@ -311,10 +286,7 @@ class TradingBot:
                     ema20=current_ema20,
                     adx=current_adx,
                     plus_di=current_plus_di,
-                    minus_di=current_minus_di,
-                    volume=current_volume,
-                    avg_volume=current_avg_volume,
-                    volume_ratio=current_volume / current_avg_volume
+                    minus_di=current_minus_di
                 )
             
             return None
@@ -364,13 +336,10 @@ class TradingBot:
 📈 <b>EMA20:</b> {signal.ema20:.2f} ₽ (цена выше)
 
 📊 <b>Индикаторы:</b>
-• <b>ADX:</b> {signal.adx:.1f} (сильный тренд)
+• <b>ADX:</b> {signal.adx:.1f} (сильный тренд >25)
 • <b>+DI:</b> {signal.plus_di:.1f}
 • <b>-DI:</b> {signal.minus_di:.1f}
-
-📈 <b>Объем (час):</b>
-• <b>Текущий:</b> {signal.volume:,} (↑{signal.volume_ratio:.0%} от среднего)
-• <b>Средний (20ч):</b> {signal.avg_volume:,.0f}"""
+• <b>Разница DI:</b> {signal.plus_di - signal.minus_di:.1f}"""
     
     async def check_signals_periodically(self):
         """Периодическая проверка сигналов"""
@@ -404,8 +373,8 @@ class TradingBot:
                 
                 self.last_conditions_met = conditions_met
                 
-                # Ждем 5 минут для тестирования (в продакшене можно изменить на 3600 для 1 часа)
-                await asyncio.sleep(300)  # 5 минут = 300 секунд
+                # Оптимизированная частота проверки - каждые 20 минут для часовых свечей
+                await asyncio.sleep(1200)  # 20 минут = 1200 секунд
                 
             except asyncio.CancelledError:
                 logger.info("Задача проверки сигналов отменена")
@@ -438,9 +407,9 @@ class TradingBot:
 ⚠️ <b>Причина отмены:</b>
 Условия покупки больше не выполняются:
 • Цена может быть ниже EMA20
-• ADX снизился < 23
+• ADX снизился < 25
 • Изменилось соотношение +DI/-DI
-• Объемы торгов упали
+• Разница DI стала < 1
 
 🔍 <b>Продолжаем мониторинг...</b>"""
         
