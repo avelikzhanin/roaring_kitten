@@ -1,4 +1,22 @@
-#!/usr/bin/env python3
+def calculate_adx_simple(highs: List[float], lows: List[float], closes: List[float], period: int = 14):
+    """Классический расчет ADX по формуле Уайлдера"""
+    try:
+        n = len(highs)
+        if n < period + 1:
+            return [np.nan] * n, [np.nan] * n, [np.nan] * n
+        
+        # True Range
+        tr_list = [0]  # Первый элемент
+        for i in range(1, n):
+            hl = highs[i] - lows[i]
+            hc = abs(highs[i] - closes[i-1])
+            lc = abs(lows[i] - closes[i-1])
+            tr = max(hl, hc, lc)
+            tr_list.append(tr)
+        
+        # Directional Movement
+        plus_dm = [0]  # Первый элемент
+        minus_dm = [0]  # Первый элемент#!/usr/bin/env python3
 """
 Простой бэктест поиска сигналов SBER для Railway
 Исправленная версия с принудительным выводом логов
@@ -86,7 +104,7 @@ def calculate_ema(prices: List[float], period: int = 20) -> List[float]:
         return [np.nan] * len(prices)
 
 def calculate_adx_simple(highs: List[float], lows: List[float], closes: List[float], period: int = 14):
-    """Правильный расчет ADX по формуле Уайлдера"""
+    """Классический расчет ADX по формуле Уайлдера"""
     try:
         n = len(highs)
         if n < period + 1:
@@ -102,8 +120,8 @@ def calculate_adx_simple(highs: List[float], lows: List[float], closes: List[flo
             tr_list.append(tr)
         
         # Directional Movement
-        plus_dm = [0]  # Первый элемент
-        minus_dm = [0]  # Первый элемент
+        plus_dm = [0]
+        minus_dm = [0]
         
         for i in range(1, n):
             up_move = highs[i] - highs[i-1]
@@ -119,30 +137,30 @@ def calculate_adx_simple(highs: List[float], lows: List[float], closes: List[flo
             else:
                 minus_dm.append(0)
         
-        # Сглаживание по Уайлдеру (EMA с alpha = 1/period)
-        alpha = 1.0 / period
-        
-        # Инициализация сглаженных значений
-        atr = [np.nan] * period
-        plus_dm_smooth = [np.nan] * period
-        minus_dm_smooth = [np.nan] * period
-        
-        # Первое значение - простое среднее за period
-        if n > period:
-            atr.append(sum(tr_list[1:period+1]) / period)
-            plus_dm_smooth.append(sum(plus_dm[1:period+1]) / period)
-            minus_dm_smooth.append(sum(minus_dm[1:period+1]) / period)
+        # Сглаживание Уайлдера: Smoothed = (Previous * (Period-1) + Current) / Period
+        def wilder_smoothing(values, period):
+            result = [np.nan] * (period - 1)
             
-            # Дальше используем сглаживание Уайлдера
-            for i in range(period+1, n):
-                atr.append(atr[-1] * (1 - alpha) + tr_list[i] * alpha)
-                plus_dm_smooth.append(plus_dm_smooth[-1] * (1 - alpha) + plus_dm[i] * alpha)
-                minus_dm_smooth.append(minus_dm_smooth[-1] * (1 - alpha) + minus_dm[i] * alpha)
-        else:
-            # Недостаточно данных
-            atr.extend([np.nan] * (n - period))
-            plus_dm_smooth.extend([np.nan] * (n - period))
-            minus_dm_smooth.extend([np.nan] * (n - period))
+            # Первое значение - простое среднее
+            if len(values) >= period:
+                first_avg = sum(values[1:period+1]) / period  # Начинаем с 1, т.к. 0-й элемент = 0
+                result.append(first_avg)
+                
+                # Дальше применяем формулу Уайлдера
+                for i in range(period + 1, len(values)):
+                    smoothed = (result[-1] * (period - 1) + values[i]) / period
+                    result.append(smoothed)
+            
+            # Дополняем до нужной длины
+            while len(result) < len(values):
+                result.append(np.nan)
+                
+            return result
+        
+        # Применяем сглаживание
+        atr = wilder_smoothing(tr_list, period)
+        plus_dm_smooth = wilder_smoothing(plus_dm, period)
+        minus_dm_smooth = wilder_smoothing(minus_dm, period)
         
         # Расчет DI
         plus_di = []
@@ -167,41 +185,34 @@ def calculate_adx_simple(highs: List[float], lows: List[float], closes: List[flo
                     dx = abs(pdi - mdi) / (pdi + mdi) * 100
                     dx_values.append(dx)
         
-        # Расчет ADX - сглаживание DX
-        adx = [np.nan] * (period * 2 - 1)  # Нужно больше данных для ADX
+        # Расчет ADX - сглаживание DX по Уайлдеру
+        adx = [np.nan] * (period * 2 - 1)  # ADX начинается позже
         
-        # Найдем первое валидное DX значение для начала ADX
-        first_valid_idx = None
-        for i in range(period, len(dx_values)):
-            if not np.isnan(dx_values[i]):
-                first_valid_idx = i
-                break
+        # Найдем валидные DX для первого ADX
+        valid_dx_start = period
+        valid_dx = []
         
-        if first_valid_idx is not None and first_valid_idx + period < n:
-            # Первое значение ADX - среднее из первых period DX
-            valid_dx = []
-            for i in range(first_valid_idx, min(first_valid_idx + period, n)):
-                if not np.isnan(dx_values[i]):
-                    valid_dx.append(dx_values[i])
+        for i in range(valid_dx_start, min(valid_dx_start + period, n)):
+            if i < len(dx_values) and not np.isnan(dx_values[i]):
+                valid_dx.append(dx_values[i])
+        
+        if len(valid_dx) >= period:
+            # Первое значение ADX
+            first_adx = sum(valid_dx[:period]) / period
+            adx.append(first_adx)
             
-            if len(valid_dx) >= period // 2:  # Хотя бы половина значений
-                first_adx = sum(valid_dx) / len(valid_dx)
-                adx.append(first_adx)
-                
-                # Дальше сглаживание Уайлдера
-                for i in range(len(adx), n):
-                    if i < len(dx_values) and not np.isnan(dx_values[i]):
-                        new_adx = adx[-1] * (1 - alpha) + dx_values[i] * alpha
-                        adx.append(new_adx)
-                    else:
-                        adx.append(adx[-1])  # Оставляем предыдущее значение
-            else:
-                adx.extend([np.nan] * (n - len(adx)))
-        else:
-            adx.extend([np.nan] * (n - len(adx)))
+            # Дальше сглаживание Уайлдера для ADX
+            for i in range(len(adx), n):
+                if i < len(dx_values) and not np.isnan(dx_values[i]):
+                    new_adx = (adx[-1] * (period - 1) + dx_values[i]) / period
+                    adx.append(new_adx)
+                else:
+                    adx.append(np.nan)
         
         # Обрезаем до нужной длины
         adx = adx[:n]
+        if len(adx) < n:
+            adx.extend([np.nan] * (n - len(adx)))
         
         return adx, plus_di, minus_di
         
