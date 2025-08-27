@@ -112,7 +112,8 @@ class TradingBot:
                 "<b>Параметры стратегии:</b>\n"
                 "• EMA20 - цена выше средней\n"
                 "• ADX > 25 - сильный тренд\n"
-                "• +DI > -DI (разница > 1) - восходящее движение\n\n"
+                "• +DI > -DI (разница > 1) - восходящее движение\n"
+                "• 🕯️ Пробитие EMA20 в последние 4 свечи - свежий тренд\n\n"
                 "<b>Команды:</b>\n"
                 "/stop - отписаться от сигналов\n"
                 "/signal - проверить текущий сигнал",
@@ -185,7 +186,18 @@ class TradingBot:
                             positive_direction = current_plus_di > current_minus_di if not pd.isna(current_plus_di) and not pd.isna(current_minus_di) else False
                             di_difference = (current_plus_di - current_minus_di) > 1 if not pd.isna(current_plus_di) and not pd.isna(current_minus_di) else False
                             
+                            # Проверяем свежесть тренда
+                            trend_is_fresh, candles_since_cross = self.check_trend_freshness(closes, ema20, -1, max_candles=4)
+                            
                             # Формируем сообщение с текущим состоянием
+                            freshness_text = ""
+                            if trend_is_fresh:
+                                freshness_text = f"✅ Пробитие {candles_since_cross} свечей назад (свежий тренд)"
+                            else:
+                                freshness_text = "❌ Пробитие >4 свечей назад или не найдено (старый тренд)"
+                            
+                            all_conditions_met = all([price_above_ema, strong_trend, positive_direction, di_difference, trend_is_fresh])
+                            
                             message = f"""📊 <b>ТЕКУЩЕЕ СОСТОЯНИЕ РЫНКА SBER</b>
 
 💰 <b>Цена:</b> {current_price:.2f} ₽
@@ -197,7 +209,10 @@ class TradingBot:
 • <b>-DI:</b> {current_minus_di:.1f} {'✅' if positive_direction else '❌'}
 • <b>Разница DI:</b> {current_plus_di - current_minus_di:.1f} {'✅' if di_difference else '❌'} (нужно >1)
 
-{'🔔 <b>Все условия выполнены - ожидайте сигнал!</b>' if all([price_above_ema, strong_trend, positive_direction, di_difference]) else '⏳ <b>Ожидаем улучшения показателей...</b>'}"""
+🕯️ <b>Свежесть тренда:</b>
+{freshness_text}
+
+{'🔔 <b>Все условия выполнены - ожидайте сигнал!</b>' if all_conditions_met else '⏳ <b>Ожидаем улучшения показателей...</b>'}"""
                 
                 except Exception as e:
                     logger.error(f"Ошибка в детальном анализе: {e}")
@@ -213,10 +228,41 @@ class TradingBot:
                 parse_mode='HTML'
             )
     
+    def check_trend_freshness(self, closes: List[float], ema20: List[float], current_idx: int = -1, max_candles: int = 4) -> tuple[bool, int]:
+        """
+        Проверяет, было ли пробитие EMA20 в последние max_candles свечей
+        
+        Args:
+            closes: список цен закрытия
+            ema20: список значений EMA20
+            current_idx: индекс текущей свечи (обычно -1 для последней)
+            max_candles: максимальное количество свечей для проверки
+        
+        Returns:
+            tuple: (найдено_пробитие: bool, свечей_назад: int)
+        """
+        # Преобразуем отрицательный индекс в положительный
+        if current_idx < 0:
+            current_idx = len(closes) + current_idx
+        
+        # Проверяем последние max_candles свечей
+        for i in range(1, min(max_candles + 1, current_idx)):
+            prev_idx = current_idx - i
+            curr_idx = current_idx - i + 1
+            
+            # Проверяем пробитие EMA20 снизу вверх
+            if (closes[prev_idx] <= ema20[prev_idx] and 
+                closes[curr_idx] > ema20[curr_idx]):
+                
+                logger.info(f"🕯️ Найдено пробитие EMA20 {i} свечей назад")
+                return True, i
+        
+        return False, 0
+
     async def analyze_market(self) -> Optional[TradingSignal]:
         """Анализ рынка и генерация сигнала"""
         try:
-            # Получаем данные за последние 100 часов для расчета индикаторов
+            # Получаем данные за последние 120 часов для расчета индикаторов
             candles = await self.tinkoff_provider.get_candles(hours=120)
             
             if len(candles) < 50:  # Минимум данных для расчетов
@@ -253,33 +299,43 @@ class TradingBot:
                 logger.warning("Не все индикаторы рассчитаны")
                 return None
             
+            # Проверка свежести тренда (НОВОЕ!)
+            trend_is_fresh, candles_since_cross = self.check_trend_freshness(closes, ema20, last_idx, max_candles=4)
+            
             # Расширенное логирование для отладки
-            logger.info(
-                f"🔍 ОТЛАДКА ИНДИКАТОРОВ:"
-            )
-            logger.info(
-                f"💰 Цена: {current_price:.2f} ₽ | EMA20: {current_ema20:.2f} ₽"
-            )
-            logger.info(
-                f"📊 ADX: {current_adx:.2f} | +DI: {current_plus_di:.2f} | -DI: {current_minus_di:.2f}"
-            )
+            logger.info(f"🔍 ОТЛАДКА ИНДИКАТОРОВ:")
+            logger.info(f"💰 Цена: {current_price:.2f} ₽ | EMA20: {current_ema20:.2f} ₽")
+            logger.info(f"📊 ADX: {current_adx:.2f} | +DI: {current_plus_di:.2f} | -DI: {current_minus_di:.2f}")
+            logger.info(f"🕯️ Свежесть тренда: {'✅' if trend_is_fresh else '❌'} " + 
+                       (f"(пробитие {candles_since_cross} свечей назад)" if trend_is_fresh else "(пробитие >4 свечей назад или не найдено)"))
             
             # Показываем последние несколько значений ADX для отладки
             adx_last_5 = adx_data['adx'][-5:]
             logger.info(f"🔢 Последние 5 значений ADX: {[f'{x:.2f}' if not pd.isna(x) else 'NaN' for x in adx_last_5]}")
             
-            # Проверка условий сигнала (ОБНОВЛЕННЫЕ)
+            # Проверка условий сигнала (С ФИЛЬТРОМ СВЕЖЕСТИ)
             conditions = [
                 current_price > current_ema20,              # Цена выше EMA20
-                current_adx > 25,                           # ADX больше 25 (было 23)
+                current_adx > 25,                           # ADX больше 25 
                 current_plus_di > current_minus_di,         # +DI больше -DI
-                current_plus_di - current_minus_di > 1      # Разница больше 1 (было 5)
-                # Убрали условие по объему
+                current_plus_di - current_minus_di > 1,     # Разница больше 1
+                trend_is_fresh                              # ПРОБИТИЕ В ПОСЛЕДНИЕ 4 СВЕЧИ
             ]
             
-            logger.info(f"Условия сигнала: {conditions}")
+            condition_names = [
+                "Цена > EMA20",
+                "ADX > 25", 
+                "+DI > -DI",
+                "Разница DI > 1",
+                "Тренд свежий (≤4 свечи)"
+            ]
+            
+            # Детальное логирование условий
+            for i, (condition, name) in enumerate(zip(conditions, condition_names)):
+                logger.info(f"   {i+1}. {name}: {'✅' if condition else '❌'}")
             
             if all(conditions):
+                logger.info("🎉 Все условия выполнены - генерируем сигнал!")
                 return TradingSignal(
                     timestamp=df.iloc[last_idx]['timestamp'],
                     price=current_price,
@@ -288,6 +344,8 @@ class TradingBot:
                     plus_di=current_plus_di,
                     minus_di=current_minus_di
                 )
+            else:
+                logger.info(f"⏳ Условия не выполнены: {sum(conditions)}/{len(conditions)}")
             
             return None
             
@@ -339,7 +397,9 @@ class TradingBot:
 • <b>ADX:</b> {signal.adx:.1f} (сильный тренд >25)
 • <b>+DI:</b> {signal.plus_di:.1f}
 • <b>-DI:</b> {signal.minus_di:.1f}
-• <b>Разница DI:</b> {signal.plus_di - signal.minus_di:.1f}"""
+• <b>Разница DI:</b> {signal.plus_di - signal.minus_di:.1f}
+
+🕯️ <b>Тренд свежий</b> - пробитие EMA20 в последние 4 свечи"""
     
     async def check_signals_periodically(self):
         """Периодическая проверка сигналов"""
@@ -410,6 +470,7 @@ class TradingBot:
 • ADX снизился < 25
 • Изменилось соотношение +DI/-DI
 • Разница DI стала < 1
+• Тренд стал несвежим (>4 свечей с пробития)
 
 🔍 <b>Продолжаем мониторинг...</b>"""
         
