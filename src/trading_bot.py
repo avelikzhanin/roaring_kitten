@@ -37,6 +37,7 @@ class TradingBot:
         self.current_signal_active = False  # Трекинг активного сигнала
         self.last_conditions_met = False    # Последнее состояние условий
         self._signal_task = None  # Для отслеживания задачи проверки сигналов
+        self.buy_price: Optional[float] = None  # Цена покупки для расчета прибыли
         
     async def start(self):
         """Запуск бота"""
@@ -112,8 +113,7 @@ class TradingBot:
                 "<b>Параметры стратегии:</b>\n"
                 "• EMA20 - цена выше средней\n"
                 "• ADX > 25 - сильный тренд\n"
-                "• +DI > -DI (разница > 1) - восходящее движение\n"
-                "• 🕯️ Пробитие EMA20 в последние 4 свечи - свежий тренд\n\n"
+                "• +DI > -DI (разница > 1) - восходящее движение\n\n"
                 "<b>Команды:</b>\n"
                 "/stop - отписаться от сигналов\n"
                 "/signal - проверить текущий сигнал",
@@ -186,17 +186,7 @@ class TradingBot:
                             positive_direction = current_plus_di > current_minus_di if not pd.isna(current_plus_di) and not pd.isna(current_minus_di) else False
                             di_difference = (current_plus_di - current_minus_di) > 1 if not pd.isna(current_plus_di) and not pd.isna(current_minus_di) else False
                             
-                            # Проверяем свежесть тренда
-                            trend_is_fresh, candles_since_cross = self.check_trend_freshness(closes, ema20, -1, max_candles=4)
-                            
-                            # Формируем сообщение с текущим состоянием
-                            freshness_text = ""
-                            if trend_is_fresh:
-                                freshness_text = f"✅ Пробитие {candles_since_cross} свечей назад (свежий тренд)"
-                            else:
-                                freshness_text = "❌ Пробитие >4 свечей назад или не найдено (старый тренд)"
-                            
-                            all_conditions_met = all([price_above_ema, strong_trend, positive_direction, di_difference, trend_is_fresh])
+                            all_conditions_met = all([price_above_ema, strong_trend, positive_direction, di_difference])
                             
                             message = f"""📊 <b>ТЕКУЩЕЕ СОСТОЯНИЕ РЫНКА SBER</b>
 
@@ -208,9 +198,6 @@ class TradingBot:
 • <b>+DI:</b> {current_plus_di:.1f}
 • <b>-DI:</b> {current_minus_di:.1f} {'✅' if positive_direction else '❌'}
 • <b>Разница DI:</b> {current_plus_di - current_minus_di:.1f} {'✅' if di_difference else '❌'} (нужно >1)
-
-🕯️ <b>Свежесть тренда:</b>
-{freshness_text}
 
 {'🔔 <b>Все условия выполнены - ожидайте сигнал!</b>' if all_conditions_met else '⏳ <b>Ожидаем улучшения показателей...</b>'}"""
                 
@@ -227,37 +214,6 @@ class TradingBot:
                 "Попробуйте позже или обратитесь к администратору.",
                 parse_mode='HTML'
             )
-    
-    def check_trend_freshness(self, closes: List[float], ema20: List[float], current_idx: int = -1, max_candles: int = 4) -> tuple[bool, int]:
-        """
-        Проверяет, было ли пробитие EMA20 в последние max_candles свечей
-        
-        Args:
-            closes: список цен закрытия
-            ema20: список значений EMA20
-            current_idx: индекс текущей свечи (обычно -1 для последней)
-            max_candles: максимальное количество свечей для проверки
-        
-        Returns:
-            tuple: (найдено_пробитие: bool, свечей_назад: int)
-        """
-        # Преобразуем отрицательный индекс в положительный
-        if current_idx < 0:
-            current_idx = len(closes) + current_idx
-        
-        # Проверяем последние max_candles свечей
-        for i in range(1, min(max_candles + 1, current_idx)):
-            prev_idx = current_idx - i
-            curr_idx = current_idx - i + 1
-            
-            # Проверяем пробитие EMA20 снизу вверх
-            if (closes[prev_idx] <= ema20[prev_idx] and 
-                closes[curr_idx] > ema20[curr_idx]):
-                
-                logger.info(f"🕯️ Найдено пробитие EMA20 {i} свечей назад")
-                return True, i
-        
-        return False, 0
 
     async def analyze_market(self) -> Optional[TradingSignal]:
         """Анализ рынка и генерация сигнала"""
@@ -299,27 +255,21 @@ class TradingBot:
                 logger.warning("Не все индикаторы рассчитаны")
                 return None
             
-            # Проверка свежести тренда (НОВОЕ!)
-            trend_is_fresh, candles_since_cross = self.check_trend_freshness(closes, ema20, last_idx, max_candles=4)
-            
             # Расширенное логирование для отладки
             logger.info(f"🔍 ОТЛАДКА ИНДИКАТОРОВ:")
             logger.info(f"💰 Цена: {current_price:.2f} ₽ | EMA20: {current_ema20:.2f} ₽")
             logger.info(f"📊 ADX: {current_adx:.2f} | +DI: {current_plus_di:.2f} | -DI: {current_minus_di:.2f}")
-            logger.info(f"🕯️ Свежесть тренда: {'✅' if trend_is_fresh else '❌'} " + 
-                       (f"(пробитие {candles_since_cross} свечей назад)" if trend_is_fresh else "(пробитие >4 свечей назад или не найдено)"))
             
             # Показываем последние несколько значений ADX для отладки
             adx_last_5 = adx_data['adx'][-5:]
             logger.info(f"🔢 Последние 5 значений ADX: {[f'{x:.2f}' if not pd.isna(x) else 'NaN' for x in adx_last_5]}")
             
-            # Проверка условий сигнала (С ФИЛЬТРОМ СВЕЖЕСТИ)
+            # Проверка условий сигнала (БЕЗ ФИЛЬТРА СВЕЖЕСТИ)
             conditions = [
                 current_price > current_ema20,              # Цена выше EMA20
                 current_adx > 25,                           # ADX больше 25 
                 current_plus_di > current_minus_di,         # +DI больше -DI
                 current_plus_di - current_minus_di > 1,     # Разница больше 1
-                trend_is_fresh                              # ПРОБИТИЕ В ПОСЛЕДНИЕ 4 СВЕЧИ
             ]
             
             condition_names = [
@@ -327,7 +277,6 @@ class TradingBot:
                 "ADX > 25", 
                 "+DI > -DI",
                 "Разница DI > 1",
-                "Тренд свежий (≤4 свечи)"
             ]
             
             # Детальное логирование условий
@@ -353,7 +302,59 @@ class TradingBot:
             logger.error(f"Ошибка анализа рынка: {e}")
             return None
     
-    async def send_signal_to_subscribers(self, signal: TradingSignal):
+    async def check_peak_trend(self) -> Optional[float]:
+        """Проверка пика тренда (ADX > 45)"""
+        try:
+            candles = await self.tinkoff_provider.get_candles(hours=120)
+            
+            if len(candles) < 50:
+                return None
+            
+            df = self.tinkoff_provider.candles_to_dataframe(candles)
+            
+            if df.empty:
+                return None
+            
+            # Расчет индикаторов
+            closes = df['close'].tolist()
+            highs = df['high'].tolist()
+            lows = df['low'].tolist()
+            
+            # ADX
+            adx_data = TechnicalIndicators.calculate_adx(highs, lows, closes, 14)
+            current_adx = adx_data['adx'][-1]
+            current_price = closes[-1]
+            
+            if pd.isna(current_adx):
+                return None
+                
+            # Проверяем пик тренда
+            if current_adx > 45:
+                logger.info(f"🔥 ПИК ТРЕНДА! ADX: {current_adx:.1f} > 45")
+                return current_price
+                
+            return None
+            
+        except Exception as e:
+            logger.error(f"Ошибка проверки пика тренда: {e}")
+            return None
+    
+    async def get_current_price(self) -> float:
+        """Получение текущей цены"""
+        try:
+            candles = await self.tinkoff_provider.get_candles(hours=50)
+            if candles:
+                df = self.tinkoff_provider.candles_to_dataframe(candles)
+                return df.iloc[-1]['close'] if not df.empty else 0
+            return 0
+        except:
+            return 0
+    
+    def calculate_profit_percentage(self, buy_price: float, sell_price: float) -> float:
+        """Расчет прибыли в процентах"""
+        if buy_price <= 0:
+            return 0
+        return ((sell_price - buy_price) / buy_price) * 100
         """Отправка сигнала всем подписчикам"""
         if not self.app:
             logger.error("Telegram приложение не инициализировано")
@@ -397,9 +398,7 @@ class TradingBot:
 • <b>ADX:</b> {signal.adx:.1f} (сильный тренд >25)
 • <b>+DI:</b> {signal.plus_di:.1f}
 • <b>-DI:</b> {signal.minus_di:.1f}
-• <b>Разница DI:</b> {signal.plus_di - signal.minus_di:.1f}
-
-🕯️ <b>Тренд свежий</b> - пробитие EMA20 в последние 4 свечи"""
+• <b>Разница DI:</b> {signal.plus_di - signal.minus_di:.1f}"""
     
     async def check_signals_periodically(self):
         """Периодическая проверка сигналов"""
@@ -411,18 +410,31 @@ class TradingBot:
                 signal = await self.analyze_market()
                 conditions_met = signal is not None
                 
+                # Проверяем ADX для сигнала "пик тренда"
+                peak_signal = await self.check_peak_trend()
+                
                 # Улучшенная логика отправки сигналов
                 if conditions_met and not self.current_signal_active:
                     # Новый сигнал покупки - отправляем сразу без ограничений по времени
                     await self.send_signal_to_subscribers(signal)
                     self.last_signal_time = signal.timestamp
                     self.current_signal_active = True
+                    self.buy_price = signal.price  # Сохраняем цену покупки
                     logger.info(f"✅ Отправлен сигнал ПОКУПКИ по цене {signal.price:.2f}")
                 
-                elif not conditions_met and self.current_signal_active:
-                    # Условия перестали выполняться - отправляем сигнал отмены немедленно
-                    await self.send_cancel_signal()
+                elif peak_signal and self.current_signal_active:
+                    # Пик тренда (ADX > 45) - отправляем специальный сигнал отмены
+                    await self.send_peak_signal(peak_signal)
                     self.current_signal_active = False
+                    self.buy_price = None  # Сбрасываем цену покупки
+                    logger.info(f"🔥 Отправлен сигнал ПИКА ТРЕНДА по цене {peak_signal:.2f}")
+                
+                elif not conditions_met and self.current_signal_active:
+                    # Условия перестали выполняться - отправляем обычный сигнал отмены
+                    current_price = await self.get_current_price()
+                    await self.send_cancel_signal(current_price)
+                    self.current_signal_active = False
+                    self.buy_price = None  # Сбрасываем цену покупки
                     logger.info("❌ Отправлен сигнал ОТМЕНЫ")
                 
                 elif conditions_met and self.current_signal_active:
@@ -443,22 +455,22 @@ class TradingBot:
                 logger.error(f"Ошибка в периодической проверке: {e}")
                 await asyncio.sleep(60)  # Ждем минуту при ошибке
     
-    async def send_cancel_signal(self):
+    async def send_cancel_signal(self, current_price: float = 0):
         """Отправка сигнала отмены всем подписчикам"""
         if not self.app:
             logger.error("Telegram приложение не инициализировано")
             return
         
-        # Получаем текущие данные для сигнала отмены
-        try:
-            candles = await self.tinkoff_provider.get_candles(hours=50)
-            if candles:
-                df = self.tinkoff_provider.candles_to_dataframe(candles)
-                current_price = df.iloc[-1]['close'] if not df.empty else 0
-            else:
-                current_price = 0
-        except:
-            current_price = 0
+        # Получаем текущие данные если цена не передана
+        if current_price == 0:
+            current_price = await self.get_current_price()
+        
+        # Расчет прибыли
+        profit_text = ""
+        if self.buy_price and self.buy_price > 0 and current_price > 0:
+            profit_percentage = self.calculate_profit_percentage(self.buy_price, current_price)
+            profit_emoji = "🟢" if profit_percentage > 0 else "🔴" if profit_percentage < 0 else "⚪"
+            profit_text = f"\n💰 <b>Результат:</b> {profit_emoji} {profit_percentage:+.2f}% (с {self.buy_price:.2f} до {current_price:.2f} ₽)"
         
         message = f"""❌ <b>СИГНАЛ ОТМЕНЕН SBER</b>
 
@@ -469,8 +481,7 @@ class TradingBot:
 • Цена может быть ниже EMA20
 • ADX снизился < 25
 • Изменилось соотношение +DI/-DI
-• Разница DI стала < 1
-• Тренд стал несвежим (>4 свечей с пробития)
+• Разница DI стала < 1{profit_text}
 
 🔍 <b>Продолжаем мониторинг...</b>"""
         
