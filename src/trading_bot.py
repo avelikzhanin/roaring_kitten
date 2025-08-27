@@ -50,7 +50,7 @@ class TradingBot:
             self.app.add_handler(CommandHandler("stop", self.stop_command))
             self.app.add_handler(CommandHandler("signal", self.signal_command))
             
-            logger.info("🚀 Запуск торгового бота SBER...")
+            logger.info("🚀 Запуск Ревущего котёнка...")
             
             # Запускаем периодическую проверку в отдельной задаче
             self.is_running = True
@@ -98,7 +98,7 @@ class TradingBot:
             except Exception as e:
                 logger.error(f"Ошибка при остановке Telegram приложения: {e}")
         
-        logger.info("Бот остановлен")
+        logger.info("Котёнок остановлен")
     
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработчик команды /start"""
@@ -107,9 +107,9 @@ class TradingBot:
         if chat_id not in self.subscribers:
             self.subscribers.append(chat_id)
             await update.message.reply_text(
-                "🤖 <b>Добро пожаловать в торгового бота SBER!</b>\n\n"
-                "📈 Вы подписаны на торговые сигналы\n"
-                "🔔 Бот будет уведомлять о сигналах покупки и их отмене\n\n"
+                "🐱 <b>Добро пожаловать в Ревущего котёнка!</b>\n\n"
+                "📈 Вы подписаны на торговые сигналы по SBER\n"
+                "🔔 Котёнок будет рычать о сигналах покупки и их отмене\n\n"
                 "<b>Параметры стратегии:</b>\n"
                 "• EMA20 - цена выше средней\n"
                 "• ADX > 25 - сильный тренд\n"
@@ -130,7 +130,7 @@ class TradingBot:
         
         if chat_id in self.subscribers:
             self.subscribers.remove(chat_id)
-            await update.message.reply_text("❌ Вы отписались от торговых сигналов")
+            await update.message.reply_text("❌ Вы отписались от рычания котёнка")
             logger.info(f"Пользователь отписался: {chat_id}")
         else:
             await update.message.reply_text("ℹ️ Вы не были подписаны на сигналы")
