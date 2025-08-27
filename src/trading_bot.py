@@ -113,7 +113,8 @@ class TradingBot:
                 "<b>Параметры стратегии:</b>\n"
                 "• EMA20 - цена выше средней\n"
                 "• ADX > 25 - сильный тренд\n"
-                "• +DI > -DI (разница > 1) - восходящее движение\n\n"
+                "• +DI > -DI (разница > 1) - восходящее движение\n"
+                "• 🔥 ADX > 45 - пик тренда, время продавать!\n\n"
                 "<b>Команды:</b>\n"
                 "/stop - отписаться от сигналов\n"
                 "/signal - проверить текущий сигнал",
@@ -185,8 +186,15 @@ class TradingBot:
                             strong_trend = current_adx > 25 if not pd.isna(current_adx) else False
                             positive_direction = current_plus_di > current_minus_di if not pd.isna(current_plus_di) and not pd.isna(current_minus_di) else False
                             di_difference = (current_plus_di - current_minus_di) > 1 if not pd.isna(current_plus_di) and not pd.isna(current_minus_di) else False
+                            peak_trend = current_adx > 45 if not pd.isna(current_adx) else False
                             
                             all_conditions_met = all([price_above_ema, strong_trend, positive_direction, di_difference])
+                            
+                            peak_warning = ""
+                            if peak_trend and self.current_signal_active:
+                                peak_warning = "\n🔥 <b>ВНИМАНИЕ: ADX > 45 - пик тренда! Время продавать!</b>"
+                            elif peak_trend:
+                                peak_warning = "\n🔥 <b>ADX > 45 - пик тренда</b>"
                             
                             message = f"""📊 <b>ТЕКУЩЕЕ СОСТОЯНИЕ РЫНКА SBER</b>
 
@@ -197,7 +205,7 @@ class TradingBot:
 • <b>ADX:</b> {current_adx:.1f} {'✅' if strong_trend else '❌'} (нужно >25)
 • <b>+DI:</b> {current_plus_di:.1f}
 • <b>-DI:</b> {current_minus_di:.1f} {'✅' if positive_direction else '❌'}
-• <b>Разница DI:</b> {current_plus_di - current_minus_di:.1f} {'✅' if di_difference else '❌'} (нужно >1)
+• <b>Разница DI:</b> {current_plus_di - current_minus_di:.1f} {'✅' if di_difference else '❌'} (нужно >1){peak_warning}
 
 {'🔔 <b>Все условия выполнены - ожидайте сигнал!</b>' if all_conditions_met else '⏳ <b>Ожидаем улучшения показателей...</b>'}"""
                 
@@ -355,6 +363,55 @@ class TradingBot:
         if buy_price <= 0:
             return 0
         return ((sell_price - buy_price) / buy_price) * 100
+    
+    async def send_peak_signal(self, current_price: float):
+        """Отправка сигнала пика тренда всем подписчикам"""
+        if not self.app:
+            logger.error("Telegram приложение не инициализировано")
+            return
+        
+        # Расчет прибыли
+        profit_text = ""
+        if self.buy_price and self.buy_price > 0:
+            profit_percentage = self.calculate_profit_percentage(self.buy_price, current_price)
+            profit_emoji = "🟢" if profit_percentage > 0 else "🔴" if profit_percentage < 0 else "⚪"
+            profit_text = f"\n💰 <b>Прибыль:</b> {profit_emoji} {profit_percentage:+.2f}% (с {self.buy_price:.2f} до {current_price:.2f} ₽)"
+        
+        message = f"""🔥 <b>ПИК ТРЕНДА - ВСЁ ПРОДАЁМ!</b>
+
+💰 <b>Текущая цена:</b> {current_price:.2f} ₽
+
+📊 <b>Причина продажи:</b>
+ADX > 45 - мы на пике тренда!
+Время фиксировать прибыль.{profit_text}
+
+🔍 <b>Продолжаем мониторинг новых возможностей...</b>"""
+        
+        failed_chats = []
+        successful_sends = 0
+        
+        for chat_id in self.subscribers.copy():
+            try:
+                await self.app.bot.send_message(
+                    chat_id=chat_id, 
+                    text=message, 
+                    parse_mode='HTML'
+                )
+                successful_sends += 1
+                await asyncio.sleep(0.1)
+                
+            except (TelegramError, TimedOut, NetworkError) as e:
+                logger.error(f"Не удалось отправить сообщение пика в чат {chat_id}: {e}")
+                failed_chats.append(chat_id)
+                
+        # Удаляем недоступные чаты
+        for chat_id in failed_chats:
+            if chat_id in self.subscribers:
+                self.subscribers.remove(chat_id)
+        
+        logger.info(f"Сигнал пика отправлен: {successful_sends} получателей, {len(failed_chats)} ошибок")
+    
+    async def send_signal_to_subscribers(self, signal: TradingSignal):
         """Отправка сигнала всем подписчикам"""
         if not self.app:
             logger.error("Telegram приложение не инициализировано")
