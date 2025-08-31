@@ -42,13 +42,24 @@ async def main():
     # Получаем токены из переменных окружения
     TELEGRAM_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
     TINKOFF_TOKEN = os.getenv('TINKOFF_TOKEN')
+    OPENAI_TOKEN = os.getenv('OPENAI_API_KEY')  # Новый токен для GPT
     
     if not TELEGRAM_TOKEN or not TINKOFF_TOKEN:
-        logger.error("Не заданы токены в переменных окружения")
+        logger.error("❌ Не заданы обязательные токены в переменных окружения:")
+        logger.error("   • TELEGRAM_BOT_TOKEN - обязательно")
+        logger.error("   • TINKOFF_TOKEN - обязательно")
+        logger.error("   • OPENAI_API_KEY - опционально (для GPT анализа)")
         return
     
+    # Проверяем наличие OpenAI токена
+    if OPENAI_TOKEN:
+        logger.info("🤖 OpenAI токен найден - GPT анализ будет включен")
+    else:
+        logger.info("📊 OpenAI токен не найден - работаем только с техническим анализом")
+        logger.info("💡 Для включения GPT анализа добавьте переменную OPENAI_API_KEY")
+    
     # Создаем и запускаем бота
-    trading_bot = TradingBot(TELEGRAM_TOKEN, TINKOFF_TOKEN)
+    trading_bot = TradingBot(TELEGRAM_TOKEN, TINKOFF_TOKEN, OPENAI_TOKEN)
     
     try:
         await trading_bot.start()
