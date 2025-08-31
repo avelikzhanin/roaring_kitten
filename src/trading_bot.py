@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 import pandas as pd
@@ -11,6 +12,7 @@ from telegram.error import TelegramError, TimedOut, NetworkError
 
 from .data_provider import TinkoffDataProvider
 from .indicators import TechnicalIndicators
+from .gpt_analyzer import GPTMarketAnalyzer, GPTAdvice
 
 logger = logging.getLogger(__name__)
 
@@ -25,19 +27,26 @@ class TradingSignal:
     minus_di: float
 
 class TradingBot:
-    """Основной класс торгового бота"""
+    """Основной класс торгового бота с GPT анализом"""
     
-    def __init__(self, telegram_token: str, tinkoff_token: str):
+    def __init__(self, telegram_token: str, tinkoff_token: str, openai_token: Optional[str] = None):
         self.telegram_token = telegram_token
         self.tinkoff_provider = TinkoffDataProvider(tinkoff_token)
+        self.gpt_analyzer = GPTMarketAnalyzer(openai_token) if openai_token else None
         self.subscribers: List[int] = []
         self.last_signal_time: Optional[datetime] = None
         self.app: Optional[Application] = None
         self.is_running = False
-        self.current_signal_active = False  # Трекинг активного сигнала
-        self.last_conditions_met = False    # Последнее состояние условий
-        self._signal_task = None  # Для отслеживания задачи проверки сигналов
-        self.buy_price: Optional[float] = None  # Цена покупки для расчета прибыли
+        self.current_signal_active = False
+        self.last_conditions_met = False
+        self._signal_task = None
+        self.buy_price: Optional[float] = None
+        
+        # Логирование статуса GPT
+        if self.gpt_analyzer:
+            logger.info("🤖 GPT анализ активирован")
+        else:
+            logger.info("📊 Работаем без GPT анализа")
         
     async def start(self):
         """Запуск бота"""
@@ -50,7 +59,7 @@ class TradingBot:
             self.app.add_handler(CommandHandler("stop", self.stop_command))
             self.app.add_handler(CommandHandler("signal", self.signal_command))
             
-            logger.info("🚀 Запуск Ревущего котёнка...")
+            logger.info("🚀 Запуск Ревущего котёнка с GPT...")
             
             # Запускаем периодическую проверку в отдельной задаче
             self.is_running = True
@@ -106,10 +115,14 @@ class TradingBot:
         
         if chat_id not in self.subscribers:
             self.subscribers.append(chat_id)
+            
+            gpt_status = "🤖 <b>GPT анализ:</b> включен" if self.gpt_analyzer else "📊 <b>Режим:</b> только технический анализ"
+            
             await update.message.reply_text(
                 "🐱 <b>Добро пожаловать в Ревущего котёнка!</b>\n\n"
                 "📈 Вы подписаны на торговые сигналы по SBER\n"
                 "🔔 Котёнок будет рычать о сигналах покупки и их отмене\n\n"
+                f"{gpt_status}\n\n"
                 "<b>Параметры стратегии:</b>\n"
                 "• EMA20 - цена выше средней\n"
                 "• ADX > 25 - сильный тренд\n"
@@ -136,7 +149,7 @@ class TradingBot:
             await update.message.reply_text("ℹ️ Вы не были подписаны на сигналы")
     
     async def signal_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Обработчик команды /signal - проверка текущего сигнала"""
+        """Обработчик команды /signal - проверка текущего сигнала с GPT анализом"""
         try:
             await update.message.reply_text("🔍 Анализирую текущую ситуацию на рынке...")
             
@@ -144,59 +157,80 @@ class TradingBot:
             signal = await self.analyze_market()
             
             if signal:
-                # Есть активный сигнал
+                # Есть активный сигнал - получаем анализ GPT
                 message = f"""✅ <b>АКТИВНЫЙ СИГНАЛ ПОКУПКИ SBER</b>
 
 {self.format_signal_message(signal)}
 
-⏰ <b>Время сигнала:</b> {signal.timestamp.strftime('%H:%M %d.%m.%Y')}
-"""
+⏰ <b>Время сигнала:</b> {signal.timestamp.strftime('%H:%M %d.%m.%Y')}"""
+                
+                # Добавляем GPT анализ если доступен
+                if self.gpt_analyzer:
+                    gpt_advice = await self.get_gpt_analysis(signal, is_manual_check=True)
+                    if gpt_advice:
+                        message += f"\n{self.gpt_analyzer.format_advice_for_telegram(gpt_advice)}"
+                    else:
+                        message += "\n\n🤖 <i>GPT анализ временно недоступен</i>"
+                
             else:
                 # Анализируем почему нет сигнала
-                try:
-                    # Получаем данные для детального анализа
-                    candles = await self.tinkoff_provider.get_candles(hours=120)
-                    
-                    if len(candles) < 50:
-                        message = "❌ <b>Недостаточно данных для анализа</b>\n\nПопробуйте позже."
-                    else:
-                        df = self.tinkoff_provider.candles_to_dataframe(candles)
-                        
-                        if df.empty:
-                            message = "❌ <b>Ошибка получения данных</b>"
-                        else:
-                            # Получаем текущие значения индикаторов
-                            closes = df['close'].tolist()
-                            highs = df['high'].tolist()
-                            lows = df['low'].tolist()
-                            
-                            # Расчет индикаторов
-                            ema20 = TechnicalIndicators.calculate_ema(closes, 20)
-                            adx_data = TechnicalIndicators.calculate_adx(highs, lows, closes, 14)
-                            
-                            # Последние значения
-                            current_price = closes[-1]
-                            current_ema20 = ema20[-1]
-                            current_adx = adx_data['adx'][-1]
-                            current_plus_di = adx_data['plus_di'][-1]
-                            current_minus_di = adx_data['minus_di'][-1]
-                            
-                            # Проверяем условия
-                            price_above_ema = current_price > current_ema20 if not pd.isna(current_ema20) else False
-                            strong_trend = current_adx > 25 if not pd.isna(current_adx) else False
-                            positive_direction = current_plus_di > current_minus_di if not pd.isna(current_plus_di) and not pd.isna(current_minus_di) else False
-                            di_difference = (current_plus_di - current_minus_di) > 1 if not pd.isna(current_plus_di) and not pd.isna(current_minus_di) else False
-                            peak_trend = current_adx > 45 if not pd.isna(current_adx) else False
-                            
-                            all_conditions_met = all([price_above_ema, strong_trend, positive_direction, di_difference])
-                            
-                            peak_warning = ""
-                            if peak_trend and self.current_signal_active:
-                                peak_warning = "\n🔥 <b>ВНИМАНИЕ: ADX > 45 - пик тренда! Время продавать!</b>"
-                            elif peak_trend:
-                                peak_warning = "\n🔥 <b>ADX > 45 - пик тренда</b>"
-                            
-                            message = f"""📊 <b>ТЕКУЩЕЕ СОСТОЯНИЕ РЫНКА SBER</b>
+                message = await self.get_detailed_market_status()
+            
+            await update.message.reply_text(message, parse_mode='HTML')
+            
+        except Exception as e:
+            logger.error(f"Ошибка в команде /signal: {e}")
+            await update.message.reply_text(
+                "❌ <b>Ошибка при проверке сигнала</b>\n\n"
+                "Попробуйте позже или обратитесь к администратору.",
+                parse_mode='HTML'
+            )
+
+    async def get_detailed_market_status(self) -> str:
+        """Получение детального статуса рынка"""
+        try:
+            candles = await self.tinkoff_provider.get_candles(hours=120)
+            
+            if len(candles) < 50:
+                return "❌ <b>Недостаточно данных для анализа</b>\n\nПопробуйте позже."
+            
+            df = self.tinkoff_provider.candles_to_dataframe(candles)
+            
+            if df.empty:
+                return "❌ <b>Ошибка получения данных</b>"
+            
+            # Получаем текущие значения индикаторов
+            closes = df['close'].tolist()
+            highs = df['high'].tolist()
+            lows = df['low'].tolist()
+            
+            # Расчет индикаторов
+            ema20 = TechnicalIndicators.calculate_ema(closes, 20)
+            adx_data = TechnicalIndicators.calculate_adx(highs, lows, closes, 14)
+            
+            # Последние значения
+            current_price = closes[-1]
+            current_ema20 = ema20[-1]
+            current_adx = adx_data['adx'][-1]
+            current_plus_di = adx_data['plus_di'][-1]
+            current_minus_di = adx_data['minus_di'][-1]
+            
+            # Проверяем условия
+            price_above_ema = current_price > current_ema20 if not pd.isna(current_ema20) else False
+            strong_trend = current_adx > 25 if not pd.isna(current_adx) else False
+            positive_direction = current_plus_di > current_minus_di if not pd.isna(current_plus_di) and not pd.isna(current_minus_di) else False
+            di_difference = (current_plus_di - current_minus_di) > 1 if not pd.isna(current_plus_di) and not pd.isna(current_minus_di) else False
+            peak_trend = current_adx > 45 if not pd.isna(current_adx) else False
+            
+            all_conditions_met = all([price_above_ema, strong_trend, positive_direction, di_difference])
+            
+            peak_warning = ""
+            if peak_trend and self.current_signal_active:
+                peak_warning = "\n🔥 <b>ВНИМАНИЕ: ADX > 45 - пик тренда! Время продавать!</b>"
+            elif peak_trend:
+                peak_warning = "\n🔥 <b>ADX > 45 - пик тренда</b>"
+            
+            message = f"""📊 <b>ТЕКУЩЕЕ СОСТОЯНИЕ РЫНКА SBER</b>
 
 💰 <b>Цена:</b> {current_price:.2f} ₽
 📈 <b>EMA20:</b> {current_ema20:.2f} ₽ {'✅' if price_above_ema else '❌'}
@@ -208,20 +242,28 @@ class TradingBot:
 • <b>Разница DI:</b> {current_plus_di - current_minus_di:.1f} {'✅' if di_difference else '❌'} (нужно >1){peak_warning}
 
 {'🔔 <b>Все условия выполнены - ожидайте сигнал!</b>' if all_conditions_met else '⏳ <b>Ожидаем улучшения показателей...</b>'}"""
+            
+            # Добавляем GPT анализ для текущего состояния
+            if self.gpt_analyzer and all_conditions_met:
+                signal_data = {
+                    'price': current_price,
+                    'ema20': current_ema20,
+                    'adx': current_adx,
+                    'plus_di': current_plus_di,
+                    'minus_di': current_minus_di
+                }
                 
-                except Exception as e:
-                    logger.error(f"Ошибка в детальном анализе: {e}")
-                    message = "❌ <b>Ошибка получения данных для анализа</b>\n\nПопробуйте позже."
+                gpt_advice = await self.gpt_analyzer.analyze_signal(signal_data, is_manual_check=True)
+                if gpt_advice:
+                    message += f"\n{self.gpt_analyzer.format_advice_for_telegram(gpt_advice)}"
+                else:
+                    message += "\n\n🤖 <i>GPT анализ временно недоступен</i>"
             
-            await update.message.reply_text(message, parse_mode='HTML')
-            
+            return message
+                
         except Exception as e:
-            logger.error(f"Ошибка в команде /signal: {e}")
-            await update.message.reply_text(
-                "❌ <b>Ошибка при проверке сигнала</b>\n\n"
-                "Попробуйте позже или обратитесь к администратору.",
-                parse_mode='HTML'
-            )
+            logger.error(f"Ошибка в детальном анализе: {e}")
+            return "❌ <b>Ошибка получения данных для анализа</b>\n\nПопробуйте позже."
 
     async def analyze_market(self) -> Optional[TradingSignal]:
         """Анализ рынка и генерация сигнала"""
@@ -268,11 +310,7 @@ class TradingBot:
             logger.info(f"💰 Цена: {current_price:.2f} ₽ | EMA20: {current_ema20:.2f} ₽")
             logger.info(f"📊 ADX: {current_adx:.2f} | +DI: {current_plus_di:.2f} | -DI: {current_minus_di:.2f}")
             
-            # Показываем последние несколько значений ADX для отладки
-            adx_last_5 = adx_data['adx'][-5:]
-            logger.info(f"🔢 Последние 5 значений ADX: {[f'{x:.2f}' if not pd.isna(x) else 'NaN' for x in adx_last_5]}")
-            
-            # Проверка условий сигнала (БЕЗ ФИЛЬТРА СВЕЖЕСТИ)
+            # Проверка условий сигнала
             conditions = [
                 current_price > current_ema20,              # Цена выше EMA20
                 current_adx > 25,                           # ADX больше 25 
@@ -309,6 +347,21 @@ class TradingBot:
         except Exception as e:
             logger.error(f"Ошибка анализа рынка: {e}")
             return None
+    
+    async def get_gpt_analysis(self, signal: TradingSignal, is_manual_check: bool = False) -> Optional[GPTAdvice]:
+        """Получение GPT анализа для сигнала"""
+        if not self.gpt_analyzer:
+            return None
+        
+        signal_data = {
+            'price': signal.price,
+            'ema20': signal.ema20,
+            'adx': signal.adx,
+            'plus_di': signal.plus_di,
+            'minus_di': signal.minus_di
+        }
+        
+        return await self.gpt_analyzer.analyze_signal(signal_data, is_manual_check)
     
     async def check_peak_trend(self) -> Optional[float]:
         """Проверка пика тренда (ADX > 45)"""
@@ -387,6 +440,24 @@ ADX > 45 - мы на пике тренда!
 
 🔍 <b>Продолжаем мониторинг новых возможностей...</b>"""
         
+        # Добавляем GPT анализ для пикового сигнала если доступен
+        if self.gpt_analyzer:
+            try:
+                # Создаем временный сигнал для анализа пика
+                temp_signal_data = {
+                    'price': current_price,
+                    'ema20': current_price * 0.98,  # Примерное значение
+                    'adx': 47,  # Пиковое значение
+                    'plus_di': 35,
+                    'minus_di': 20
+                }
+                
+                gpt_advice = await self.gpt_analyzer.analyze_signal(temp_signal_data, is_manual_check=False)
+                if gpt_advice and gpt_advice.recommendation == 'AVOID':
+                    message += f"\n\n🤖 <b>GPT подтверждает:</b> {gpt_advice.reasoning}"
+            except Exception as e:
+                logger.error(f"Ошибка GPT анализа для пика: {e}")
+        
         failed_chats = []
         successful_sends = 0
         
@@ -412,12 +483,32 @@ ADX > 45 - мы на пике тренда!
         logger.info(f"Сигнал пика отправлен: {successful_sends} получателей, {len(failed_chats)} ошибок")
     
     async def send_signal_to_subscribers(self, signal: TradingSignal):
-        """Отправка сигнала всем подписчикам"""
+        """Отправка сигнала всем подписчикам с GPT анализом"""
         if not self.app:
             logger.error("Telegram приложение не инициализировано")
             return
             
         message = self.format_signal_message(signal)
+        
+        # Добавляем GPT анализ если доступен
+        if self.gpt_analyzer:
+            logger.info("🤖 Получаем анализ GPT для сигнала...")
+            gpt_advice = await self.get_gpt_analysis(signal, is_manual_check=False)
+            
+            if gpt_advice:
+                message += f"\n{self.gpt_analyzer.format_advice_for_telegram(gpt_advice)}"
+                
+                # Логируем рекомендацию GPT
+                logger.info(f"🤖 GPT рекомендация: {gpt_advice.recommendation} ({gpt_advice.confidence}%)")
+                
+                # Если GPT не рекомендует покупать, добавляем предупреждение
+                if gpt_advice.recommendation == 'AVOID':
+                    message += f"\n\n⚠️ <b>ВНИМАНИЕ:</b> GPT не рекомендует покупку!"
+                elif gpt_advice.recommendation == 'WEAK_BUY':
+                    message += f"\n\n⚡ <b>Осторожно:</b> GPT рекомендует минимальный риск"
+            else:
+                message += "\n\n🤖 <i>GPT анализ временно недоступен</i>"
+                logger.warning("⚠️ Не удалось получить GPT анализ")
         
         failed_chats = []
         successful_sends = 0
