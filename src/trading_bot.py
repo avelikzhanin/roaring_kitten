@@ -243,14 +243,15 @@ class TradingBot:
 
 {'🔔 <b>Все условия выполнены - ожидайте сигнал!</b>' if all_conditions_met else '⏳ <b>Ожидаем улучшения показателей...</b>'}"""
             
-            # Добавляем GPT анализ для текущего состояния
-            if self.gpt_analyzer and all_conditions_met:
+            # Добавляем GPT анализ для ЛЮБОГО состояния рынка
+            if self.gpt_analyzer:
                 signal_data = {
                     'price': current_price,
                     'ema20': current_ema20,
                     'adx': current_adx,
                     'plus_di': current_plus_di,
-                    'minus_di': current_minus_di
+                    'minus_di': current_minus_di,
+                    'conditions_met': all_conditions_met  # Передаем статус условий
                 }
                 
                 gpt_advice = await self.gpt_analyzer.analyze_signal(signal_data, is_manual_check=True)
