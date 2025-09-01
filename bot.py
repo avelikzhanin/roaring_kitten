@@ -10,9 +10,10 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 from telegram.error import TelegramError, TimedOut, NetworkError
 
-from .data_provider import TinkoffDataProvider
-from .indicators import TechnicalIndicators
-from .gpt_analyzer import GPTMarketAnalyzer, GPTAdvice
+# Изменяем относительные импорты на абсолютные
+from src.data_provider import TinkoffDataProvider
+from src.indicators import TechnicalIndicators
+from src.gpt_analyzer import GPTMarketAnalyzer, GPTAdvice
 
 logger = logging.getLogger(__name__)
 
@@ -581,79 +582,4 @@ ADX > 45 - мы на пике тренда!
                 elif not conditions_met and self.current_signal_active:
                     # Условия перестали выполняться - отправляем обычный сигнал отмены
                     current_price = await self.get_current_price()
-                    await self.send_cancel_signal(current_price)
-                    self.current_signal_active = False
-                    self.buy_price = None  # Сбрасываем цену покупки
-                    logger.info("❌ Отправлен сигнал ОТМЕНЫ")
-                
-                elif conditions_met and self.current_signal_active:
-                    logger.info("✅ Сигнал покупки остается актуальным")
-                
-                else:
-                    logger.info("📊 Ожидаем сигнал...")
-                
-                self.last_conditions_met = conditions_met
-                
-                # Оптимизированная частота проверки - каждые 20 минут для часовых свечей
-                await asyncio.sleep(1200)  # 20 минут = 1200 секунд
-                
-            except asyncio.CancelledError:
-                logger.info("Задача проверки сигналов отменена")
-                break
-            except Exception as e:
-                logger.error(f"Ошибка в периодической проверке: {e}")
-                await asyncio.sleep(60)  # Ждем минуту при ошибке
-    
-    async def send_cancel_signal(self, current_price: float = 0):
-        """Отправка сигнала отмены всем подписчикам"""
-        if not self.app:
-            logger.error("Telegram приложение не инициализировано")
-            return
-        
-        # Получаем текущие данные если цена не передана
-        if current_price == 0:
-            current_price = await self.get_current_price()
-        
-        # Расчет прибыли
-        profit_text = ""
-        if self.buy_price and self.buy_price > 0 and current_price > 0:
-            profit_percentage = self.calculate_profit_percentage(self.buy_price, current_price)
-            profit_emoji = "🟢" if profit_percentage > 0 else "🔴" if profit_percentage < 0 else "⚪"
-            profit_text = f"\n💰 <b>Результат:</b> {profit_emoji} {profit_percentage:+.2f}% (с {self.buy_price:.2f} до {current_price:.2f} ₽)"
-        
-        message = f"""❌ <b>СИГНАЛ ОТМЕНЕН SBER</b>
-
-💰 <b>Текущая цена:</b> {current_price:.2f} ₽
-
-⚠️ <b>Причина отмены:</b>
-Условия покупки больше не выполняются:
-• Цена может быть ниже EMA20
-• ADX снизился < 25
-• Изменилось соотношение +DI/-DI
-• Разница DI стала < 1{profit_text}
-
-🔍 <b>Продолжаем мониторинг...</b>"""
-        
-        failed_chats = []
-        successful_sends = 0
-        
-        for chat_id in self.subscribers.copy():
-            try:
-                await self.app.bot.send_message(
-                    chat_id=chat_id, 
-                    text=message, 
-                    parse_mode='HTML'
-                )
-                successful_sends += 1
-                await asyncio.sleep(0.1)
-                
-            except (TelegramError, TimedOut, NetworkError) as e:
-                logger.error(f"Не удалось отправить сообщение отмены в чат {chat_id}: {e}")
-                failed_chats.append(chat_id)
-                
-        # Удаляем недоступные чаты
-        for chat_id in failed_chats:
-            if chat_id in self.subscribers:
-                self.subscribers.remove(chat_id)
-        
-        logger.info(f"Сигнал отмены отправлен: {successful_sends} получателей, {len(failed_chats)} ошибок")
+                    await self.sen
