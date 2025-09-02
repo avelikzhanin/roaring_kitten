@@ -37,15 +37,16 @@ class GPTMarketAnalyzer:
 ПРИНЦИПЫ АНАЛИЗА:
 - Анализируй ПОЛНУЮ картину: технические индикаторы + исторические данные + уровни
 - Определяй конкретные уровни поддержки/сопротивления по свечным данным
-- Давай четкие TP/SL для входов и ориентиры для ожидания
+- Давай четкие TP/SL ТОЛЬКО для покупок (BUY/WEAK_BUY)
+- Для WAIT/AVOID указывай какие уровни/показатели ждать
 - Учитывай объемы торгов и динамику цены
 - Будь ЧЕСТНЫМ - если ситуация неясная, так и скажи
 
 РЕКОМЕНДАЦИИ:
 - BUY: уверенно покупать (80-100%) + обязательно TP/SL
 - WEAK_BUY: можно попробовать осторожно (60-79%) + осторожные TP/SL  
-- WAIT: ждать лучших условий (40-59%) + какие уровни ждем
-- AVOID: точно не покупать (<40%) + объяснение почему
+- WAIT: ждать лучших условий (40-59%) + какие уровни ждем (БЕЗ TP/SL!)
+- AVOID: точно не покупать (<40%) + объяснение почему (БЕЗ TP/SL!)
 
 КОНТЕКСТ SBER:
 - Обычно торгуется 280-330 рублей (волатильность 2-5% в день)
@@ -55,7 +56,7 @@ class GPTMarketAnalyzer:
 
 ОБЯЗАТЕЛЬНО указывай:
 - Конкретные цифры уровней (не "около", а точные значения)
-- Логику размещения TP/SL
+- Логику размещения TP/SL только для покупок
 - Временные горизонты для ожиданий
 
 Отвечай ТОЛЬКО в JSON формате."""
@@ -196,7 +197,7 @@ class GPTMarketAnalyzer:
             analysis_focus = "ДАТЬ КОНКРЕТНЫЕ TP/SL для покупки"
         else:
             strategy_status = "❌ УСЛОВИЯ НЕ ВЫПОЛНЕНЫ"
-            analysis_focus = "УКАЗАТЬ какие уровни/показатели ждать для входа"
+            analysis_focus = "УКАЗАТЬ какие уровни/показатели ждать для входа (БЕЗ TP/SL)"
         
         prompt = f"""ПОЛНЫЙ АНАЛИЗ РЫНОЧНОЙ СИТУАЦИИ SBER:
 
@@ -214,17 +215,17 @@ class GPTMarketAnalyzer:
 
 🎯 ГЛАВНАЯ ЗАДАЧА: {analysis_focus}
 
-{'Дай четкие TP/SL для входа в позицию прямо сейчас!' if conditions_met else 'Укажи конкретные уровни/показатели которые нужно дождаться для входа!'}
+ВАЖНО: TP/SL указывай ТОЛЬКО если рекомендуешь BUY или WEAK_BUY!
 
 Ответь в JSON:
 {{
   "recommendation": "BUY/WEAK_BUY/WAIT/AVOID",
   "confidence": число_0_100,
-  "reasoning": "детальное объяснение с уровнями",
-  "take_profit": "конкретная цена TP или null",
-  "stop_loss": "конкретная цена SL или null", 
-  "expected_levels": "текстовое описание что ждать, например 'пробой 310 рублей' или null",
-  "timeframe": "временной горизонт сделки/ожидания",
+  "reasoning": "детальное объяснение с уровнями (до 600 символов)",
+  "take_profit": "конкретная цена TP только для BUY/WEAK_BUY или null",
+  "stop_loss": "конкретная цена SL только для BUY/WEAK_BUY или null", 
+  "expected_levels": "что ждать для входа (только для WAIT/AVOID) или null",
+  "timeframe": "временной горизонт",
   "risk_warning": "главные риски"
 }}"""
         
@@ -244,11 +245,11 @@ class GPTMarketAnalyzer:
                 {"role": "user", "content": prompt}
             ],
             "temperature": 0.1,  # Минимальная креативность
-            "max_tokens": 800,   # Увеличили для детального анализа
+            "max_tokens": 1000,   # Увеличили для полного анализа
             "response_format": {"type": "json_object"}
         }
         
-        timeout = aiohttp.ClientTimeout(total=20)  # Увеличили таймаут
+        timeout = aiohttp.ClientTimeout(total=25)  # Увеличили таймаут
         
         try:
             async with aiohttp.ClientSession(timeout=timeout) as session:
@@ -267,7 +268,7 @@ class GPTMarketAnalyzer:
                         return None
                         
         except asyncio.TimeoutError:
-            logger.warning("⏰ Таймаут запроса к OpenAI (20s)")
+            logger.warning("⏰ Таймаут запроса к OpenAI (25s)")
             return None
         except Exception as e:
             logger.error(f"💥 Неожиданная ошибка OpenAI: {e}")
@@ -287,12 +288,23 @@ class GPTMarketAnalyzer:
             if not isinstance(confidence, (int, float)) or confidence < 0 or confidence > 100:
                 confidence = 50
             
-            reasoning = str(data.get('reasoning', 'Анализ недоступен'))[:300]
-            risk_warning = str(data.get('risk_warning', ''))[:200]
-            take_profit = str(data.get('take_profit', ''))[:100] if data.get('take_profit') else None
-            stop_loss = str(data.get('stop_loss', ''))[:100] if data.get('stop_loss') else None
-            expected_levels = str(data.get('expected_levels', ''))[:200] if data.get('expected_levels') else None
-            timeframe = str(data.get('timeframe', ''))[:100] if data.get('timeframe') else None
+            # Увеличили лимит для reasoning до 600 символов
+            reasoning = str(data.get('reasoning', 'Анализ недоступен'))[:600]
+            risk_warning = str(data.get('risk_warning', ''))[:300]
+            
+            # TP/SL только для покупок
+            take_profit = None
+            stop_loss = None
+            if recommendation in ['BUY', 'WEAK_BUY']:
+                take_profit = str(data.get('take_profit', ''))[:100] if data.get('take_profit') else None
+                stop_loss = str(data.get('stop_loss', ''))[:100] if data.get('stop_loss') else None
+            
+            # Expected levels только для ожидания
+            expected_levels = None
+            if recommendation in ['WAIT', 'AVOID']:
+                expected_levels = str(data.get('expected_levels', ''))[:300] if data.get('expected_levels') else None
+            
+            timeframe = str(data.get('timeframe', ''))[:150] if data.get('timeframe') else None
             
             return GPTAdvice(
                 recommendation=recommendation,
@@ -338,13 +350,15 @@ class GPTMarketAnalyzer:
 
 💡 <b>Анализ:</b> {advice.reasoning}"""
         
-        # Добавляем TP/SL для покупок
-        if advice.take_profit and advice.stop_loss:
-            result += f"\n🎯 <b>Take Profit:</b> {advice.take_profit}"
-            result += f"\n🛑 <b>Stop Loss:</b> {advice.stop_loss}"
+        # TP/SL ТОЛЬКО для покупок
+        if advice.recommendation in ['BUY', 'WEAK_BUY']:
+            if advice.take_profit:
+                result += f"\n🎯 <b>Take Profit:</b> {advice.take_profit}"
+            if advice.stop_loss:
+                result += f"\n🛑 <b>Stop Loss:</b> {advice.stop_loss}"
         
-        # Добавляем ожидаемые уровни для ожидания - ИСПРАВЛЕННОЕ ФОРМАТИРОВАНИЕ
-        if advice.expected_levels:
+        # Expected levels ТОЛЬКО для ожидания
+        elif advice.recommendation in ['WAIT', 'AVOID'] and advice.expected_levels:
             # Проверяем, является ли строка JSON-подобной
             if advice.expected_levels.strip().startswith('{') and advice.expected_levels.strip().endswith('}'):
                 try:
