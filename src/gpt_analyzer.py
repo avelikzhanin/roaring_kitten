@@ -336,17 +336,20 @@ class GPTMarketAnalyzer:
             'AVOID': '⛔'
         }
         
-        # Цвет уверенности
+        # Оценка условий вместо процентов
         if advice.confidence >= 80:
+            confidence_text = "отличные условия"
             confidence_emoji = '🟢'
         elif advice.confidence >= 60:
+            confidence_text = "средние условия"
             confidence_emoji = '🟡'
         else:
+            confidence_text = "плохие условия"
             confidence_emoji = '🔴'
         
         result = f"""
 🤖 <b>СОВЕТ GPT:</b>
-{rec_emoji.get(advice.recommendation, '❓')} <b>{advice.recommendation}</b> | {confidence_emoji} {advice.confidence}%
+{rec_emoji.get(advice.recommendation, '❓')} <b>{advice.recommendation}</b> | {confidence_emoji} {confidence_text}
 
 💡 <b>Анализ:</b> {advice.reasoning}"""
         
