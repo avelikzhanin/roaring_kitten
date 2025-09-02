@@ -66,7 +66,7 @@ class TradingBot:
             self.app.add_handler(CommandHandler("stop", self.stop_command))
             self.app.add_handler(CommandHandler("signal", self.signal_command))
             
-            logger.info("🚀 Запуск Ревущего котёнка с GPT...")
+            logger.info("🚀 Запуск Ревущего котёнка с расширенным GPT...")
             
             # Запускаем периодическую проверку в отдельной задаче
             self.is_running = True
@@ -123,7 +123,7 @@ class TradingBot:
         if chat_id not in self.subscribers:
             self.subscribers.append(chat_id)
             
-            gpt_status = "🤖 <b>GPT анализ:</b> включен" if self.gpt_analyzer else "📊 <b>Режим:</b> только технический анализ"
+            gpt_status = "🤖 <b>GPT анализ:</b> включен с уровнями TP/SL" if self.gpt_analyzer else "📊 <b>Режим:</b> только технический анализ"
             
             await update.message.reply_text(
                 "🐱 <b>Добро пожаловать в Ревущего котёнка!</b>\n\n"
@@ -137,7 +137,7 @@ class TradingBot:
                 "• 🔥 ADX > 45 - пик тренда, время продавать!\n\n"
                 "<b>Команды:</b>\n"
                 "/stop - отписаться от сигналов\n"
-                "/signal - проверить текущий сигнал",
+                "/signal - проверить текущий сигнал с полным анализом",
                 parse_mode='HTML'
             )
             logger.info(f"Новый подписчик: {chat_id}")
@@ -158,7 +158,7 @@ class TradingBot:
     async def signal_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработчик команды /signal - проверка текущего сигнала с GPT анализом"""
         try:
-            await update.message.reply_text("🔍 Анализирую текущую ситуацию на рынке...")
+            await update.message.reply_text("🔍 Анализирую текущую ситуацию на рынке с историческими данными...")
             
             # Выполняем анализ рынка
             signal = await self.analyze_market()
@@ -194,7 +194,7 @@ class TradingBot:
             )
 
     async def get_detailed_market_status(self) -> str:
-        """Получение детального статуса рынка"""
+        """Получение детального статуса рынка с расширенным GPT анализом"""
         try:
             candles = await self.tinkoff_provider.get_candles(hours=120)
             
@@ -250,8 +250,24 @@ class TradingBot:
 
 {'🔔 <b>Все условия выполнены - ожидайте сигнал!</b>' if all_conditions_met else '⏳ <b>Ожидаем улучшения показателей...</b>'}"""
             
-            # Добавляем GPT анализ для ЛЮБОГО состояния рынка
+            # Добавляем РАСШИРЕННЫЙ GPT анализ с историческими данными
             if self.gpt_analyzer:
+                # Преобразуем данные свечей для GPT
+                candles_data = []
+                try:
+                    for _, row in df.iterrows():
+                        candles_data.append({
+                            'timestamp': row['timestamp'],
+                            'open': float(row['open']),
+                            'high': float(row['high']),
+                            'low': float(row['low']),
+                            'close': float(row['close']),
+                            'volume': int(row['volume'])
+                        })
+                except Exception as e:
+                    logger.warning(f"Ошибка подготовки данных свечей: {e}")
+                    candles_data = None
+                
                 signal_data = {
                     'price': current_price,
                     'ema20': current_ema20,
@@ -261,11 +277,14 @@ class TradingBot:
                     'conditions_met': all_conditions_met  # Передаем статус условий
                 }
                 
-                gpt_advice = await self.gpt_analyzer.analyze_signal(signal_data, is_manual_check=True)
+                logger.info("🤖 Запрашиваем расширенный GPT анализ с уровнями...")
+                gpt_advice = await self.gpt_analyzer.analyze_signal(signal_data, candles_data, is_manual_check=True)
                 if gpt_advice:
                     message += f"\n{self.gpt_analyzer.format_advice_for_telegram(gpt_advice)}"
+                    logger.info(f"✅ GPT дал рекомендацию: {gpt_advice.recommendation}")
                 else:
                     message += "\n\n🤖 <i>GPT анализ временно недоступен</i>"
+                    logger.warning("⚠️ GPT анализ недоступен")
             
             return message
                 
@@ -357,9 +376,30 @@ class TradingBot:
             return None
     
     async def get_gpt_analysis(self, signal: TradingSignal, is_manual_check: bool = False) -> Optional[GPTAdvice]:
-        """Получение GPT анализа для сигнала"""
+        """Получение GPT анализа для сигнала с историческими данными"""
         if not self.gpt_analyzer:
             return None
+        
+        # Получаем свечные данные для анализа уровней
+        try:
+            candles = await self.tinkoff_provider.get_candles(hours=120)  # 5 дней данных
+            df = self.tinkoff_provider.candles_to_dataframe(candles)
+            
+            # Преобразуем в формат для GPT
+            candles_data = []
+            if not df.empty:
+                for _, row in df.iterrows():
+                    candles_data.append({
+                        'timestamp': row['timestamp'],
+                        'open': float(row['open']),
+                        'high': float(row['high']),
+                        'low': float(row['low']),
+                        'close': float(row['close']),
+                        'volume': int(row['volume'])
+                    })
+        except Exception as e:
+            logger.warning(f"Не удалось получить данные свечей для GPT: {e}")
+            candles_data = None
         
         signal_data = {
             'price': signal.price,
@@ -369,7 +409,7 @@ class TradingBot:
             'minus_di': signal.minus_di
         }
         
-        return await self.gpt_analyzer.analyze_signal(signal_data, is_manual_check)
+        return await self.gpt_analyzer.analyze_signal(signal_data, candles_data, is_manual_check)
     
     async def check_peak_trend(self) -> Optional[float]:
         """Проверка пика тренда (ADX > 45)"""
@@ -460,7 +500,7 @@ ADX > 45 - мы на пике тренда!
                     'minus_di': 20
                 }
                 
-                gpt_advice = await self.gpt_analyzer.analyze_signal(temp_signal_data, is_manual_check=False)
+                gpt_advice = await self.gpt_analyzer.analyze_signal(temp_signal_data, None, is_manual_check=False)
                 if gpt_advice and gpt_advice.recommendation == 'AVOID':
                     message += f"\n\n🤖 <b>GPT подтверждает:</b> {gpt_advice.reasoning}"
             except Exception as e:
@@ -491,16 +531,16 @@ ADX > 45 - мы на пике тренда!
         logger.info(f"Сигнал пика отправлен: {successful_sends} получателей, {len(failed_chats)} ошибок")
     
     async def send_signal_to_subscribers(self, signal: TradingSignal):
-        """Отправка сигнала всем подписчикам с GPT анализом"""
+        """Отправка сигнала всем подписчикам с расширенным GPT анализом"""
         if not self.app:
             logger.error("Telegram приложение не инициализировано")
             return
             
         message = self.format_signal_message(signal)
         
-        # Добавляем GPT анализ если доступен
+        # Добавляем РАСШИРЕННЫЙ GPT анализ если доступен
         if self.gpt_analyzer:
-            logger.info("🤖 Получаем анализ GPT для сигнала...")
+            logger.info("🤖 Получаем расширенный анализ GPT с TP/SL для сигнала...")
             gpt_advice = await self.get_gpt_analysis(signal, is_manual_check=False)
             
             if gpt_advice:
@@ -508,6 +548,10 @@ ADX > 45 - мы на пике тренда!
                 
                 # Логируем рекомендацию GPT
                 logger.info(f"🤖 GPT рекомендация: {gpt_advice.recommendation} ({gpt_advice.confidence}%)")
+                
+                # Если есть TP/SL, логируем их
+                if gpt_advice.take_profit and gpt_advice.stop_loss:
+                    logger.info(f"🎯 TP: {gpt_advice.take_profit} | 🛑 SL: {gpt_advice.stop_loss}")
                 
                 # Если GPT не рекомендует покупать, добавляем предупреждение
                 if gpt_advice.recommendation == 'AVOID':
@@ -680,6 +724,12 @@ async def main():
     if not tinkoff_token:
         logger.error("❌ TINKOFF_TOKEN не найден в переменных окружения")
         return
+    
+    # Логируем статус токенов
+    logger.info("🔑 Токены найдены:")
+    logger.info(f"   📱 Telegram: {'✅' if telegram_token else '❌'}")
+    logger.info(f"   📊 Tinkoff: {'✅' if tinkoff_token else '❌'}")
+    logger.info(f"   🤖 OpenAI: {'✅' if openai_token else '❌ (опционально)'}")
     
     # Создание и запуск бота
     bot = TradingBot(
