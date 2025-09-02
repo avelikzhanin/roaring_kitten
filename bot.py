@@ -66,7 +66,7 @@ class TradingBot:
             self.app.add_handler(CommandHandler("stop", self.stop_command))
             self.app.add_handler(CommandHandler("signal", self.signal_command))
             
-            logger.info("🚀 Запуск Ревущего котёнка с исправленным GPT...")
+            logger.info("🚀 Запуск Ревущего котёнка с расширенным GPT...")
             
             # Запускаем периодическую проверку в отдельной задаче
             self.is_running = True
@@ -123,7 +123,7 @@ class TradingBot:
         if chat_id not in self.subscribers:
             self.subscribers.append(chat_id)
             
-            gpt_status = "🤖 <b>GPT анализ:</b> включен с умными TP/SL" if self.gpt_analyzer else "📊 <b>Режим:</b> только технический анализ"
+            gpt_status = "🤖 <b>GPT анализ:</b> включен с уровнями TP/SL" if self.gpt_analyzer else "📊 <b>Режим:</b> только технический анализ"
             
             await update.message.reply_text(
                 "🐱 <b>Добро пожаловать в Ревущего котёнка!</b>\n\n"
@@ -158,7 +158,7 @@ class TradingBot:
     async def signal_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработчик команды /signal - проверка текущего сигнала с GPT анализом"""
         try:
-            await update.message.reply_text("🔍 Анализирую текущую ситуацию на рынке...")
+            await update.message.reply_text("🔍 Анализирую текущую ситуацию на рынке с историческими данными...")
             
             # Выполняем анализ рынка
             signal = await self.analyze_market()
@@ -183,10 +183,6 @@ class TradingBot:
                 # Анализируем почему нет сигнала
                 message = await self.get_detailed_market_status()
             
-            # Проверяем длину сообщения (лимит Telegram 4096 символов)
-            if len(message) > 4000:
-                message = message[:4000] + "\n\n<i>...сообщение обрезано</i>"
-            
             await update.message.reply_text(message, parse_mode='HTML')
             
         except Exception as e:
@@ -198,7 +194,7 @@ class TradingBot:
             )
 
     async def get_detailed_market_status(self) -> str:
-        """Получение детального статуса рынка с исправленным GPT анализом"""
+        """Получение детального статуса рынка с расширенным GPT анализом"""
         try:
             candles = await self.tinkoff_provider.get_candles(hours=120)
             
@@ -233,7 +229,6 @@ class TradingBot:
             di_difference = (current_plus_di - current_minus_di) > 1 if not pd.isna(current_plus_di) and not pd.isna(current_minus_di) else False
             peak_trend = current_adx > 45 if not pd.isna(current_adx) else False
             
-            # КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ: передаем статус выполнения условий
             all_conditions_met = all([price_above_ema, strong_trend, positive_direction, di_difference])
             
             peak_warning = ""
@@ -242,22 +237,22 @@ class TradingBot:
             elif peak_trend:
                 peak_warning = "\n🔥 <b>ADX > 45 - пик тренда</b>"
             
-            di_diff_value = current_plus_di - current_minus_di
             message = f"""📊 <b>ТЕКУЩЕЕ СОСТОЯНИЕ РЫНКА SBER</b>
 
 💰 <b>Цена:</b> {current_price:.2f} ₽
 📈 <b>EMA20:</b> {current_ema20:.2f} ₽ {'✅' if price_above_ema else '❌'}
 
 📊 <b>Индикаторы:</b>
-• <b>ADX:</b> {current_adx:.1f} {'✅' if strong_trend else '❌'} (>25)
+• <b>ADX:</b> {current_adx:.1f} {'✅' if strong_trend else '❌'} (нужно >25)
 • <b>+DI:</b> {current_plus_di:.1f}
-• <b>-DI:</b> {current_minus_di:.1f} 
-• <b>DI разность:</b> {di_diff_value:+.1f} {'✅' if di_difference else '❌'} (>+1){peak_warning}
+• <b>-DI:</b> {current_minus_di:.1f} {'✅' if positive_direction else '❌'}
+• <b>Разница DI:</b> {current_plus_di - current_minus_di:.1f} {'✅' if di_difference else '❌'} (нужно >1){peak_warning}
 
-{'🔔 <b>Все условия выполнены!</b>' if all_conditions_met else '⏳ <b>Ожидаем улучшения...</b>'}"""
+{'🔔 <b>Все условия выполнены - ожидайте сигнал!</b>' if all_conditions_met else '⏳ <b>Ожидаем улучшения показателей...</b>'}"""
             
-            # Добавляем GPT анализ с правильной передачей статуса условий
+            # Добавляем РАСШИРЕННЫЙ GPT анализ с историческими данными
             if self.gpt_analyzer:
+                # Преобразуем данные свечей для GPT
                 candles_data = []
                 try:
                     for _, row in df.iterrows():
@@ -273,28 +268,20 @@ class TradingBot:
                     logger.warning(f"Ошибка подготовки данных свечей: {e}")
                     candles_data = None
                 
-                # КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ: передаем статус условий в GPT
                 signal_data = {
                     'price': current_price,
                     'ema20': current_ema20,
                     'adx': current_adx,
                     'plus_di': current_plus_di,
                     'minus_di': current_minus_di,
-                    'conditions_met': all_conditions_met  # ← Вот это исправляет проблему!
+                    'conditions_met': all_conditions_met  # Передаем статус условий
                 }
                 
-                logger.info(f"🤖 GPT анализ: условия {'выполнены' if all_conditions_met else 'НЕ выполнены'}")
+                logger.info("🤖 Запрашиваем расширенный GPT анализ с уровнями...")
                 gpt_advice = await self.gpt_analyzer.analyze_signal(signal_data, candles_data, is_manual_check=True)
                 if gpt_advice:
-                    formatted_advice = self.gpt_analyzer.format_advice_for_telegram(gpt_advice)
-                    message += f"\n{formatted_advice}"
-                    logger.info(f"✅ GPT: {gpt_advice.recommendation} ({gpt_advice.confidence}%)")
-                    
-                    # Логируем что именно вернул GPT для отладки
-                    if gpt_advice.take_profit or gpt_advice.stop_loss:
-                        logger.info(f"🎯 GPT дал TP/SL: {gpt_advice.take_profit}/{gpt_advice.stop_loss}")
-                    if gpt_advice.expected_levels:
-                        logger.info(f"📊 GPT дал уровни ожидания: {gpt_advice.expected_levels}")
+                    message += f"\n{self.gpt_analyzer.format_advice_for_telegram(gpt_advice)}"
+                    logger.info(f"✅ GPT дал рекомендацию: {gpt_advice.recommendation}")
                 else:
                     message += "\n\n🤖 <i>GPT анализ временно недоступен</i>"
                     logger.warning("⚠️ GPT анализ недоступен")
@@ -414,14 +401,12 @@ class TradingBot:
             logger.warning(f"Не удалось получить данные свечей для GPT: {e}")
             candles_data = None
         
-        # ИСПРАВЛЕНИЕ: для активного сигнала условия всегда выполнены
         signal_data = {
             'price': signal.price,
             'ema20': signal.ema20,
             'adx': signal.adx,
             'plus_di': signal.plus_di,
-            'minus_di': signal.minus_di,
-            'conditions_met': True  # ← Для активного сигнала условия выполнены!
+            'minus_di': signal.minus_di
         }
         
         return await self.gpt_analyzer.analyze_signal(signal_data, candles_data, is_manual_check)
@@ -503,6 +488,24 @@ ADX > 45 - мы на пике тренда!
 
 🔍 <b>Продолжаем мониторинг новых возможностей...</b>"""
         
+        # Добавляем GPT анализ для пикового сигнала если доступен
+        if self.gpt_analyzer:
+            try:
+                # Создаем временный сигнал для анализа пика
+                temp_signal_data = {
+                    'price': current_price,
+                    'ema20': current_price * 0.98,  # Примерное значение
+                    'adx': 47,  # Пиковое значение
+                    'plus_di': 35,
+                    'minus_di': 20
+                }
+                
+                gpt_advice = await self.gpt_analyzer.analyze_signal(temp_signal_data, None, is_manual_check=False)
+                if gpt_advice and gpt_advice.recommendation == 'AVOID':
+                    message += f"\n\n🤖 <b>GPT подтверждает:</b> {gpt_advice.reasoning}"
+            except Exception as e:
+                logger.error(f"Ошибка GPT анализа для пика: {e}")
+        
         failed_chats = []
         successful_sends = 0
         
@@ -528,21 +531,20 @@ ADX > 45 - мы на пике тренда!
         logger.info(f"Сигнал пика отправлен: {successful_sends} получателей, {len(failed_chats)} ошибок")
     
     async def send_signal_to_subscribers(self, signal: TradingSignal):
-        """Отправка сигнала всем подписчикам с исправленным GPT анализом"""
+        """Отправка сигнала всем подписчикам с расширенным GPT анализом"""
         if not self.app:
             logger.error("Telegram приложение не инициализировано")
             return
             
         message = self.format_signal_message(signal)
         
-        # Добавляем GPT анализ если доступен
+        # Добавляем РАСШИРЕННЫЙ GPT анализ если доступен
         if self.gpt_analyzer:
-            logger.info("🤖 Получаем GPT анализ для сигнала покупки...")
+            logger.info("🤖 Получаем расширенный анализ GPT с TP/SL для сигнала...")
             gpt_advice = await self.get_gpt_analysis(signal, is_manual_check=False)
             
             if gpt_advice:
-                formatted_advice = self.gpt_analyzer.format_advice_for_telegram(gpt_advice)
-                message += f"\n{formatted_advice}"
+                message += f"\n{self.gpt_analyzer.format_advice_for_telegram(gpt_advice)}"
                 
                 # Логируем рекомендацию GPT
                 logger.info(f"🤖 GPT рекомендация: {gpt_advice.recommendation} ({gpt_advice.confidence}%)")
@@ -551,7 +553,7 @@ ADX > 45 - мы на пике тренда!
                 if gpt_advice.take_profit and gpt_advice.stop_loss:
                     logger.info(f"🎯 TP: {gpt_advice.take_profit} | 🛑 SL: {gpt_advice.stop_loss}")
                 
-                # Если GPT не рекомендует покупать (что странно для активного сигнала), добавляем предупреждение
+                # Если GPT не рекомендует покупать, добавляем предупреждение
                 if gpt_advice.recommendation == 'AVOID':
                     message += f"\n\n⚠️ <b>ВНИМАНИЕ:</b> GPT не рекомендует покупку!"
                 elif gpt_advice.recommendation == 'WEAK_BUY':
@@ -559,10 +561,6 @@ ADX > 45 - мы на пике тренда!
             else:
                 message += "\n\n🤖 <i>GPT анализ временно недоступен</i>"
                 logger.warning("⚠️ Не удалось получить GPT анализ")
-        
-        # Проверяем длину сообщения
-        if len(message) > 4000:
-            message = message[:4000] + "\n\n<i>...сообщение обрезано</i>"
         
         failed_chats = []
         successful_sends = 0
