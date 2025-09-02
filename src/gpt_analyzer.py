@@ -223,7 +223,7 @@ class GPTMarketAnalyzer:
   "reasoning": "детальное объяснение с уровнями",
   "take_profit": "конкретная цена TP или null",
   "stop_loss": "конкретная цена SL или null", 
-  "expected_levels": "какие уровни/показатели ждать или null",
+  "expected_levels": "текстовое описание что ждать, например 'пробой 310 рублей' или null",
   "timeframe": "временной горизонт сделки/ожидания",
   "risk_warning": "главные риски"
 }}"""
@@ -343,9 +343,34 @@ class GPTMarketAnalyzer:
             result += f"\n🎯 <b>Take Profit:</b> {advice.take_profit}"
             result += f"\n🛑 <b>Stop Loss:</b> {advice.stop_loss}"
         
-        # Добавляем ожидаемые уровни для ожидания
+        # Добавляем ожидаемые уровни для ожидания - ИСПРАВЛЕННОЕ ФОРМАТИРОВАНИЕ
         if advice.expected_levels:
-            result += f"\n📊 <b>Ждать:</b> {advice.expected_levels}"
+            # Проверяем, является ли строка JSON-подобной
+            if advice.expected_levels.strip().startswith('{') and advice.expected_levels.strip().endswith('}'):
+                try:
+                    # Пытаемся распарсить как JSON
+                    levels_data = json.loads(advice.expected_levels)
+                    
+                    # Форматируем красиво
+                    levels_text = []
+                    if 'breakout_level' in levels_data:
+                        levels_text.append(f"пробой {levels_data['breakout_level']} ₽")
+                    if 'support_level' in levels_data:
+                        levels_text.append(f"поддержка {levels_data['support_level']} ₽")
+                    if 'resistance_level' in levels_data:
+                        levels_text.append(f"сопротивление {levels_data['resistance_level']} ₽")
+                    
+                    if levels_text:
+                        result += f"\n📊 <b>Ждать:</b> {', '.join(levels_text)}"
+                    else:
+                        result += f"\n📊 <b>Ждать:</b> {advice.expected_levels}"
+                        
+                except (json.JSONDecodeError, KeyError):
+                    # Если не удалось распарсить, выводим как есть
+                    result += f"\n📊 <b>Ждать:</b> {advice.expected_levels}"
+            else:
+                # Обычная строка - выводим как есть
+                result += f"\n📊 <b>Ждать:</b> {advice.expected_levels}"
         
         # Временной горизонт
         if advice.timeframe:
