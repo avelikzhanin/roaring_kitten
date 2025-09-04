@@ -32,10 +32,14 @@ class TechnicalIndicators:
         
         return result
     
-    @staticmethod
+  @staticmethod
     def calculate_adx(highs: List[float], lows: List[float], closes: List[float], period: int = 14) -> Dict:
-        """Расчет ADX, +DI, -DI по классической формуле Уайлдера"""
+        """
+        Расчет ADX, +DI, -DI точно как в TradingView
+        Использует RMA (Relative Moving Average) с alpha=1/period
+        """
         if len(highs) < period * 2:
+            logger.warning(f"Недостаточно данных для ADX: {len(highs)} < {period * 2}")
             return {
                 'adx': [np.nan] * len(highs), 
                 'plus_di': [np.nan] * len(highs), 
