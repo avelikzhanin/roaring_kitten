@@ -616,4 +616,4 @@ ADX > 45 - мы на пике тренда!
                 if gpt_advice.recommendation == 'AVOID':
                     message += f"\n\n⚠️ <b>ВНИМАНИЕ:</b> GPT не рекомендует покупку!"
                 elif gpt_advice.recommendation == 'WEAK_BUY':
-                    message += f"\n\n⚡ <b>Осторожно:</b> GPT
+                    message += f"\n\n⚡ <b>Осторожно:</b> GPT"
