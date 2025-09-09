@@ -653,7 +653,29 @@ ADX > 45 - мы на пике тренда!
                     logger.info(f"🎯 TP: {gpt_advice.take_profit} | 🛑 SL: {gpt_advice.stop_loss}")
                 
                 # Если GPT не рекомендует покупать, добавляем предупреждение
+                if gpt_advice:
+                message += f"\n{self.gpt_analyzer.format_advice_for_telegram(gpt_advice)}"
+                
+                # Сохраняем данные GPT для БД
+                gpt_data = {
+                    'recommendation': gpt_advice.recommendation,
+                    'confidence': gpt_advice.confidence,
+                    'take_profit': gpt_advice.take_profit,
+                    'stop_loss': gpt_advice.stop_loss
+                }
+                
+                # Логируем рекомендацию GPT
+                logger.info(f"🤖 GPT рекомендация: {gpt_advice.recommendation} ({gpt_advice.confidence}%)")
+                
+                # Если есть TP/SL, логируем их
+                if gpt_advice.take_profit and gpt_advice.stop_loss:
+                    logger.info(f"🎯 TP: {gpt_advice.take_profit} | 🛑 SL: {gpt_advice.stop_loss}")
+                
+                # Если GPT не рекомендует покупать, добавляем предупреждение
                 if gpt_advice.recommendation == 'AVOID':
-                    message += f"\n\n⚠️ <b>ВНИМАНИЕ:</b> GPT не рекомендует покупку!"
-              elif gpt_advice.recommendation == 'WEAK_BUY':
-    message += f"\n\n⚡ <b>Осторожно:</b> GPT рекомендует минимальный риск"
+                    message += "\n\n⚠️ <b>ВНИМАНИЕ:</b> GPT не рекомендует покупку!"
+                elif gpt_advice.recommendation == 'WEAK_BUY':
+                    message += "\n\n⚡ <b>Осторожно:</b> GPT рекомендует минимальный риск"
+            else:
+                message += "\n\n🤖 <i>GPT анализ временно недоступен</i>"
+                logger.warning("⚠️ Не удалось получить GPT анализ")
