@@ -1,41 +1,4 @@
-# 6. Принудительно удаляем webhook и запускаем polling с повторными попытками
-            max_retries = 5
-            retry_delay = 10  # секунд
-            
-            for attempt in range(max_retries):
-                try:
-                    logger.info(f"🔧 Попытка {attempt + 1}/{max_retries}: Настройка Telegram соединения...")
-                    
-                    # Удаляем webhook с максимальными гарантиями
-                    await self.app.bot.delete_webhook(drop_pending_updates=True)
-                    logger.info("✅ Webhook удален")
-                    
-                    # Ждем чтобы Telegram "забыл" предыдущее соединение
-                    wait_time = retry_delay * (attempt + 1)
-                    logger.info(f"⏳ Ожидание {wait_time} секунд...")
-                    await asyncio.sleep(wait_time)
-                    
-                    # Пробуем запустить polling
-                    await self.app.updater.start_polling(
-                        drop_pending_updates=True,
-                        allowed_updates=['message', 'callback_query'],
-                        timeout=20,
-                        read_timeout=20,
-                        write_timeout=20,
-                        connect_timeout=20,
-                        pool_timeout=20
-                    )
-                    
-                    logger.info("✅ Telegram polling успешно запущен!")
-                    break
-                    
-                except Exception as polling_error:
-                    logger.error(f"❌ Попытка {attempt + 1} неудачна: {polling_error}")
-                    
-                    if "Conflict" in str(polling_error) and attempt < max_retries - 1:
-                        logger.warning(f"🔄 Конфликт polling. Ждем {retry_delay * (attempt + 2)} секунд...")
-                        # Увеличиваем время ожидания экспоненциально
-                        import asyncio
+import asyncio
 import logging
 import os
 from datetime import datetime, timedelta, timezone
@@ -106,7 +69,6 @@ class TradingBot:
             self.app.add_handler(CommandHandler("start", self.start_command))
             self.app.add_handler(CommandHandler("stop", self.stop_command))
             self.app.add_handler(CommandHandler("signal", self.signal_command))
-            self.app.add_handler(CommandHandler("stats", self.stats_command))  # Новая команда
             
             logger.info("🚀 Запуск Ревущего котёнка с полной БД интеграцией...")
             
@@ -118,14 +80,39 @@ class TradingBot:
             await self.app.initialize()
             await self.app.start()
             
-            # 6. Запускаем polling
-            await self.app.updater.start_polling(drop_pending_updates=True)
-            
-            # 7. Ждем до остановки
+            # 6. Принудительно удаляем webhook и запускаем polling
             try:
+                logger.info("🔧 Удаляем webhook и настраиваем polling...")
+                await self.app.bot.delete_webhook(drop_pending_updates=True)
+                await asyncio.sleep(1)  # Небольшая пауза
+                
+                await self.app.updater.start_polling(
+                    drop_pending_updates=True,
+                    allowed_updates=['message', 'callback_query'],
+                    timeout=30,
+                    read_timeout=30,
+                    write_timeout=30,
+                    connect_timeout=30,
+                    pool_timeout=30
+                )
+                logger.info("✅ Telegram polling запущен")
+            except Exception as e:
+                logger.error(f"❌ Ошибка запуска polling: {e}")
+                # Пробуем запустить без дополнительных параметров
+                await self.app.updater.start_polling(drop_pending_updates=True)
+                logger.info("✅ Telegram polling запущен (fallback режим)")
+            
+            # 7. Ждем до остановки с обработкой ошибок polling
+            try:
+                logger.info("🎉 Бот запущен и готов к работе!")
                 await asyncio.gather(self._signal_task)
             except asyncio.CancelledError:
                 logger.info("Задача проверки сигналов отменена")
+            except Exception as polling_error:
+                logger.error(f"Ошибка в polling: {polling_error}")
+                # Пытаемся переподключиться
+                logger.info("🔄 Попытка переподключения...")
+                await asyncio.sleep(5)
                 
         except Exception as e:
             logger.error(f"Ошибка в start(): {e}")
@@ -149,15 +136,33 @@ class TradingBot:
         # Останавливаем Telegram приложение
         if self.app:
             try:
+                # Останавливаем updater
                 if self.app.updater and self.app.updater.running:
+                    logger.info("🔧 Останавливаем updater...")
                     await self.app.updater.stop()
+                
+                # Удаляем webhook на всякий случай
+                try:
+                    await self.app.bot.delete_webhook(drop_pending_updates=True)
+                    logger.info("🔧 Webhook удален")
+                except Exception as e:
+                    logger.warning(f"Не удалось удалить webhook: {e}")
+                
+                # Останавливаем приложение
                 await self.app.stop()
                 await self.app.shutdown()
+                logger.info("🔧 Telegram приложение остановлено")
+                
             except Exception as e:
                 logger.error(f"Ошибка при остановке Telegram приложения: {e}")
         
         # Закрываем БД
-        await self.db.close()
+        try:
+            await self.db.close()
+            logger.info("🗄️ База данных закрыта")
+        except Exception as e:
+            logger.error(f"Ошибка закрытия БД: {e}")
+        
         logger.info("🛑 Котёнок остановлен")
     
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -173,16 +178,12 @@ class TradingBot:
         )
         
         if success:
-            # Получаем статистику для приветствия
-            stats = await self.db.get_stats()
-            total_users = stats.get('active_users', 0)
-            
             gpt_status = "🤖 <b>GPT анализ:</b> включен с уровнями TP/SL" if self.gpt_analyzer else "📊 <b>Режим:</b> только технический анализ"
             
             await update.message.reply_text(
                 "🐱 <b>Добро пожаловать в Ревущего котёнка!</b>\n\n"
                 "📈 Вы подписаны на торговые сигналы по SBER\n"
-                "🔔 Котёнок будет рычать о сигналах покупки и их отмене\n\n"
+                "🔔 Котёнок будет сообщать о сигналах покупки и продажи акций\n\n"
                 f"{gpt_status}\n\n"
                 "<b>Параметры стратегии:</b>\n"
                 "• EMA20 - цена выше средней\n"
@@ -191,9 +192,7 @@ class TradingBot:
                 "• 🔥 ADX > 45 - пик тренда, время продавать!\n\n"
                 "<b>Команды:</b>\n"
                 "/stop - отписаться от сигналов\n"
-                "/signal - проверить текущий сигнал с полным анализом\n"
-                "/stats - статистика бота\n\n"
-                f"👥 <b>Активных подписчиков:</b> {total_users}",
+                "/signal - проверить текущий сигнал с полным анализом",
                 parse_mode='HTML'
             )
             logger.info(f"👤 Новый/обновленный подписчик: {chat_id} (@{user.username if user else 'unknown'})")
@@ -210,9 +209,6 @@ class TradingBot:
         
         # Деактивируем пользователя в БД
         await self.db.deactivate_user(chat_id)
-        
-        # Закрываем все активные позиции пользователя
-        # (в текущей схеме закрываем все позиции при отписке)
         
         await update.message.reply_text(
             "❌ <b>Вы отписались от рычания котёнка</b>\n\n"
@@ -306,7 +302,7 @@ class TradingBot:
             elif peak_trend:
                 peak_warning = "\n🔥 <b>ADX > 45 - пик тренда</b>"
             
-            message = f"""📊 <b>ТЕКУЩЕЕ СОСТОЯНИЕ РЫНКА SBER</b>
+            message = f"""📊 <b>ТЕКУЩЕЕ СОСТОЯНИЕ АКЦИЙ SBER</b>
 
 💰 <b>Цена:</b> {current_price:.2f} ₽
 📈 <b>EMA20:</b> {current_ema20:.2f} ₽ {'✅' if price_above_ema else '❌'}
@@ -637,7 +633,7 @@ ADX > 45 - мы на пике тренда!
             gpt_advice = await self.get_gpt_analysis(signal, is_manual_check=False)
             
             if gpt_advice:
-                message += f"\n{self.format_custom_gpt_advice(gpt_advice)}"
+                message += f"\n{self.gpt_analyzer.format_advice_for_telegram(gpt_advice)}"
                 
                 # Подготавливаем данные GPT для сохранения в БД
                 gpt_data = {
