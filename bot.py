@@ -839,6 +839,8 @@ ADX > 45 - мы на пике тренда!
 
 async def main():
     """Основная функция запуска бота с полной БД интеграцией"""
+    logger.info("🚀 Запуск основной функции...")
+    
     # Получение токенов из переменных окружения
     telegram_token = os.getenv("TELEGRAM_TOKEN")
     tinkoff_token = os.getenv("TINKOFF_TOKEN") 
@@ -875,6 +877,7 @@ async def main():
     )
     
     try:
+        logger.info("▶️ Запускаем бота...")
         await bot.start()
     except KeyboardInterrupt:
         logger.info("⌨️ Получен сигнал прерывания")
@@ -883,14 +886,24 @@ async def main():
         import traceback
         traceback.print_exc()
     finally:
+        logger.info("🔄 Завершаем работу...")
         await bot.shutdown()
+        logger.info("✅ Завершение main()")
 
 
 if __name__ == "__main__":
+    logger.info("=" * 50)
+    logger.info("🐱 РЕВУЩИЙ КОТЁНОК СТАРТУЕТ")
+    logger.info("=" * 50)
+    
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
         logger.info("🔄 Программа завершена пользователем")
     except Exception as e:
-        logger.error(f"💥 Фатальная ошибка: {e}")
+        logger.error(f"💥 Фатальная ошибка в main: {e}")
+        import traceback
+        traceback.print_exc()
         exit(1)
+    finally:
+        logger.info("👋 До свидания!")
