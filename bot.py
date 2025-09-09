@@ -1,3 +1,43 @@
+#!/usr/bin/env python3
+print("=" * 50, flush=True)
+print("BOT.PY STARTING", flush=True)
+print("=" * 50, flush=True)
+
+import sys
+print(f"Python version: {sys.version}", flush=True)
+
+try:
+    import asyncio
+    import logging
+    import os
+    from datetime import datetime, timedelta, timezone
+    from typing import List, Optional
+    print("✅ Standard imports OK", flush=True)
+    
+    import pandas as pd
+    from dataclasses import dataclass
+    print("✅ Pandas and dataclasses OK", flush=True)
+    
+    from telegram import Update
+    from telegram.ext import Application, CommandHandler, ContextTypes
+    from telegram.error import TelegramError, TimedOut, NetworkError
+    print("✅ Telegram imports OK", flush=True)
+    
+    # Изменили относительные импорты на абсолютные
+    from src.data_provider import TinkoffDataProvider
+    from src.indicators import TechnicalIndicators
+    from src.gpt_analyzer import GPTMarketAnalyzer, GPTAdvice
+    from src.database import DatabaseManager
+    print("✅ Local imports OK", flush=True)
+    
+except ImportError as e:
+    print(f"❌ Import error: {e}", flush=True)
+    sys.exit(1)
+
+print("✅ All imports successful!", flush=True)
+
+# Остальной код...
+
 import asyncio
 import logging
 import os
