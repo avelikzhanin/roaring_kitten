@@ -326,7 +326,7 @@ class GPTMarketAnalyzer:
             return None
     
     def format_advice_for_telegram(self, advice: GPTAdvice) -> str:
-        """Форматирование расширенного совета GPT для Telegram"""
+        """Форматирование расширенного совета GPT для Telegram - ОБНОВЛЕННАЯ ВЕРСИЯ"""
         
         # Эмодзи для рекомендаций
         rec_emoji = {
@@ -347,8 +347,9 @@ class GPTMarketAnalyzer:
             confidence_text = "плохие условия"
             confidence_emoji = '🔴'
         
+        # ИЗМЕНЕНО: новый заголовок
         result = f"""
-🤖 <b>СОВЕТ GPT:</b>
+🐱 <b>РЕВУЩИЙ КОТЁНОК СООБЩАЕТ:</b>
 {rec_emoji.get(advice.recommendation, '❓')} <b>{advice.recommendation}</b> | {confidence_emoji} {confidence_text}
 
 💡 <b>Анализ:</b> {advice.reasoning}"""
@@ -389,12 +390,10 @@ class GPTMarketAnalyzer:
                 # Обычная строка - выводим как есть
                 result += f"\n📊 <b>Ждать:</b> {advice.expected_levels}"
         
-        # Временной горизонт
-        if advice.timeframe:
-            result += f"\n⏱️ <b>Горизонт:</b> {advice.timeframe}"
-        
-        # Риски
-        if advice.risk_warning:
-            result += f"\n⚠️ <b>Риск:</b> {advice.risk_warning}"
+        # УБРАЛИ: Временной горизонт и риски больше не показываем
+        # if advice.timeframe:
+        #     result += f"\n⏱️ <b>Горизонт:</b> {advice.timeframe}"
+        # if advice.risk_warning:
+        #     result += f"\n⚠️ <b>Риск:</b> {advice.risk_warning}"
         
         return result
