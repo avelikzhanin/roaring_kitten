@@ -221,7 +221,7 @@ class TradingBot:
     async def signal_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработчик команды /signal - проверка текущего сигнала с GPT анализом"""
         try:
-            await update.message.reply_text("🔍 Анализирую текущую ситуацию на рынке с историческими данными...")
+            await update.message.reply_text("🔍 Анализирую текущую ситуацию на рынке...")
             
             # Выполняем анализ рынка
             signal = await self.analyze_market()
