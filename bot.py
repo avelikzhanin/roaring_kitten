@@ -221,7 +221,7 @@ class TradingBot:
     async def signal_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработчик команды /signal - проверка текущего сигнала с GPT анализом"""
         try:
-            await update.message.reply_text("🔍 Анализирую текущую ситуацию на рынке...")
+            await update.message.reply_text("🔍 Анализирую текущую ситуацию на рынке с историческими данными...")
             
             # Выполняем анализ рынка
             signal = await self.analyze_market()
@@ -353,9 +353,13 @@ class TradingBot:
             
             return message
                 
+        except asyncio.TimeoutError:
+            logger.error("⏰ Таймаут при получении данных рынка")
+            return "❌ <b>Таймаут при получении данных</b>\n\nПопробуйте позже - возможны проблемы с источниками данных."
         except Exception as e:
-            logger.error(f"Ошибка в детальном анализе: {e}")
-            return "❌ <b>Ошибка получения данных для анализа</b>\n\nПопробуйте позже."
+            logger.error(f"💥 Ошибка в детальном анализе: {e}")
+            logger.error(f"💥 Тип ошибки: {type(e).__name__}")
+            return "❌ <b>Ошибка получения данных для анализа</b>\n\nВозможны временные проблемы с внешними сервисами."
 
     async def analyze_market(self) -> Optional[TradingSignal]:
         """Анализ рынка и генерация сигнала"""
@@ -640,6 +644,10 @@ ADX > 45 - мы на пике тренда!
         
         for chat_id in subscribers:
             try:
+                # Логируем сообщение перед отправкой для отладки
+                logger.info(f"📤 Отправляем сигнал пика в чат {chat_id}")
+                logger.debug(f"📝 Текст сообщения пика: {message[:200]}...")
+                
                 await self.app.bot.send_message(
                     chat_id=chat_id, 
                     text=message, 
@@ -648,8 +656,29 @@ ADX > 45 - мы на пике тренда!
                 successful_sends += 1
                 await asyncio.sleep(0.1)
                 
-            except (TelegramError, TimedOut, NetworkError) as e:
-                logger.error(f"Не удалось отправить сообщение пика в чат {chat_id}: {e}")
+            except TelegramError as e:
+                if "Can't parse entities" in str(e):
+                    logger.error(f"❌ HTML ошибка в сообщении пика для {chat_id}: {e}")
+                    # Пробуем отправить без HTML разметки
+                    try:
+                        simple_message = f"ПИК ТРЕНДА - ПРОДАЁМ SBER!\n\nТекущая цена: {current_price:.2f} ₽\n\nADX > 45 - мы на пике тренда!\nВремя фиксировать прибыль."
+                        await self.app.bot.send_message(
+                            chat_id=chat_id,
+                            text=simple_message
+                        )
+                        successful_sends += 1
+                        logger.info(f"✅ Отправлено упрощенное сообщение пика в чат {chat_id}")
+                    except Exception as fallback_error:
+                        logger.error(f"❌ Не удалось отправить даже упрощенное сообщение пика в {chat_id}: {fallback_error}")
+                        failed_chats.append(chat_id)
+                else:
+                    logger.error(f"❌ Telegram ошибка пика для {chat_id}: {e}")
+                    failed_chats.append(chat_id)
+            except (TimedOut, NetworkError) as e:
+                logger.error(f"❌ Сетевая ошибка пика для {chat_id}: {e}")
+                failed_chats.append(chat_id)
+            except Exception as e:
+                logger.error(f"❌ Неожиданная ошибка пика для {chat_id}: {e}")
                 failed_chats.append(chat_id)
                 
         # Деактивируем недоступные чаты в БД
