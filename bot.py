@@ -530,6 +530,58 @@ class TradingBot:
             return 0
         return ((sell_price - buy_price) / buy_price) * 100
     
+    async def get_profit_summary(self, current_price: float) -> str:
+        """Получение сводки по прибыли для всех открытых позиций"""
+        try:
+            # Получаем все активные позиции из БД
+            if not self.db.pool:
+                return ""
+            
+            async with self.db.pool.acquire() as conn:
+                positions = await conn.fetch('''
+                    SELECT buy_price, COUNT(*) as position_count
+                    FROM active_positions
+                    GROUP BY buy_price
+                ''')
+                
+                if not positions:
+                    return ""
+                
+                total_positions = sum(pos['position_count'] for pos in positions)
+                profits = []
+                
+                for pos in positions:
+                    buy_price = float(pos['buy_price'])
+                    count = pos['position_count']
+                    profit_pct = self.calculate_profit_percentage(buy_price, current_price)
+                    profits.append((buy_price, profit_pct, count))
+                
+                # Средневзвешенная прибыль
+                weighted_profit = sum(profit * count for _, profit, count in profits) / total_positions
+                
+                # Форматируем результат
+                if weighted_profit > 0:
+                    profit_emoji = "🟢"
+                    profit_text = f"+{weighted_profit:.2f}%"
+                elif weighted_profit < 0:
+                    profit_emoji = "🔴"
+                    profit_text = f"{weighted_profit:.2f}%"
+                else:
+                    profit_emoji = "⚪"
+                    profit_text = "0.00%"
+                
+                if len(profits) == 1:
+                    # Одна цена покупки
+                    buy_price = profits[0][0]
+                    return f"\n\n💰 <b>Результат сделки:</b> {profit_emoji} {profit_text}\n📈 <b>Вход:</b> {buy_price:.2f} ₽ → <b>Выход:</b> {current_price:.2f} ₽"
+                else:
+                    # Несколько разных цен покупки
+                    return f"\n\n💰 <b>Средний результат:</b> {profit_emoji} {profit_text}\n👥 <b>Позиций закрыто:</b> {total_positions}"
+                
+        except Exception as e:
+            logger.error(f"Ошибка расчета прибыли: {e}")
+            return ""
+    
     async def send_peak_signal(self, current_price: float):
         """Отправка сигнала пика тренда всем подписчикам с сохранением в БД"""
         if not self.app:
