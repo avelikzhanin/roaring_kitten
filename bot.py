@@ -637,7 +637,7 @@ ADX > 45 - мы на пике тренда!
             gpt_advice = await self.get_gpt_analysis(signal, is_manual_check=False)
             
             if gpt_advice:
-                message += f"\n{self.gpt_analyzer.format_advice_for_telegram(gpt_advice)}"
+                message += f"\n{self.format_custom_gpt_advice(gpt_advice)}"
                 
                 # Подготавливаем данные GPT для сохранения в БД
                 gpt_data = {
