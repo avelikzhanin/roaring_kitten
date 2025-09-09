@@ -1,4 +1,41 @@
-import asyncio
+# 6. Принудительно удаляем webhook и запускаем polling с повторными попытками
+            max_retries = 5
+            retry_delay = 10  # секунд
+            
+            for attempt in range(max_retries):
+                try:
+                    logger.info(f"🔧 Попытка {attempt + 1}/{max_retries}: Настройка Telegram соединения...")
+                    
+                    # Удаляем webhook с максимальными гарантиями
+                    await self.app.bot.delete_webhook(drop_pending_updates=True)
+                    logger.info("✅ Webhook удален")
+                    
+                    # Ждем чтобы Telegram "забыл" предыдущее соединение
+                    wait_time = retry_delay * (attempt + 1)
+                    logger.info(f"⏳ Ожидание {wait_time} секунд...")
+                    await asyncio.sleep(wait_time)
+                    
+                    # Пробуем запустить polling
+                    await self.app.updater.start_polling(
+                        drop_pending_updates=True,
+                        allowed_updates=['message', 'callback_query'],
+                        timeout=20,
+                        read_timeout=20,
+                        write_timeout=20,
+                        connect_timeout=20,
+                        pool_timeout=20
+                    )
+                    
+                    logger.info("✅ Telegram polling успешно запущен!")
+                    break
+                    
+                except Exception as polling_error:
+                    logger.error(f"❌ Попытка {attempt + 1} неудачна: {polling_error}")
+                    
+                    if "Conflict" in str(polling_error) and attempt < max_retries - 1:
+                        logger.warning(f"🔄 Конфликт polling. Ждем {retry_delay * (attempt + 2)} секунд...")
+                        # Увеличиваем время ожидания экспоненциально
+                        import asyncio
 import logging
 import os
 from datetime import datetime, timedelta, timezone
@@ -184,48 +221,6 @@ class TradingBot:
             parse_mode='HTML'
         )
         logger.info(f"👤 Пользователь отписался: {chat_id}")
-    
-    async def stats_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Новая команда для показа статистики"""
-        try:
-            stats = await self.db.get_stats()
-            
-            # Получаем последний сигнал
-            last_signal = await self.db.get_last_buy_signal()
-            last_signal_text = "Нет данных"
-            if last_signal:
-                signal_time = last_signal.get('created_at', datetime.now())
-                signal_price = last_signal.get('price', 0)
-                last_signal_text = f"{signal_time.strftime('%H:%M %d.%m.%Y')} по {signal_price:.2f} ₽"
-            
-            # Получаем количество активных позиций
-            active_positions = await self.db.get_active_positions_count()
-            
-            message = f"""📊 <b>СТАТИСТИКА РЕВУЩЕГО КОТЁНКА</b>
-
-👥 <b>Пользователи:</b>
-• Всего зарегистрировано: {stats.get('total_users', 0)}
-• Активных подписчиков: {stats.get('active_users', 0)}
-
-📈 <b>Сигналы:</b>
-• Всего сигналов: {stats.get('total_signals', 0)}
-• Сигналов покупки: {stats.get('buy_signals', 0)}
-• Сигналов продажи: {stats.get('sell_signals', 0)}
-
-💼 <b>Позиции:</b>
-• Открытых позиций: {active_positions}
-
-🔔 <b>Последний сигнал покупки:</b>
-{last_signal_text}"""
-            
-            await update.message.reply_text(message, parse_mode='HTML')
-            
-        except Exception as e:
-            logger.error(f"Ошибка получения статистики: {e}")
-            await update.message.reply_text(
-                "❌ <b>Ошибка получения статистики</b>\n\nПопробуйте позже.",
-                parse_mode='HTML'
-            )
     
     async def signal_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработчик команды /signal - проверка текущего сигнала с GPT анализом"""
