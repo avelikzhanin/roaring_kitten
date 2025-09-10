@@ -273,6 +273,82 @@ class TradingBot:
         
         await update.message.reply_text(message, parse_mode='HTML', reply_markup=reply_markup)
     
+    async def signal_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработчик команды /signal - показ меню выбора акции для анализа"""
+        try:
+            chat_id = update.effective_chat.id
+            subscriptions = await self.db.get_user_subscriptions(chat_id)
+            
+            if not subscriptions:
+                await update.message.reply_text(
+                    "📊 <b>У вас нет активных подписок</b>\n\n"
+                    "Используйте /portfolio для управления подписками",
+                    parse_mode='HTML'
+                )
+                return
+            
+            # Если только одна подписка - сразу анализируем её
+            if len(subscriptions) == 1:
+                symbol = subscriptions[0]['symbol']
+                name = subscriptions[0]['name']
+                
+                await update.message.reply_text(f"🔍 Анализирую {symbol} ({name})...")
+                
+                try:
+                    signal = await self.analyze_market(symbol)
+                    
+                    if signal:
+                        message = f"""✅ <b>АКТИВНЫЙ СИГНАЛ ПОКУПКИ {symbol}</b>
+
+{self.format_signal_message(signal)}
+
+⏰ <b>Время сигнала:</b> {signal.timestamp.strftime('%H:%M %d.%m.%Y')}"""
+                        
+                        # Добавляем GPT анализ если доступен
+                        if self.gpt_analyzer:
+                            try:
+                                gpt_advice = await self.get_gpt_analysis(signal, is_manual_check=True)
+                                if gpt_advice:
+                                    message += f"\n{self.gpt_analyzer.format_advice_for_telegram(gpt_advice)}"
+                                else:
+                                    message += "\n\n🤖 <i>GPT анализ временно недоступен</i>"
+                            except Exception:
+                                message += "\n\n🤖 <i>GPT анализ временно недоступен</i>"
+                    else:
+                        # Детальный статус для единственной акции
+                        message = await self.get_detailed_market_status(symbol)
+                    
+                    await update.message.reply_text(message, parse_mode='HTML')
+                    
+                except Exception as e:
+                    logger.error(f"Ошибка анализа {symbol}: {e}")
+                    await update.message.reply_text(f"❌ <b>Ошибка анализа {symbol}</b>", parse_mode='HTML')
+                
+                return
+            
+            # Если несколько подписок - показываем меню выбора
+            message = f"🔍 <b>АНАЛИЗ ТОРГОВЫХ СИГНАЛОВ</b>\n\n📊 <b>Ваши подписки ({len(subscriptions)}):</b>\nВыберите акцию для анализа:"
+            
+            # Создаем клавиатуру с кнопками для каждой акции
+            keyboard = []
+            
+            for sub in subscriptions:
+                symbol = sub['symbol']
+                name = sub['name']
+                keyboard.append([InlineKeyboardButton(f"📊 {symbol} ({name})", callback_data=f"analyze_{symbol}")])
+            
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await update.message.reply_text(message, parse_mode='HTML', reply_markup=reply_markup)
+            
+        except Exception as e:
+            logger.error(f"Ошибка в команде /signal: {e}")
+            await update.message.reply_text(
+                "❌ <b>Ошибка при проверке сигналов</b>\n\n"
+                "Попробуйте позже или обратитесь к администратору.",
+                parse_mode='HTML'
+            )
+
     async def handle_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработчик inline кнопок"""
         query = update.callback_query
@@ -305,68 +381,61 @@ class TradingBot:
             await self.show_portfolio_inline(query)
         
         elif data.startswith("analyze_"):
+            # Анализ конкретной акции
             symbol = data[8:]
-            await self.analyze_single_ticker(query, symbol)
-    
-    async def signal_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Обработчик команды /signal - проверка текущих сигналов"""
+            await self.analyze_single_ticker_from_signal(query, symbol)
+
+    async def analyze_single_ticker_from_signal(self, query, symbol: str):
+        """Анализ одной акции из команды /signal"""
         try:
-            chat_id = update.effective_chat.id
-            subscriptions = await self.db.get_user_subscriptions(chat_id)
+            await query.answer()
             
-            if not subscriptions:
-                await update.message.reply_text(
-                    "📊 <b>У вас нет активных подписок</b>\n\n"
-                    "Используйте /portfolio для управления подписками",
-                    parse_mode='HTML'
-                )
-                return
+            # Получаем информацию о тикере для красивого названия
+            ticker_info = await self.db.get_ticker_info(symbol)
+            name = ticker_info['name'] if ticker_info else symbol
             
-            await update.message.reply_text("🔍 Анализирую ваши подписки...")
+            # Отправляем уведомление о начале анализа
+            loading_message = await query.message.reply_text(f"🔍 Анализирую {symbol} ({name})...")
             
-            # Анализируем каждую подписку
-            for sub in subscriptions:
-                symbol = sub['symbol']
-                name = sub['name']
-                
-                try:
-                    signal = await self.analyze_market(symbol)
-                    
-                    if signal:
-                        message = f"""✅ <b>АКТИВНЫЙ СИГНАЛ ПОКУПКИ {symbol}</b>
+            signal = await self.analyze_market(symbol)
+            
+            if signal:
+                message = f"""✅ <b>АКТИВНЫЙ СИГНАЛ ПОКУПКИ {symbol}</b>
 
 {self.format_signal_message(signal)}
 
 ⏰ <b>Время сигнала:</b> {signal.timestamp.strftime('%H:%M %d.%m.%Y')}"""
-                        
-                        # Добавляем GPT анализ если доступен
-                        if self.gpt_analyzer:
-                            try:
-                                gpt_advice = await self.get_gpt_analysis(signal, is_manual_check=True)
-                                if gpt_advice:
-                                    message += f"\n{self.gpt_analyzer.format_advice_for_telegram(gpt_advice)}"
-                                else:
-                                    message += "\n\n🤖 <i>GPT анализ временно недоступен</i>"
-                            except Exception:
-                                message += "\n\n🤖 <i>GPT анализ временно недоступен</i>"
-                    else:
-                        # Краткий статус для множественного анализа
-                        message = await self.get_detailed_market_status(symbol)
-                    
-                    await update.message.reply_text(message, parse_mode='HTML')
-                    await asyncio.sleep(0.5)  # Небольшая пауза между сообщениями
-                    
-                except Exception as e:
-                    logger.error(f"Ошибка анализа {symbol}: {e}")
-                    await update.message.reply_text(f"❌ <b>Ошибка анализа {symbol}</b>", parse_mode='HTML')
+                
+                # Добавляем GPT анализ если доступен
+                if self.gpt_analyzer:
+                    try:
+                        gpt_advice = await self.get_gpt_analysis(signal, is_manual_check=True)
+                        if gpt_advice:
+                            message += f"\n{self.gpt_analyzer.format_advice_for_telegram(gpt_advice)}"
+                        else:
+                            message += "\n\n🤖 <i>GPT анализ временно недоступен</i>"
+                    except Exception:
+                        message += "\n\n🤖 <i>GPT анализ временно недоступен</i>"
+            else:
+                # Детальный статус
+                message = await self.get_detailed_market_status(symbol)
+            
+            # Удаляем сообщение о загрузке
+            try:
+                await loading_message.delete()
+            except:
+                pass
+            
+            # Отправляем результат анализа
+            await query.message.reply_text(message, parse_mode='HTML')
             
         except Exception as e:
-            logger.error(f"Ошибка в команде /signal: {e}")
-            await update.message.reply_text(
-                "❌ <b>Ошибка при проверке сигналов</b>\n\n"
-                "Попробуйте позже или обратитесь к администратору.",
-                parse_mode='HTML'
-            )
+            logger.error(f"Ошибка анализа {symbol} из /signal: {e}")
+            try:
+                await loading_message.delete()
+            except:
+                pass
+            await query.message.reply_text(f"❌ <b>Ошибка анализа {symbol}</b>", parse_mode='HTML')
 
     async def analyze_market(self, symbol: str) -> Optional[TradingSignal]:
         """Анализ рынка и генерация сигнала для конкретной акции"""
@@ -984,49 +1053,6 @@ ADX > 45 - мы на пике тренда!
         except Exception as e:
             logger.error(f"Ошибка показа портфеля: {e}")
     
-    async def check_signals_inline(self, query):
-        """Проверка сигналов через inline кнопку"""
-        await query.answer()
-        
-        chat_id = query.message.chat_id
-        subscriptions = await self.db.get_user_subscriptions(chat_id)
-        
-        if not subscriptions:
-            try:
-                await query.edit_message_text(
-                    "📊 <b>У вас нет активных подписок</b>\n\n"
-                    "Добавьте акции для отслеживания:",
-                    parse_mode='HTML'
-                )
-            except:
-                pass
-            return
-        
-        if len(subscriptions) == 1:
-            # Одна подписка - показываем анализ сразу
-            symbol = subscriptions[0]['symbol']
-            await self.analyze_single_ticker_inline(query, symbol)
-            return
-        
-        # Несколько подписок - предлагаем выбор
-        message = "🔍 <b>Выберите акцию для анализа:</b>"
-        
-        keyboard = []
-        for sub in subscriptions:
-            symbol = sub['symbol']
-            name = sub['name']
-            keyboard.append([InlineKeyboardButton(f"📊 {symbol} ({name})", callback_data=f"analyze_{symbol}")])
-        
-        keyboard.append([InlineKeyboardButton("📈 Анализ всех подписок", callback_data="analyze_all")])
-        keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data="portfolio")])
-        
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        try:
-            await query.edit_message_text(message, parse_mode='HTML', reply_markup=reply_markup)
-        except Exception as e:
-            logger.error(f"Ошибка проверки сигналов: {e}")
-    
     async def analyze_single_ticker(self, query, symbol: str):
         """Анализ одной акции через callback - отправляет НОВОЕ сообщение"""
         try:
@@ -1080,51 +1106,6 @@ ADX > 45 - мы на пике тренда!
             
         except Exception as e:
             logger.error(f"Ошибка inline анализа {symbol}: {e}")
-    
-    async def analyze_all_subscriptions(self, query):
-        """Анализ всех подписок пользователя"""
-        await query.answer("Анализирую все подписки...")
-        
-        chat_id = query.message.chat_id
-        subscriptions = await self.db.get_user_subscriptions(chat_id)
-        
-        if not subscriptions:
-            await query.message.reply_text("📊 <b>У вас нет активных подписок</b>", parse_mode='HTML')
-            return
-        
-        await query.message.reply_text(f"🔍 Анализирую {len(subscriptions)} акций...")
-        
-        for sub in subscriptions:
-            symbol = sub['symbol']
-            name = sub['name']
-            
-            try:
-                signal = await self.analyze_market(symbol)
-                
-                if signal:
-                    message = f"""✅ <b>АКТИВНЫЙ СИГНАЛ ПОКУПКИ {symbol}</b>
-
-{self.format_signal_message(signal)}"""
-                else:
-                    # Краткий статус без GPT для массового анализа
-                    try:
-                        ticker_info = await self.db.get_ticker_info(symbol)
-                        candles = await self.tinkoff_provider.get_candles_for_ticker(ticker_info['figi'], hours=50)
-                        if candles:
-                            df = self.tinkoff_provider.candles_to_dataframe(candles)
-                            current_price = df.iloc[-1]['close']
-                            message = f"📊 <b>{symbol} ({name})</b>\n💰 Цена: {current_price:.2f} ₽\n⏳ Условия не выполнены"
-                        else:
-                            message = f"📊 <b>{symbol} ({name})</b>\n❌ Нет данных"
-                    except:
-                        message = f"📊 <b>{symbol} ({name})</b>\n❌ Ошибка получения данных"
-                
-                await query.message.reply_text(message, parse_mode='HTML')
-                await asyncio.sleep(0.5)  # Небольшая пауза между сообщениями
-                
-            except Exception as e:
-                logger.error(f"Ошибка анализа {symbol} в массовом режиме: {e}")
-                await query.message.reply_text(f"❌ <b>Ошибка анализа {symbol}</b>", parse_mode='HTML')
 
     async def get_detailed_market_status(self, symbol: str) -> str:
         """Получение детального статуса рынка для конкретной акции"""
