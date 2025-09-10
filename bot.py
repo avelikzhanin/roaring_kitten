@@ -303,18 +303,12 @@ class TradingBot:
             else:
                 await query.answer("❌ Ошибка отписки", show_alert=True)
         
-        elif data == "check_signals":
-            await self.check_signals_inline(query)
-        
         elif data == "portfolio":
             await self.show_portfolio_inline(query)
         
         elif data.startswith("analyze_"):
             symbol = data[8:]
-            if symbol == "all":
-                await self.analyze_all_subscriptions(query)
-            else:
-                await self.analyze_single_ticker(query, symbol)
+            await self.analyze_single_ticker(query, symbol)
     
     async def signal_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработчик команды /signal - проверка текущих сигналов"""
