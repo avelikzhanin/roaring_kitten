@@ -976,9 +976,7 @@ ADX > 45 - мы на пике тренда!
             
             keyboard.append([InlineKeyboardButton(button_text, callback_data=callback_data)])
         
-        if subscriptions:
-            keyboard.append([InlineKeyboardButton("🔍 Проверить сигналы", callback_data="check_signals")])
-        
+        # Убрали кнопку "Проверить сигналы" - теперь используется команда /signal
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         try:
