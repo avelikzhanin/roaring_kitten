@@ -268,9 +268,7 @@ class TradingBot:
             
             keyboard.append([InlineKeyboardButton(button_text, callback_data=callback_data)])
         
-        if subscriptions:
-            keyboard.append([InlineKeyboardButton("🔍 Проверить сигналы", callback_data="check_signals")])
-        
+        # Убираем кнопку "Проверить сигналы" - теперь используется /signal
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         await update.message.reply_text(message, parse_mode='HTML', reply_markup=reply_markup)
@@ -1304,7 +1302,10 @@ async def main():
         traceback.print_exc()
     finally:
         logger.info("🔄 Завершаем работу...")
-        await bot.shutdown()
+        try:
+            await bot.shutdown()
+        except Exception as shutdown_error:
+            logger.error(f"Ошибка при остановке: {shutdown_error}")
         logger.info("✅ Завершение main()")
 
 
