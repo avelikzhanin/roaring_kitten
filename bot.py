@@ -1030,11 +1030,9 @@ ADX > 45 - мы на пике тренда!
             logger.error(f"Ошибка проверки сигналов: {e}")
     
     async def analyze_single_ticker(self, query, symbol: str):
-        """Анализ одной акции через callback"""
-        await query.answer(f"Анализирую {symbol}...")
-        
+        """Анализ одной акции через callback - отправляет НОВОЕ сообщение"""
         try:
-            # Отправляем новое сообщение с анализом
+            # Отправляем новое сообщение с анализом (не редактируем старое)
             signal = await self.analyze_market(symbol)
             
             if signal:
@@ -1056,6 +1054,7 @@ ADX > 45 - мы на пике тренда!
             else:
                 message = await self.get_detailed_market_status(symbol)
             
+            # Отправляем НОВОЕ сообщение (не редактируем)
             await query.message.reply_text(message, parse_mode='HTML')
             
         except Exception as e:
