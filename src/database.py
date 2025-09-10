@@ -32,7 +32,7 @@ class DatabaseManager:
                 version = await conn.fetchval('SELECT version()')
                 logger.info(f"✅ Подключено к PostgreSQL: {version[:50]}...")
             
-            # Создаем таблицы
+            # Создаем таблицы с миграциями
             await self.create_tables()
             
             # Добавляем тикеры и мигрируем старых пользователей
@@ -53,7 +53,7 @@ class DatabaseManager:
             logger.info("📊 Соединение с БД закрыто")
     
     async def create_tables(self):
-        """Создание всех необходимых таблиц"""
+        """Создание всех необходимых таблиц с миграциями"""
         if not self.pool:
             return
             
@@ -76,16 +76,25 @@ class DatabaseManager:
                 ON users(telegram_id)
             ''')
             
-            # Таблица тикеров
+            # Таблица тикеров - создаем базовую структуру
             await conn.execute('''
                 CREATE TABLE IF NOT EXISTS tickers (
                     id SERIAL PRIMARY KEY,
                     symbol VARCHAR(20) UNIQUE NOT NULL,
                     figi VARCHAR(50) UNIQUE NOT NULL,
-                    name VARCHAR(255),
-                    is_active BOOLEAN DEFAULT TRUE
+                    name VARCHAR(255)
                 )
             ''')
+            
+            # Добавляем is_active если его нет
+            try:
+                await conn.execute('''
+                    ALTER TABLE tickers 
+                    ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE
+                ''')
+                logger.info("📋 Добавлена колонка is_active в tickers")
+            except Exception as e:
+                logger.info(f"📋 Колонка is_active уже существует в tickers или ошибка: {e}")
             
             # НОВАЯ: Таблица подписок пользователей
             await conn.execute('''
@@ -109,11 +118,10 @@ class DatabaseManager:
                 ON user_subscriptions(ticker_id)
             ''')
             
-            # Обновляем таблицу сигналов (без изменений)
+            # Обновляем таблицу сигналов
             await conn.execute('''
                 CREATE TABLE IF NOT EXISTS signals (
                     id SERIAL PRIMARY KEY,
-                    ticker_id INTEGER REFERENCES tickers(id),
                     signal_type VARCHAR(20) NOT NULL,
                     price DECIMAL(10, 2),
                     ema20 DECIMAL(10, 2),
@@ -128,24 +136,33 @@ class DatabaseManager:
                 )
             ''')
             
+            # Добавляем ticker_id в signals если нет
+            try:
+                await conn.execute('''
+                    ALTER TABLE signals 
+                    ADD COLUMN IF NOT EXISTS ticker_id INTEGER REFERENCES tickers(id)
+                ''')
+                logger.info("📋 Добавлена колонка ticker_id в signals")
+            except Exception as e:
+                logger.info(f"📋 Колонка ticker_id уже существует в signals или ошибка: {e}")
+            
             await conn.execute('''
                 CREATE INDEX IF NOT EXISTS idx_signals_created 
                 ON signals(created_at DESC)
             ''')
             
-            # Обновляем таблицу активных позиций - добавляем ticker_id если нет
+            # Обновляем таблицу активных позиций
             await conn.execute('''
                 CREATE TABLE IF NOT EXISTS active_positions (
                     id SERIAL PRIMARY KEY,
                     user_telegram_id BIGINT NOT NULL,
-                    ticker_id INTEGER REFERENCES tickers(id),
                     buy_signal_id INTEGER REFERENCES signals(id),
                     buy_price DECIMAL(10, 2),
                     opened_at TIMESTAMP DEFAULT NOW()
                 )
             ''')
             
-            # Добавляем ticker_id в active_positions если колонки нет
+            # Добавляем ticker_id в active_positions если нет
             try:
                 await conn.execute('''
                     ALTER TABLE active_positions 
@@ -153,7 +170,7 @@ class DatabaseManager:
                 ''')
                 logger.info("📋 Добавлена колонка ticker_id в active_positions")
             except Exception as e:
-                logger.info(f"📋 Колонка ticker_id уже существует или ошибка: {e}")
+                logger.info(f"📋 Колонка ticker_id уже существует в active_positions или ошибка: {e}")
             
             logger.info("📋 Таблицы созданы/обновлены")
     
@@ -170,18 +187,31 @@ class DatabaseManager:
         
         async with self.pool.acquire() as conn:
             for symbol, figi, name in tickers_data:
-                ticker_id = await conn.fetchval('''
-                    INSERT INTO tickers (symbol, figi, name, is_active)
-                    VALUES ($1, $2, $3, TRUE)
-                    ON CONFLICT (symbol) DO UPDATE SET
-                        figi = EXCLUDED.figi,
-                        name = EXCLUDED.name,
-                        is_active = TRUE
-                    RETURNING id
-                ''', symbol, figi, name)
-                
-                if ticker_id:
-                    logger.info(f"✅ Тикер {symbol} обновлен (id={ticker_id})")
+                try:
+                    # Проверяем, существует ли тикер
+                    existing = await conn.fetchval(
+                        "SELECT id FROM tickers WHERE symbol = $1", symbol
+                    )
+                    
+                    if existing:
+                        # Обновляем существующий
+                        await conn.execute('''
+                            UPDATE tickers 
+                            SET figi = $2, name = $3, is_active = TRUE
+                            WHERE symbol = $1
+                        ''', symbol, figi, name)
+                        logger.info(f"✅ Тикер {symbol} обновлен (id={existing})")
+                    else:
+                        # Вставляем новый
+                        ticker_id = await conn.fetchval('''
+                            INSERT INTO tickers (symbol, figi, name, is_active)
+                            VALUES ($1, $2, $3, TRUE)
+                            RETURNING id
+                        ''', symbol, figi, name)
+                        logger.info(f"✅ Тикер {symbol} добавлен (id={ticker_id})")
+                        
+                except Exception as e:
+                    logger.error(f"❌ Ошибка обработки тикера {symbol}: {e}")
     
     async def migrate_existing_users(self):
         """Миграция существующих пользователей - подписываем на SBER"""
