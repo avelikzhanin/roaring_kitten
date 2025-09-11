@@ -1107,7 +1107,7 @@ ADX > 45 - мы на пике тренда!
         except Exception as e:
             logger.error(f"Ошибка inline анализа {symbol}: {e}")
 
-async def get_detailed_market_status(self, symbol: str) -> str:
+    async def get_detailed_market_status(self, symbol: str) -> str:
         """Получение детального статуса рынка для конкретной акции"""
         try:
             logger.info(f"🔄 Получаем данные для {symbol}...")
@@ -1208,14 +1208,9 @@ async def get_detailed_market_status(self, symbol: str) -> str:
                     }
                     
                     logger.info(f"🤖 Запрашиваем GPT анализ для {symbol}...")
-                    gpt_advice = await self.gpt_analyzer.analyze_signal(
-                        signal_data, 
-                        candles_data, 
-                        is_manual_check=True,
-                        symbol=symbol
-                    )
+                    gpt_advice = await self.gpt_analyzer.analyze_signal(signal_data, candles_data, is_manual_check=True)
                     if gpt_advice:
-                        message += f"\n{self.gpt_analyzer.format_advice_for_telegram(gpt_advice, symbol)}"
+                        message += f"\n{self.gpt_analyzer.format_advice_for_telegram(gpt_advice)}"
                         logger.info(f"✅ GPT дал рекомендацию для {symbol}: {gpt_advice.recommendation}")
                     else:
                         message += "\n\n🤖 <i>GPT анализ временно недоступен</i>"
