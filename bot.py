@@ -268,6 +268,93 @@ class TradingBot:
             
             keyboard.append([InlineKeyboardButton(button_text, callback_data=callback_data)])
         
+        # Убрали кнопку "Проверить сигналы" - теперь используется команда /signal
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        try:
+            await query.edit_message_text(message, parse_mode='HTML', reply_markup=reply_markup)
+        except Exception as e:
+            logger.error(f"Ошибка показа портфеля: {e}")
+
+
+async def main():
+    """Основная функция запуска бота с поддержкой множественных акций"""
+    logger.info("🚀 Запуск основной функции...")
+    
+    # Получение токенов из переменных окружения
+    telegram_token = os.getenv("TELEGRAM_TOKEN")
+    tinkoff_token = os.getenv("TINKOFF_TOKEN") 
+    database_url = os.getenv("DATABASE_URL")
+    openai_token = os.getenv("OPENAI_API_KEY")  # Опционально
+    
+    # Проверка обязательных токенов
+    if not telegram_token:
+        logger.error("❌ TELEGRAM_TOKEN не найден в переменных окружения")
+        return
+        
+    if not tinkoff_token:
+        logger.error("❌ TINKOFF_TOKEN не найден в переменных окружения")
+        return
+    
+    if not database_url:
+        logger.error("❌ DATABASE_URL не найден в переменных окружения")
+        logger.error("   БД обязательна для работы с полной интеграцией!")
+        return
+    
+    # Логируем статус токенов
+    logger.info("🔑 Проверка токенов:")
+    logger.info(f"   📱 Telegram: {'✅' if telegram_token else '❌'}")
+    logger.info(f"   📊 Tinkoff: {'✅' if tinkoff_token else '❌'}")
+    logger.info(f"   🗄️ Database: {'✅' if database_url else '❌'}")
+    logger.info(f"   🤖 OpenAI: {'✅' if openai_token else '❌ (опционально)'}")
+    
+    # Создание и запуск бота
+    bot = TradingBot(
+        telegram_token=telegram_token,
+        tinkoff_token=tinkoff_token,
+        database_url=database_url,
+        openai_token=openai_token
+    )
+    
+    try:
+        logger.info("▶️ Запускаем бота...")
+        await bot.start()
+    except KeyboardInterrupt:
+        logger.info("⌨️ Получен сигнал прерывания")
+    except Exception as e:
+        logger.error(f"💥 Критическая ошибка: {e}")
+        import traceback
+        traceback.print_exc()
+    finally:
+        logger.info("🔄 Завершаем работу...")
+        try:
+            await bot.shutdown()
+        except Exception as shutdown_error:
+            logger.error(f"Ошибка при остановке: {shutdown_error}")
+        logger.info("✅ Завершение main()")
+
+
+if __name__ == "__main__":
+    logger.info("=" * 50)
+    logger.info("🐱 РЕВУЩИЙ КОТЁНОК СТАРТУЕТ - МУЛЬТИАКЦИИ")
+    logger.info("=" * 50)
+    
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("🔄 Программа завершена пользователем")
+    except Exception as e:
+        logger.error(f"💥 Фатальная ошибка в main: {e}")
+        import traceback
+        traceback.print_exc()
+        exit(1)
+    finally:
+        logger.info("👋 До свидания!"):
+                button_text = f"⚪ {symbol} ({name}) ➕"
+                callback_data = f"sub_{symbol}"
+            
+            keyboard.append([InlineKeyboardButton(button_text, callback_data=callback_data)])
+        
         # Убираем кнопку "Проверить сигналы" - теперь используется /signal
         reply_markup = InlineKeyboardMarkup(keyboard)
         
@@ -436,6 +523,133 @@ class TradingBot:
             except:
                 pass
             await query.message.reply_text(f"❌ <b>Ошибка анализа {symbol}</b>", parse_mode='HTML')
+
+    async def get_detailed_market_status(self, symbol: str) -> str:
+        """Получение детального статуса рынка для конкретной акции"""
+        try:
+            logger.info(f"🔄 Получаем данные для {symbol}...")
+            
+            # Получаем информацию о тикере
+            ticker_info = await self.db.get_ticker_info(symbol)
+            if not ticker_info:
+                return f"❌ <b>Акция {symbol} не поддерживается</b>"
+            
+            candles = await asyncio.wait_for(
+                self.tinkoff_provider.get_candles_for_ticker(ticker_info['figi'], hours=120),
+                timeout=30
+            )
+            
+            if len(candles) < 50:
+                logger.warning(f"⚠️ Недостаточно данных для анализа {symbol}")
+                return f"❌ <b>Недостаточно данных для анализа {symbol}</b>\n\nПопробуйте позже."
+            
+            logger.info(f"📊 Получено {len(candles)} свечей для {symbol}, обрабатываем...")
+            df = self.tinkoff_provider.candles_to_dataframe(candles)
+            
+            if df.empty:
+                logger.warning(f"⚠️ Пустой DataFrame для {symbol}")
+                return f"❌ <b>Ошибка получения данных {symbol}</b>"
+            
+            # Получаем текущие значения индикаторов
+            closes = df['close'].tolist()
+            highs = df['high'].tolist()
+            lows = df['low'].tolist()
+            
+            # Расчет индикаторов
+            ema20 = TechnicalIndicators.calculate_ema(closes, 20)
+            adx_data = TechnicalIndicators.calculate_adx(highs, lows, closes, 14)
+            
+            # Последние значения
+            current_price = closes[-1]
+            current_ema20 = ema20[-1]
+            current_adx = adx_data['adx'][-1]
+            current_plus_di = adx_data['plus_di'][-1]
+            current_minus_di = adx_data['minus_di'][-1]
+            
+            # Проверяем условия
+            price_above_ema = current_price > current_ema20 if not pd.isna(current_ema20) else False
+            strong_trend = current_adx > 25 if not pd.isna(current_adx) else False
+            positive_direction = current_plus_di > current_minus_di if not pd.isna(current_plus_di) and not pd.isna(current_minus_di) else False
+            di_difference = (current_plus_di - current_minus_di) > 1 if not pd.isna(current_plus_di) and not pd.isna(current_minus_di) else False
+            peak_trend = current_adx > 45 if not pd.isna(current_adx) else False
+            
+            all_conditions_met = all([price_above_ema, strong_trend, positive_direction, di_difference])
+            
+            # Проверяем активные позиции из БД для этой акции
+            active_positions = await self.db.get_active_positions_count(symbol)
+            peak_warning = ""
+            if peak_trend and active_positions > 0:
+                peak_warning = f"\n🔥 <b>ВНИМАНИЕ: ADX > 45 - пик тренда {symbol}! Время продавать!</b>"
+            elif peak_trend:
+                peak_warning = f"\n🔥 <b>ADX > 45 - пик тренда {symbol}</b>"
+            
+            message = f"""📊 <b>ТЕКУЩЕЕ СОСТОЯНИЕ АКЦИЙ {symbol}</b>
+
+💰 <b>Цена:</b> {current_price:.2f} ₽
+📈 <b>EMA20:</b> {current_ema20:.2f} ₽ {'✅' if price_above_ema else '❌'}
+
+📊 <b>Индикаторы:</b>
+• <b>ADX:</b> {current_adx:.1f} {'✅' if strong_trend else '❌'} (нужно >25)
+• <b>+DI:</b> {current_plus_di:.1f}
+• <b>-DI:</b> {current_minus_di:.1f} {'✅' if positive_direction else '❌'}
+• <b>Разница DI:</b> {current_plus_di - current_minus_di:.1f} {'✅' if di_difference else '❌'} (нужно >1){peak_warning}
+
+{'🔔 <b>Все условия выполнены - ожидайте сигнал!</b>' if all_conditions_met else '⏳ <b>Ожидаем улучшения показателей...</b>'}"""
+            
+            # Добавляем GPT анализ
+            if self.gpt_analyzer:
+                try:
+                    logger.info(f"🤖 Подготавливаем данные для GPT анализа {symbol}...")
+                    candles_data = []
+                    try:
+                        for _, row in df.iterrows():
+                            candles_data.append({
+                                'timestamp': row['timestamp'],
+                                'open': float(row['open']),
+                                'high': float(row['high']),
+                                'low': float(row['low']),
+                                'close': float(row['close']),
+                                'volume': int(row['volume'])
+                            })
+                    except Exception as e:
+                        logger.warning(f"⚠️ Ошибка подготовки данных свечей для {symbol}: {e}")
+                        candles_data = None
+                    
+                    signal_data = {
+                        'price': current_price,
+                        'ema20': current_ema20,
+                        'adx': current_adx,
+                        'plus_di': current_plus_di,
+                        'minus_di': current_minus_di,
+                        'conditions_met': all_conditions_met
+                    }
+                    
+                    logger.info(f"🤖 Запрашиваем GPT анализ для {symbol}...")
+                    gpt_advice = await self.gpt_analyzer.analyze_signal(
+                        signal_data, 
+                        candles_data, 
+                        is_manual_check=True,
+                        symbol=symbol
+                    )
+                    if gpt_advice:
+                        message += f"\n{self.gpt_analyzer.format_advice_for_telegram(gpt_advice, symbol)}"
+                        logger.info(f"✅ GPT дал рекомендацию для {symbol}: {gpt_advice.recommendation}")
+                    else:
+                        message += "\n\n🤖 <i>GPT анализ временно недоступен</i>"
+                        logger.warning(f"⚠️ GPT анализ недоступен для {symbol}")
+                except Exception as e:
+                    logger.error(f"❌ Ошибка GPT анализа для {symbol}: {e}")
+                    message += "\n\n🤖 <i>GPT анализ временно недоступен</i>"
+            
+            return message
+                
+        except asyncio.TimeoutError:
+            logger.error(f"⏰ Таймаут при получении данных рынка для {symbol}")
+            return f"❌ <b>Таймаут при получении данных {symbol}</b>\n\nПопробуйте позже - возможны проблемы с источниками данных."
+        except Exception as e:
+            logger.error(f"💥 Ошибка в детальном анализе {symbol}: {e}")
+            logger.error(f"💥 Тип ошибки: {type(e).__name__}")
+            return f"❌ <b>Ошибка получения данных для анализа {symbol}</b>\n\nВозможны временные проблемы с внешними сервисами."
 
     async def analyze_market(self, symbol: str) -> Optional[TradingSignal]:
         """Анализ рынка и генерация сигнала для конкретной акции"""
@@ -1039,272 +1253,4 @@ ADX > 45 - мы на пике тренда!
             if symbol in subscribed_symbols:
                 button_text = f"🔔 {symbol} ({name}) ❌"
                 callback_data = f"unsub_{symbol}"
-            else:
-                button_text = f"⚪ {symbol} ({name}) ➕"
-                callback_data = f"sub_{symbol}"
-            
-            keyboard.append([InlineKeyboardButton(button_text, callback_data=callback_data)])
-        
-        # Убрали кнопку "Проверить сигналы" - теперь используется команда /signal
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        try:
-            await query.edit_message_text(message, parse_mode='HTML', reply_markup=reply_markup)
-        except Exception as e:
-            logger.error(f"Ошибка показа портфеля: {e}")
-    
-    async def analyze_single_ticker(self, query, symbol: str):
-        """Анализ одной акции через callback - отправляет НОВОЕ сообщение"""
-        try:
-            # Отправляем новое сообщение с анализом (не редактируем старое)
-            signal = await self.analyze_market(symbol)
-            
-            if signal:
-                message = f"""✅ <b>АКТИВНЫЙ СИГНАЛ ПОКУПКИ {symbol}</b>
-
-{self.format_signal_message(signal)}
-
-⏰ <b>Время сигнала:</b> {signal.timestamp.strftime('%H:%M %d.%m.%Y')}"""
-                
-                if self.gpt_analyzer:
-                    try:
-                        gpt_advice = await self.get_gpt_analysis(signal, is_manual_check=True)
-                        if gpt_advice:
-                            message += f"\n{self.gpt_analyzer.format_advice_for_telegram(gpt_advice)}"
-                        else:
-                            message += "\n\n🤖 <i>GPT анализ временно недоступен</i>"
-                    except Exception:
-                        message += "\n\n🤖 <i>GPT анализ временно недоступен</i>"
-            else:
-                message = await self.get_detailed_market_status(symbol)
-            
-            # Отправляем НОВОЕ сообщение (не редактируем)
-            await query.message.reply_text(message, parse_mode='HTML')
-            
-        except Exception as e:
-            logger.error(f"Ошибка анализа {symbol}: {e}")
-            await query.message.reply_text(f"❌ <b>Ошибка анализа {symbol}</b>", parse_mode='HTML')
-    
-    async def analyze_single_ticker_inline(self, query, symbol: str):
-        """Анализ одной акции с обновлением сообщения"""
-        try:
-            signal = await self.analyze_market(symbol)
-            
-            if signal:
-                message = f"""✅ <b>АКТИВНЫЙ СИГНАЛ ПОКУПКИ {symbol}</b>
-
-{self.format_signal_message(signal)}
-
-⏰ <b>Время сигнала:</b> {signal.timestamp.strftime('%H:%M %d.%m.%Y')}"""
-            else:
-                message = await self.get_detailed_market_status(symbol)
-            
-            keyboard = [[InlineKeyboardButton("◀️ Назад к портфелю", callback_data="portfolio")]]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            
-            await query.edit_message_text(message, parse_mode='HTML', reply_markup=reply_markup)
-            
-        except Exception as e:
-            logger.error(f"Ошибка inline анализа {symbol}: {e}")
-
-async def get_detailed_market_status(self, symbol: str) -> str:
-        """Получение детального статуса рынка для конкретной акции"""
-        try:
-            logger.info(f"🔄 Получаем данные для {symbol}...")
-            
-            # Получаем информацию о тикере
-            ticker_info = await self.db.get_ticker_info(symbol)
-            if not ticker_info:
-                return f"❌ <b>Акция {symbol} не поддерживается</b>"
-            
-            candles = await asyncio.wait_for(
-                self.tinkoff_provider.get_candles_for_ticker(ticker_info['figi'], hours=120),
-                timeout=30
-            )
-            
-            if len(candles) < 50:
-                logger.warning(f"⚠️ Недостаточно данных для анализа {symbol}")
-                return f"❌ <b>Недостаточно данных для анализа {symbol}</b>\n\nПопробуйте позже."
-            
-            logger.info(f"📊 Получено {len(candles)} свечей для {symbol}, обрабатываем...")
-            df = self.tinkoff_provider.candles_to_dataframe(candles)
-            
-            if df.empty:
-                logger.warning(f"⚠️ Пустой DataFrame для {symbol}")
-                return f"❌ <b>Ошибка получения данных {symbol}</b>"
-            
-            # Получаем текущие значения индикаторов
-            closes = df['close'].tolist()
-            highs = df['high'].tolist()
-            lows = df['low'].tolist()
-            
-            # Расчет индикаторов
-            ema20 = TechnicalIndicators.calculate_ema(closes, 20)
-            adx_data = TechnicalIndicators.calculate_adx(highs, lows, closes, 14)
-            
-            # Последние значения
-            current_price = closes[-1]
-            current_ema20 = ema20[-1]
-            current_adx = adx_data['adx'][-1]
-            current_plus_di = adx_data['plus_di'][-1]
-            current_minus_di = adx_data['minus_di'][-1]
-            
-            # Проверяем условия
-            price_above_ema = current_price > current_ema20 if not pd.isna(current_ema20) else False
-            strong_trend = current_adx > 25 if not pd.isna(current_adx) else False
-            positive_direction = current_plus_di > current_minus_di if not pd.isna(current_plus_di) and not pd.isna(current_minus_di) else False
-            di_difference = (current_plus_di - current_minus_di) > 1 if not pd.isna(current_plus_di) and not pd.isna(current_minus_di) else False
-            peak_trend = current_adx > 45 if not pd.isna(current_adx) else False
-            
-            all_conditions_met = all([price_above_ema, strong_trend, positive_direction, di_difference])
-            
-            # Проверяем активные позиции из БД для этой акции
-            active_positions = await self.db.get_active_positions_count(symbol)
-            peak_warning = ""
-            if peak_trend and active_positions > 0:
-                peak_warning = f"\n🔥 <b>ВНИМАНИЕ: ADX > 45 - пик тренда {symbol}! Время продавать!</b>"
-            elif peak_trend:
-                peak_warning = f"\n🔥 <b>ADX > 45 - пик тренда {symbol}</b>"
-            
-            message = f"""📊 <b>ТЕКУЩЕЕ СОСТОЯНИЕ АКЦИЙ {symbol}</b>
-
-💰 <b>Цена:</b> {current_price:.2f} ₽
-📈 <b>EMA20:</b> {current_ema20:.2f} ₽ {'✅' if price_above_ema else '❌'}
-
-📊 <b>Индикаторы:</b>
-• <b>ADX:</b> {current_adx:.1f} {'✅' if strong_trend else '❌'} (нужно >25)
-• <b>+DI:</b> {current_plus_di:.1f}
-• <b>-DI:</b> {current_minus_di:.1f} {'✅' if positive_direction else '❌'}
-• <b>Разница DI:</b> {current_plus_di - current_minus_di:.1f} {'✅' if di_difference else '❌'} (нужно >1){peak_warning}
-
-{'🔔 <b>Все условия выполнены - ожидайте сигнал!</b>' if all_conditions_met else '⏳ <b>Ожидаем улучшения показателей...</b>'}"""
-            
-            # Добавляем GPT анализ
-            if self.gpt_analyzer:
-                try:
-                    logger.info(f"🤖 Подготавливаем данные для GPT анализа {symbol}...")
-                    candles_data = []
-                    try:
-                        for _, row in df.iterrows():
-                            candles_data.append({
-                                'timestamp': row['timestamp'],
-                                'open': float(row['open']),
-                                'high': float(row['high']),
-                                'low': float(row['low']),
-                                'close': float(row['close']),
-                                'volume': int(row['volume'])
-                            })
-                    except Exception as e:
-                        logger.warning(f"⚠️ Ошибка подготовки данных свечей для {symbol}: {e}")
-                        candles_data = None
-                    
-                    signal_data = {
-                        'price': current_price,
-                        'ema20': current_ema20,
-                        'adx': current_adx,
-                        'plus_di': current_plus_di,
-                        'minus_di': current_minus_di,
-                        'conditions_met': all_conditions_met
-                    }
-                    
-                    logger.info(f"🤖 Запрашиваем GPT анализ для {symbol}...")
-                    gpt_advice = await self.gpt_analyzer.analyze_signal(
-                        signal_data, 
-                        candles_data, 
-                        is_manual_check=True,
-                        symbol=symbol
-                    )
-                    if gpt_advice:
-                        message += f"\n{self.gpt_analyzer.format_advice_for_telegram(gpt_advice, symbol)}"
-                        logger.info(f"✅ GPT дал рекомендацию для {symbol}: {gpt_advice.recommendation}")
-                    else:
-                        message += "\n\n🤖 <i>GPT анализ временно недоступен</i>"
-                        logger.warning(f"⚠️ GPT анализ недоступен для {symbol}")
-                except Exception as e:
-                    logger.error(f"❌ Ошибка GPT анализа для {symbol}: {e}")
-                    message += "\n\n🤖 <i>GPT анализ временно недоступен</i>"
-            
-            return message
-                
-        except asyncio.TimeoutError:
-            logger.error(f"⏰ Таймаут при получении данных рынка для {symbol}")
-            return f"❌ <b>Таймаут при получении данных {symbol}</b>\n\nПопробуйте позже - возможны проблемы с источниками данных."
-        except Exception as e:
-            logger.error(f"💥 Ошибка в детальном анализе {symbol}: {e}")
-            logger.error(f"💥 Тип ошибки: {type(e).__name__}")
-            return f"❌ <b>Ошибка получения данных для анализа {symbol}</b>\n\nВозможны временные проблемы с внешними сервисами."
-
-
-async def main():
-    """Основная функция запуска бота с поддержкой множественных акций"""
-    logger.info("🚀 Запуск основной функции...")
-    
-    # Получение токенов из переменных окружения
-    telegram_token = os.getenv("TELEGRAM_TOKEN")
-    tinkoff_token = os.getenv("TINKOFF_TOKEN") 
-    database_url = os.getenv("DATABASE_URL")
-    openai_token = os.getenv("OPENAI_API_KEY")  # Опционально
-    
-    # Проверка обязательных токенов
-    if not telegram_token:
-        logger.error("❌ TELEGRAM_TOKEN не найден в переменных окружения")
-        return
-        
-    if not tinkoff_token:
-        logger.error("❌ TINKOFF_TOKEN не найден в переменных окружения")
-        return
-    
-    if not database_url:
-        logger.error("❌ DATABASE_URL не найден в переменных окружения")
-        logger.error("   БД обязательна для работы с полной интеграцией!")
-        return
-    
-    # Логируем статус токенов
-    logger.info("🔑 Проверка токенов:")
-    logger.info(f"   📱 Telegram: {'✅' if telegram_token else '❌'}")
-    logger.info(f"   📊 Tinkoff: {'✅' if tinkoff_token else '❌'}")
-    logger.info(f"   🗄️ Database: {'✅' if database_url else '❌'}")
-    logger.info(f"   🤖 OpenAI: {'✅' if openai_token else '❌ (опционально)'}")
-    
-    # Создание и запуск бота
-    bot = TradingBot(
-        telegram_token=telegram_token,
-        tinkoff_token=tinkoff_token,
-        database_url=database_url,
-        openai_token=openai_token
-    )
-    
-    try:
-        logger.info("▶️ Запускаем бота...")
-        await bot.start()
-    except KeyboardInterrupt:
-        logger.info("⌨️ Получен сигнал прерывания")
-    except Exception as e:
-        logger.error(f"💥 Критическая ошибка: {e}")
-        import traceback
-        traceback.print_exc()
-    finally:
-        logger.info("🔄 Завершаем работу...")
-        try:
-            await bot.shutdown()
-        except Exception as shutdown_error:
-            logger.error(f"Ошибка при остановке: {shutdown_error}")
-        logger.info("✅ Завершение main()")
-
-
-if __name__ == "__main__":
-    logger.info("=" * 50)
-    logger.info("🐱 РЕВУЩИЙ КОТЁНОК СТАРТУЕТ - МУЛЬТИАКЦИИ")
-    logger.info("=" * 50)
-    
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        logger.info("🔄 Программа завершена пользователем")
-    except Exception as e:
-        logger.error(f"💥 Фатальная ошибка в main: {e}")
-        import traceback
-        traceback.print_exc()
-        exit(1)
-    finally:
-        logger.info("👋 До свидания!")
+            else
