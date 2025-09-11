@@ -1208,10 +1208,21 @@ ADX > 45 - мы на пике тренда!
                     }
                     
                     logger.info(f"🤖 Запрашиваем GPT анализ для {symbol}...")
-                    gpt_advice = await self.gpt_analyzer.analyze_signal(signal_data, candles_data, is_manual_check=True)
+                    gpt_advice = await self.gpt_analyzer.analyze_signal(
+                        signal_data, 
+                        candles_data, 
+                        is_manual_check=True,
+                        symbol=symbol
+                    )
                     if gpt_advice:
-                        message += f"\n{self.gpt_analyzer.format_advice_for_telegram(gpt_advice)}"
+                        message += f"\n{self.gpt_analyzer.format_advice_for_telegram(gpt_advice, symbol)}"
                         logger.info(f"✅ GPT дал рекомендацию для {symbol}: {gpt_advice.recommendation}")
+                    else:
+                        message += "\n\n🤖 <i>GPT анализ временно недоступен</i>"
+                        logger.warning(f"⚠️ GPT анализ недоступен для {symbol}")
+                except Exception as e:
+                    logger.error(f"❌ Ошибка GPT анализа для {symbol}: {e}")
+                    message += "\n\n🤖 <i>GPT анализ временно недоступен</i>".recommendation}")
                     else:
                         message += "\n\n🤖 <i>GPT анализ временно недоступен</i>"
                         logger.warning(f"⚠️ GPT анализ недоступен для {symbol}")
