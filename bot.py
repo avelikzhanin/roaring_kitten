@@ -113,7 +113,7 @@ class TradingBot:
     try:
         commands = [
             BotCommand("portfolio", "📊 Управление подписками на акции"),
-            BotCommand("Проверить сигналы", "🔍 Проверить текущие сигналы"),
+            BotCommand("signal", "🔍 Проверить текущие сигналы"),
         ]
         
         await self.app.bot.set_my_commands(commands)
