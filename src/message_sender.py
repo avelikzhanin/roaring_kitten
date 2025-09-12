@@ -8,9 +8,10 @@ logger = logging.getLogger(__name__)
 class MessageSender:
     """Отправщик сообщений подписчикам"""
     
-    def __init__(self, database, gpt_analyzer=None):
+    def __init__(self, database, gpt_analyzer=None, tinkoff_provider=None):
         self.db = database
         self.gpt_analyzer = gpt_analyzer
+        self.tinkoff_provider = tinkoff_provider
         self.app = None
     
     def set_app(self, app):
@@ -159,10 +160,27 @@ class MessageSender:
             ticker_info = await self.db.get_ticker_info(signal.symbol)
             candles_data = None
             
-            if ticker_info:
-                from .data_provider import TinkoffDataProvider
-                # Здесь нужна ссылка на tinkoff_provider, передадим через конструктор
-                pass
+            if ticker_info and self.tinkoff_provider:
+                # Получаем исторические данные для GPT анализа
+                try:
+                    candles = await self.tinkoff_provider.get_candles_for_ticker(
+                        ticker_info['figi'], hours=120
+                    )
+                    df = self.tinkoff_provider.candles_to_dataframe(candles)
+                    
+                    if not df.empty:
+                        candles_data = []
+                        for _, row in df.iterrows():
+                            candles_data.append({
+                                'timestamp': row['timestamp'],
+                                'open': float(row['open']),
+                                'high': float(row['high']),
+                                'low': float(row['low']),
+                                'close': float(row['close']),
+                                'volume': int(row['volume'])
+                            })
+                except Exception as e:
+                    logger.warning(f"Не удалось получить свечи для GPT {signal.symbol}: {e}")
             
             signal_data = {
                 'price': signal.price,
@@ -172,12 +190,14 @@ class MessageSender:
                 'minus_di': signal.minus_di
             }
             
+            # ИСПРАВЛЕНИЕ: передаем symbol в GPT анализатор
             gpt_advice = await self.gpt_analyzer.analyze_signal(
-                signal_data, candles_data, is_manual_check=False
+                signal_data, candles_data, is_manual_check=False, symbol=signal.symbol
             )
             
             if gpt_advice:
-                formatted_message = self.gpt_analyzer.format_advice_for_telegram(gpt_advice)
+                # ИСПРАВЛЕНИЕ: передаем symbol в форматтер
+                formatted_message = self.gpt_analyzer.format_advice_for_telegram(gpt_advice, signal.symbol)
                 
                 # Добавляем предупреждения
                 if gpt_advice.recommendation == 'AVOID':
