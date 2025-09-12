@@ -4,6 +4,7 @@ import os
 from datetime import datetime
 from typing import Optional
 
+from telegram import BotCommand
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler
 
 from src.data_provider import TinkoffDataProvider
@@ -32,9 +33,9 @@ class TradingBot:
         self.gpt_analyzer = GPTMarketAnalyzer(openai_token) if openai_token else None
         self.db = DatabaseManager(database_url)
         
-        # Создаем модули
+        # Создаем модули с правильными зависимостями
         self.signal_processor = SignalProcessor(self.tinkoff_provider, self.db, self.gpt_analyzer)
-        self.message_sender = MessageSender(self.db, self.gpt_analyzer)
+        self.message_sender = MessageSender(self.db, self.gpt_analyzer, self.tinkoff_provider)
         self.user_interface = UserInterface(self.db, self.signal_processor, self.gpt_analyzer)
         
         # Состояние бота
@@ -68,6 +69,9 @@ class TradingBot:
             # 6. Запускаем Telegram polling
             await self.app.initialize()
             await self.app.start()
+            
+            # 7. Устанавливаем меню команд
+            await self._setup_bot_menu()
             
             await self.app.bot.delete_webhook(drop_pending_updates=True)
             await self.app.updater.start_polling(drop_pending_updates=True)
@@ -103,6 +107,23 @@ class TradingBot:
         # Закрываем БД
         await self.db.close()
         logger.info("✅ Бот остановлен")
+    
+    async def _setup_bot_menu(self):
+        """Установка меню команд бота"""
+        try:
+            commands = [
+                BotCommand("start", "🚀 Подписаться на торговые сигналы"),
+                BotCommand("portfolio", "📊 Управление подписками на акции"),
+                BotCommand("signal", "🔍 Проверить текущие сигналы"),
+                BotCommand("stop", "❌ Отписаться от всех сигналов"),
+            ]
+            
+            await self.app.bot.set_my_commands(commands)
+            logger.info("📱 Меню команд установлено")
+            
+        except Exception as e:
+            logger.warning(f"Не удалось установить меню команд: {e}")
+            # Не критично, продолжаем работу
     
     def _add_handlers(self):
         """Добавление обработчиков команд"""
