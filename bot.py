@@ -110,14 +110,14 @@ class TradingBot:
     
     async def _setup_bot_menu(self):
         """Установка меню команд бота"""
-    try:
-        commands = [
-            BotCommand("portfolio", "📊 Управление подписками на акции"),
-            BotCommand("signal", "🔍 Проверить текущие сигналы"),
-        ]
-        
-        await self.app.bot.set_my_commands(commands)
-        logger.info("📱 Меню команд установлено")
+        try:
+            commands = [
+                BotCommand("Выбрать акции", "📊 Управление подписками на акции"),
+                BotCommand("signal", "🔍 Проверить текущие сигналы"),
+            ]
+            
+            await self.app.bot.set_my_commands(commands)
+            logger.info("📱 Меню команд установлено")
             
         except Exception as e:
             logger.warning(f"Не удалось установить меню команд: {e}")
