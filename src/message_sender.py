@@ -161,7 +161,6 @@ class MessageSender:
             candles_data = None
             
             if ticker_info and self.tinkoff_provider:
-                # Получаем исторические данные для GPT анализа
                 try:
                     candles = await self.tinkoff_provider.get_candles_for_ticker(
                         ticker_info['figi'], hours=120
@@ -190,13 +189,11 @@ class MessageSender:
                 'minus_di': signal.minus_di
             }
             
-            # ИСПРАВЛЕНИЕ: передаем symbol в GPT анализатор
             gpt_advice = await self.gpt_analyzer.analyze_signal(
                 signal_data, candles_data, is_manual_check=False, symbol=signal.symbol
             )
             
             if gpt_advice:
-                # ИСПРАВЛЕНИЕ: передаем symbol в форматтер
                 formatted_message = self.gpt_analyzer.format_advice_for_telegram(gpt_advice, signal.symbol)
                 
                 # Добавляем предупреждения
@@ -296,7 +293,7 @@ class MessageSender:
             except (TimedOut, NetworkError):
                 failed_chats.append(chat_id)
             except Exception as e:
-                logger.error(f"Неожиданная ошибка отправки {symbol} в {chat_id}: {e}")
+                logger.error(f"Ошибка отправки {symbol} в {chat_id}: {e}")
                 failed_chats.append(chat_id)
         
         # Деактивируем недоступные чаты
