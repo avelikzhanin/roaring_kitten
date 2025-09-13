@@ -39,12 +39,12 @@ class SignalProcessor:
                 logger.error(f"Тикер {symbol} не найден")
                 return None
             
-            # Получаем свечи (100 часов для стабильного ADX)
+            # Получаем свечи (100 часов)
             candles = await self.tinkoff_provider.get_candles_for_ticker(
-                ticker_info['figi'], hours=300
+                ticker_info['figi'], hours=100
             )
             
-            if len(candles) < 100:
+            if len(candles) < 30:  # Минимум для 100 часов
                 logger.warning(f"Недостаточно данных для {symbol}: {len(candles)} свечей")
                 return None
             
@@ -139,11 +139,11 @@ class SignalProcessor:
                 return f"❌ <b>Акция {symbol} не поддерживается</b>"
             
             candles = await asyncio.wait_for(
-                self.tinkoff_provider.get_candles_for_ticker(ticker_info['figi'], hours=300),
+                self.tinkoff_provider.get_candles_for_ticker(ticker_info['figi'], hours=100),
                 timeout=45
             )
             
-            if len(candles) < 100:
+            if len(candles) < 30:  # Минимум для 100 часов
                 return f"❌ <b>Недостаточно данных для анализа {symbol}</b>\nПолучено {len(candles)} свечей."
             
             df = self.tinkoff_provider.candles_to_dataframe(candles)
@@ -245,10 +245,10 @@ class SignalProcessor:
                 return None
                 
             candles = await self.tinkoff_provider.get_candles_for_ticker(
-                ticker_info['figi'], hours=300
+                ticker_info['figi'], hours=100
             )
             
-            if len(candles) < 100:
+            if len(candles) < 30:
                 return None
             
             df = self.tinkoff_provider.candles_to_dataframe(candles)
