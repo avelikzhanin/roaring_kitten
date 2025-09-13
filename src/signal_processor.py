@@ -39,7 +39,7 @@ class SignalProcessor:
                 logger.error(f"Тикер {symbol} не найден")
                 return None
             
-            # Получаем свечи (увеличенная история для стабильного ADX)
+            # Получаем свечи (100 часов для стабильного ADX)
             candles = await self.tinkoff_provider.get_candles_for_ticker(
                 ticker_info['figi'], hours=300
             )
