@@ -121,7 +121,6 @@ class TradingBot:
             
         except Exception as e:
             logger.warning(f"Не удалось установить меню команд: {e}")
-            # Не критично, продолжаем работу
     
     def _add_handlers(self):
         """Добавление обработчиков команд"""
