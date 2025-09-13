@@ -20,7 +20,7 @@ class TinkoffDataProvider:
         logger.warning("⚠️ Используется устаревший метод get_candles(). Используйте get_candles_for_ticker()")
         return await self.get_candles_for_ticker("BBG004730N88", hours)  # SBER FIGI
     
-    async def get_candles_for_ticker(self, figi: str, hours: int = 300) -> List[HistoricCandle]:
+    async def get_candles_for_ticker(self, figi: str, hours: int = 100) -> List[HistoricCandle]:
         """Получение свечных данных для конкретного тикера по FIGI"""
         max_retries = 3
         retry_delay = 5
