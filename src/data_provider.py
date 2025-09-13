@@ -15,7 +15,7 @@ class TinkoffDataProvider:
         self.token = token
         self._client = None
     
-    async def get_candles(self, hours: int = 300) -> List[HistoricCandle]:
+    async def get_candles(self, hours: int = 100) -> List[HistoricCandle]:
         """УСТАРЕВШИЙ: Получение свечных данных для SBER (для совместимости)"""
         logger.warning("⚠️ Используется устаревший метод get_candles(). Используйте get_candles_for_ticker()")
         return await self.get_candles_for_ticker("BBG004730N88", hours)  # SBER FIGI
@@ -63,7 +63,7 @@ class TinkoffDataProvider:
         
         return []
     
-    async def get_multiple_candles(self, tickers_figi: List[str], hours: int = 300) -> dict:
+    async def get_multiple_candles(self, tickers_figi: List[str], hours: int = 100) -> dict:
         """Получение свечных данных для нескольких тикеров одновременно"""
         results = {}
         
