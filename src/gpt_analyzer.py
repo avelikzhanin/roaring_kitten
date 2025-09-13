@@ -1,4 +1,4 @@
-# src/gpt_analyzer.py - РАСШИРЕННАЯ ВЕРСИЯ с поддержкой множественных акций
+# src/gpt_analyzer.py - ОЧИЩЕННАЯ ВЕРСИЯ без избыточных логов
 import logging
 import aiohttp
 import json
@@ -30,7 +30,7 @@ class GPTMarketAnalyzer:
         self.api_key = openai_api_key
         self.base_url = "https://api.openai.com/v1/chat/completions"
         
-        # Базовый системный промпт (с плейсхолдерами)
+        # Базовый системный промпт
         self.base_system_prompt = """Ты опытный технический аналитик российского рынка акций с 15-летним опытом работы с голубыми фишками.
 
 ТВОЯ ЗАДАЧА: Дать детальный профессиональный анализ {symbol} с конкретными уровнями и рекомендациями для ЗАРАБОТКА.
@@ -104,12 +104,12 @@ class GPTMarketAnalyzer:
 
     async def analyze_signal(self, signal_data: Dict, candles_data: Optional[List] = None, 
                            is_manual_check: bool = False, symbol: str = 'SBER') -> Optional[GPTAdvice]:
-        """Анализ торгового сигнала с помощью GPT с учетом конкретного тикера"""
+        """Анализ торгового сигнала с помощью GPT"""
         try:
             # Получаем правильный системный промпт для тикера
             system_prompt = self.get_system_prompt(symbol)
             
-            # Создаем промпт с учетом тикера
+            # Создаем промпт
             prompt = self._create_enhanced_prompt(signal_data, candles_data, is_manual_check, symbol)
             
             response = await self._call_openai_api(prompt, system_prompt)
@@ -138,29 +138,27 @@ class GPTMarketAnalyzer:
         
         current_price = closes[-1]
         
-        # Простой алгоритм поиска уровней
-        # Сопротивления - локальные максимумы
+        # Поиск уровней
         resistances = []
         for i in range(2, len(highs) - 2):
             if (highs[i] > highs[i-1] and highs[i] > highs[i-2] and 
                 highs[i] > highs[i+1] and highs[i] > highs[i+2]):
-                if highs[i] > current_price:  # Только выше текущей цены
+                if highs[i] > current_price:
                     resistances.append(highs[i])
         
-        # Поддержки - локальные минимумы  
         supports = []
         for i in range(2, len(lows) - 2):
             if (lows[i] < lows[i-1] and lows[i] < lows[i-2] and 
                 lows[i] < lows[i+1] and lows[i] < lows[i+2]):
-                if lows[i] < current_price:  # Только ниже текущей цены
+                if lows[i] < current_price:
                     supports.append(lows[i])
         
-        # Сортируем и берем ближайшие
         resistances.sort()
         supports.sort(reverse=True)
         
-        # Волатильность за период
-        price_changes = [abs(closes[i] - closes[i-1]) / closes[i-1] * 100 for i in range(1, len(closes))]
+        # Волатильность
+        price_changes = [abs(closes[i] - closes[i-1]) / closes[i-1] * 100 
+                        for i in range(1, len(closes))]
         avg_volatility = np.mean(price_changes) if price_changes else 2.0
         
         # Средний объем
@@ -171,7 +169,7 @@ class GPTMarketAnalyzer:
             'current_price': current_price,
             'nearest_resistance': resistances[0] if resistances else None,
             'nearest_support': supports[0] if supports else None,
-            'all_resistances': resistances[:3],  # Топ-3 ближайших
+            'all_resistances': resistances[:3],
             'all_supports': supports[:3],
             'avg_volatility': round(avg_volatility, 2),
             'volume_ratio': round(recent_volume / avg_volume, 2) if avg_volume > 0 else 1.0,
@@ -180,7 +178,7 @@ class GPTMarketAnalyzer:
     
     def _create_enhanced_prompt(self, signal_data: Dict, candles_data: Optional[List], 
                               is_manual_check: bool, symbol: str = 'SBER') -> str:
-        """Создание расширенного промпта с учетом тикера"""
+        """Создание промпта для GPT"""
         
         # Анализ уровней если есть данные свечей
         levels_analysis = {}
@@ -194,11 +192,8 @@ class GPTMarketAnalyzer:
 📈 АНАЛИЗ УРОВНЕЙ (последние 50 свечей):
 • Ближайшее сопротивление: {levels_analysis.get('nearest_resistance', 'не найдено')} ₽
 • Ближайшая поддержка: {levels_analysis.get('nearest_support', 'не найдено')} ₽
-• Все сопротивления: {levels_analysis.get('all_resistances', [])}
-• Все поддержки: {levels_analysis.get('all_supports', [])}
 • Средняя волатильность: {levels_analysis.get('avg_volatility', 0)}% в день
-• Соотношение объемов: {levels_analysis.get('volume_ratio', 1.0)} (текущий/средний)
-• Диапазон 5 дней: {levels_analysis.get('price_range_5d', 'нет данных')}"""
+• Соотношение объемов: {levels_analysis.get('volume_ratio', 1.0)} (текущий/средний)"""
         
         # Проверяем выполнены ли технические условия
         conditions_met = signal_data.get('conditions_met', True)
@@ -207,13 +202,10 @@ class GPTMarketAnalyzer:
         adx_value = signal_data['adx']
         if adx_value > 40:
             adx_strength = "очень сильный"
-            adx_risk = "возможен разворот"
         elif adx_value > 25:
             adx_strength = "сильный" 
-            adx_risk = "стабильный тренд"
         else:
             adx_strength = "СЛАБЫЙ"
-            adx_risk = "тренд не сформирован"
         
         di_difference = signal_data['plus_di'] - signal_data['minus_di']
         if di_difference > 15:
@@ -247,12 +239,12 @@ class GPTMarketAnalyzer:
             strategy_status = "❌ УСЛОВИЯ НЕ ВЫПОЛНЕНЫ"
             analysis_focus = "УКАЗАТЬ какие уровни/показатели ждать для входа (БЕЗ TP/SL)"
         
-        prompt = f"""ПОЛНЫЙ АНАЛИЗ РЫНОЧНОЙ СИТУАЦИИ {symbol}:
+        prompt = f"""АНАЛИЗ РЫНОЧНОЙ СИТУАЦИИ {symbol}:
 
 📊 ТЕХНИЧЕСКИЕ ДАННЫЕ:
 • Цена: {signal_data['price']:.2f} ₽
 • EMA20: {signal_data['ema20']:.2f} ₽ (цена {'выше' if price_above_ema_percent > 0 else 'ниже'} на {abs(price_above_ema_percent):.1f}%)
-• ADX: {adx_value:.1f} ({adx_strength} тренд, {adx_risk})
+• ADX: {adx_value:.1f} ({adx_strength} тренд)
 • +DI: {signal_data['plus_di']:.1f} vs -DI: {signal_data['minus_di']:.1f}
 • Преимущество DI: {di_difference:.1f} ({di_strength} доминация){candles_info}
 
@@ -261,15 +253,13 @@ class GPTMarketAnalyzer:
 • Тип проверки: {signal_type}
 • Статус стратегии: {strategy_status}
 
-🎯 ГЛАВНАЯ ЗАДАЧА: {analysis_focus}
-
-ВАЖНО: TP/SL указывай ТОЛЬКО если рекомендуешь BUY или WEAK_BUY!
+🎯 ЗАДАЧА: {analysis_focus}
 
 Ответь в JSON:
 {{
   "recommendation": "BUY/WEAK_BUY/WAIT/AVOID",
   "confidence": число_0_100,
-  "reasoning": "детальное объяснение с уровнями (до 600 символов)",
+  "reasoning": "объяснение с уровнями (до 600 символов)",
   "take_profit": "конкретная цена TP только для BUY/WEAK_BUY или null",
   "stop_loss": "конкретная цена SL только для BUY/WEAK_BUY или null", 
   "expected_levels": "что ждать для входа (только для WAIT/AVOID) или null",
@@ -280,28 +270,27 @@ class GPTMarketAnalyzer:
         return prompt
     
     async def _call_openai_api(self, prompt: str, system_prompt: str = None) -> Optional[str]:
-        """Вызов OpenAI API с кастомным системным промптом"""
+        """Вызов OpenAI API"""
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json"
         }
         
-        # Используем переданный системный промпт или базовый для SBER
         if system_prompt is None:
             system_prompt = self.get_system_prompt('SBER')
         
         payload = {
-            "model": "gpt-4o-mini",  # Быстрая модель
+            "model": "gpt-4o-mini",
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt}
             ],
-            "temperature": 0.1,  # Минимальная креативность
-            "max_tokens": 1000,   # Увеличили для полного анализа
+            "temperature": 0.1,
+            "max_tokens": 1000,
             "response_format": {"type": "json_object"}
         }
         
-        timeout = aiohttp.ClientTimeout(total=25)  # Увеличили таймаут
+        timeout = aiohttp.ClientTimeout(total=25)
         
         try:
             async with aiohttp.ClientSession(timeout=timeout) as session:
@@ -309,7 +298,7 @@ class GPTMarketAnalyzer:
                     if response.status == 200:
                         data = await response.json()
                         content = data['choices'][0]['message']['content']
-                        logger.info("✅ Получен расширенный ответ от GPT")
+                        logger.info("✅ GPT анализ получен")
                         return content
                     elif response.status == 429:
                         logger.warning("⚠️ Rate limit OpenAI API")
@@ -320,14 +309,14 @@ class GPTMarketAnalyzer:
                         return None
                         
         except asyncio.TimeoutError:
-            logger.warning("⏰ Таймаут запроса к OpenAI (25s)")
+            logger.warning("⏰ Таймаут запроса к OpenAI")
             return None
         except Exception as e:
-            logger.error(f"💥 Неожиданная ошибка OpenAI: {e}")
+            logger.error(f"💥 Ошибка OpenAI: {e}")
             return None
     
     def _parse_enhanced_advice(self, response: str) -> Optional[GPTAdvice]:
-        """Парсинг расширенного ответа GPT"""
+        """Парсинг ответа GPT"""
         try:
             data = json.loads(response.strip())
             
@@ -340,7 +329,6 @@ class GPTMarketAnalyzer:
             if not isinstance(confidence, (int, float)) or confidence < 0 or confidence > 100:
                 confidence = 50
             
-            # Увеличили лимит для reasoning до 600 символов
             reasoning = str(data.get('reasoning', 'Анализ недоступен'))[:600]
             risk_warning = str(data.get('risk_warning', ''))[:300]
             
@@ -371,14 +359,13 @@ class GPTMarketAnalyzer:
             
         except json.JSONDecodeError as e:
             logger.error(f"❌ Некорректный JSON от GPT: {e}")
-            logger.error(f"Ответ: {response[:500]}...")
             return None
         except Exception as e:
-            logger.error(f"💥 Ошибка парсинга GPT ответа: {e}")
+            logger.error(f"💥 Ошибка парсинга GPT: {e}")
             return None
     
     def format_advice_for_telegram(self, advice: GPTAdvice, symbol: str = 'SBER') -> str:
-        """Форматирование расширенного совета GPT для Telegram с указанием символа"""
+        """Форматирование совета GPT для Telegram"""
         
         # Эмодзи для рекомендаций
         rec_emoji = {
@@ -388,7 +375,7 @@ class GPTMarketAnalyzer:
             'AVOID': '⛔'
         }
         
-        # Оценка условий вместо процентов
+        # Оценка условий
         if advice.confidence >= 80:
             confidence_text = "отличные условия"
             confidence_emoji = '🟢'
@@ -399,7 +386,6 @@ class GPTMarketAnalyzer:
             confidence_text = "плохие условия"
             confidence_emoji = '🔴'
         
-        # ОБНОВЛЕННЫЙ заголовок с символом
         result = f"""
 🐱 <b>КОТЁНОК АНАЛИЗИРУЕТ {symbol}:</b>
 {rec_emoji.get(advice.recommendation, '❓')} <b>{advice.recommendation}</b> | {confidence_emoji} {confidence_text}
@@ -415,13 +401,10 @@ class GPTMarketAnalyzer:
         
         # Expected levels ТОЛЬКО для ожидания
         elif advice.recommendation in ['WAIT', 'AVOID'] and advice.expected_levels:
-            # Проверяем, является ли строка JSON-подобной
             if advice.expected_levels.strip().startswith('{') and advice.expected_levels.strip().endswith('}'):
                 try:
-                    # Пытаемся распарсить как JSON
                     levels_data = json.loads(advice.expected_levels)
                     
-                    # Форматируем красиво
                     levels_text = []
                     if 'breakout_level' in levels_data:
                         levels_text.append(f"пробой {levels_data['breakout_level']} ₽")
@@ -436,10 +419,8 @@ class GPTMarketAnalyzer:
                         result += f"\n📊 <b>Ждать:</b> {advice.expected_levels}"
                         
                 except (json.JSONDecodeError, KeyError):
-                    # Если не удалось распарсить, выводим как есть
                     result += f"\n📊 <b>Ждать:</b> {advice.expected_levels}"
             else:
-                # Обычная строка - выводим как есть
                 result += f"\n📊 <b>Ждать:</b> {advice.expected_levels}"
         
         return result
