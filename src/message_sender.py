@@ -163,7 +163,7 @@ class MessageSender:
             if ticker_info and self.tinkoff_provider:
                 try:
                     candles = await self.tinkoff_provider.get_candles_for_ticker(
-                        ticker_info['figi'], hours=120
+                        ticker_info['figi'], hours=100
                     )
                     df = self.tinkoff_provider.candles_to_dataframe(candles)
                     
