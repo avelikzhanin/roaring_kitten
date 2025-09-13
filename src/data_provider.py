@@ -9,31 +9,29 @@ from tinkoff.invest.utils import now
 logger = logging.getLogger(__name__)
 
 class TinkoffDataProvider:
-    """Класс для получения данных через Tinkoff Invest API с поддержкой множественных акций"""
+    """Класс для получения данных через Tinkoff Invest API"""
     
     def __init__(self, token: str):
         self.token = token
-        # Убираем фиксированный FIGI - теперь используем любые
         self._client = None
     
-    async def get_candles(self, hours: int = 100) -> List[HistoricCandle]:
+    async def get_candles(self, hours: int = 300) -> List[HistoricCandle]:
         """УСТАРЕВШИЙ: Получение свечных данных для SBER (для совместимости)"""
         logger.warning("⚠️ Используется устаревший метод get_candles(). Используйте get_candles_for_ticker()")
         return await self.get_candles_for_ticker("BBG004730N88", hours)  # SBER FIGI
     
-    async def get_candles_for_ticker(self, figi: str, hours: int = 100) -> List[HistoricCandle]:
+    async def get_candles_for_ticker(self, figi: str, hours: int = 300) -> List[HistoricCandle]:
         """Получение свечных данных для конкретного тикера по FIGI"""
         max_retries = 3
-        retry_delay = 5  # секунд
+        retry_delay = 5
         
         for attempt in range(max_retries):
             try:
-                # Используем синхронный Client вместо async
                 with Client(self.token) as client:
                     to_time = now()
                     from_time = to_time - timedelta(hours=hours)
                     
-                    logger.info(f"Запрос данных {figi} с {from_time} по {to_time}")
+                    logger.info(f"📊 Запрос {hours}ч данных {figi}")
                     
                     response = client.market_data.get_candles(
                         figi=figi,
@@ -43,21 +41,21 @@ class TinkoffDataProvider:
                     )
                     
                     if response.candles:
-                        logger.info(f"Получено {len(response.candles)} свечей для {figi}")
+                        logger.info(f"✅ Получено {len(response.candles)} свечей")
                         return response.candles
                     else:
-                        logger.warning(f"Получен пустой ответ от API для {figi}")
+                        logger.warning(f"Пустой ответ от API для {figi}")
                         return []
                         
             except RequestError as e:
                 logger.error(f"Ошибка API Tinkoff для {figi} (попытка {attempt + 1}): {e}")
                 if attempt < max_retries - 1:
                     await asyncio.sleep(retry_delay)
-                    retry_delay *= 2  # Exponential backoff
+                    retry_delay *= 2
                 else:
                     raise
             except Exception as e:
-                logger.error(f"Неожиданная ошибка при получении данных {figi}: {e}")
+                logger.error(f"Ошибка получения данных {figi}: {e}")
                 if attempt < max_retries - 1:
                     await asyncio.sleep(retry_delay)
                 else:
@@ -65,16 +63,15 @@ class TinkoffDataProvider:
         
         return []
     
-    async def get_multiple_candles(self, tickers_figi: List[str], hours: int = 100) -> dict:
+    async def get_multiple_candles(self, tickers_figi: List[str], hours: int = 300) -> dict:
         """Получение свечных данных для нескольких тикеров одновременно"""
         results = {}
         
-        # Получаем данные последовательно, чтобы не перегружать API
         for figi in tickers_figi:
             try:
                 candles = await self.get_candles_for_ticker(figi, hours)
                 results[figi] = candles
-                await asyncio.sleep(0.5)  # Небольшая пауза между запросами
+                await asyncio.sleep(0.5)  # Пауза между запросами
             except Exception as e:
                 logger.error(f"Ошибка получения данных для {figi}: {e}")
                 results[figi] = []
@@ -108,7 +105,7 @@ class TinkoffDataProvider:
         df['timestamp'] = pd.to_datetime(df['timestamp'], utc=True)
         df = df.sort_values('timestamp').reset_index(drop=True)
         
-        # Удаляем возможные дубликаты
+        # Удаляем дубликаты
         df = df.drop_duplicates(subset=['timestamp'], keep='last')
         
         return df
@@ -123,7 +120,7 @@ class TinkoffDataProvider:
                     return float(df.iloc[-1]['close'])
             return None
         except Exception as e:
-            logger.error(f"Ошибка получения текущей цены для {figi}: {e}")
+            logger.error(f"Ошибка получения цены для {figi}: {e}")
             return None
     
     async def get_ticker_info(self, figi: str) -> Optional[dict]:
@@ -160,8 +157,6 @@ class TinkoffDataProvider:
         except (AttributeError, TypeError):
             return 0.0
     
-    # === Методы для работы с несколькими тикерами ===
-    
     async def validate_figis(self, figis: List[str]) -> dict:
         """Проверка валидности FIGI кодов"""
         results = {}
@@ -179,7 +174,6 @@ class TinkoffDataProvider:
         """Получение статуса рынка"""
         try:
             with Client(self.token) as client:
-                # Получаем расписание торгов для московской биржи
                 response = client.instruments.trading_schedules(
                     exchange="MOEX",
                     from_=now() - timedelta(days=1),
