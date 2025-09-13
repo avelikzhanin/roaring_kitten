@@ -51,7 +51,7 @@ class UserInterface:
                 "/portfolio - управление подписками",
                 parse_mode='HTML'
             )
-            logger.info(f"👤 Подписчик: {chat_id} (@{user.username if user else 'unknown'})")
+            logger.info(f"👤 Подписчик: {chat_id}")
         else:
             await update.message.reply_text(
                 "❌ <b>Ошибка подключения к БД</b>\n\nПопробуйте позже.",
@@ -138,7 +138,6 @@ class UserInterface:
                         try:
                             gpt_advice = await self._get_gpt_analysis_for_signal(signal)
                             if gpt_advice:
-                                # ИСПРАВЛЕНИЕ: передаем symbol в форматтер
                                 message += f"\n{self.gpt_analyzer.format_advice_for_telegram(gpt_advice, signal.symbol)}"
                             else:
                                 message += "\n\n🤖 <i>GPT анализ недоступен</i>"
@@ -224,7 +223,6 @@ class UserInterface:
                     try:
                         gpt_advice = await self._get_gpt_analysis_for_signal(signal)
                         if gpt_advice:
-                            # ИСПРАВЛЕНИЕ: передаем symbol в форматтер
                             message += f"\n{self.gpt_analyzer.format_advice_for_telegram(gpt_advice, signal.symbol)}"
                     except:
                         pass
@@ -255,7 +253,6 @@ class UserInterface:
             'minus_di': signal.minus_di
         }
         
-        # ИСПРАВЛЕНИЕ: передаем symbol в GPT анализатор
         return await self.gpt_analyzer.analyze_signal(
             signal_data, None, is_manual_check=True, symbol=signal.symbol
         )
