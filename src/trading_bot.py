@@ -191,7 +191,7 @@ class TradingBot:
         try:
             candles = await self.tinkoff_provider.get_candles(hours=100)
             
-            if len(candles) < 50:
+            if len(candles) < 30:  # Минимум для 100 часов
                 return "❌ <b>Недостаточно данных для анализа</b>\n\nПопробуйте позже."
             
             df = self.tinkoff_provider.candles_to_dataframe(candles)
@@ -269,10 +269,10 @@ class TradingBot:
     async def analyze_market(self) -> Optional[TradingSignal]:
         """Анализ рынка и генерация сигнала"""
         try:
-            # Получаем данные за последние 120 часов для расчета индикаторов
+            # Получаем данные за последние 100 часов для расчета индикаторов
             candles = await self.tinkoff_provider.get_candles(hours=100)
             
-            if len(candles) < 50:  # Минимум данных для расчетов
+            if len(candles) < 30:  # Минимум данных для 100 часов
                 logger.warning("Недостаточно данных для анализа")
                 return None
             
@@ -369,7 +369,7 @@ class TradingBot:
         try:
             candles = await self.tinkoff_provider.get_candles(hours=100)
             
-            if len(candles) < 50:
+            if len(candles) < 30:
                 return None
             
             df = self.tinkoff_provider.candles_to_dataframe(candles)
@@ -404,7 +404,7 @@ class TradingBot:
     async def get_current_price(self) -> float:
         """Получение текущей цены"""
         try:
-            candles = await self.tinkoff_provider.get_candles(hours=100)
+            candles = await self.tinkoff_provider.get_candles(hours=2)
             if candles:
                 df = self.tinkoff_provider.candles_to_dataframe(candles)
                 return df.iloc[-1]['close'] if not df.empty else 0
