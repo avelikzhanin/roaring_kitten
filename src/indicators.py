@@ -6,7 +6,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 class TechnicalIndicators:
-    """Окончательно исправленный класс индикаторов с максимально точным ADX"""
+    """Точная копия индикатора ADX из TradingView"""
     
     @staticmethod
     def calculate_ema(prices: List[float], period: int) -> List[float]:
@@ -19,11 +19,9 @@ class TechnicalIndicators:
             result = [np.nan] * len(prices)
             multiplier = 2.0 / (period + 1)
             
-            # Первое значение = SMA
             sma = np.mean(prices[:period])
             result[period - 1] = sma
             
-            # Остальные значения
             for i in range(period, len(prices)):
                 ema = (prices[i] * multiplier) + (result[i - 1] * (1 - multiplier))
                 result[i] = ema
@@ -40,12 +38,11 @@ class TechnicalIndicators:
     @staticmethod
     def calculate_adx(highs: List[float], lows: List[float], closes: List[float], period: int = 14) -> Dict:
         """
-        ФИНАЛЬНЫЙ точный расчет ADX с коррекциями для соответствия эталону
-        Эталон: ADX=66, +DI=7, -DI=33
+        ТОЧНАЯ КОПИЯ TradingView "ADX and DI for v4"
         """
         
-        if len(highs) < period * 3:
-            logger.warning(f"⚠️ Недостаточно данных для ADX: {len(highs)} < {period * 3}")
+        if len(highs) < period * 2:
+            logger.warning(f"⚠️ Недостаточно данных для ADX: {len(highs)} < {period * 2}")
             return {
                 'adx': [np.nan] * len(highs),
                 'plus_di': [np.nan] * len(highs),
@@ -54,105 +51,104 @@ class TechnicalIndicators:
         
         try:
             n = len(highs)
+            logger.info(f"📊 TradingView ADX расчет для {n} свечей, период {period}")
             
-            # ШАГ 1: True Range (стандартная формула)
-            tr = [0.0] * n
+            # Инициализация массивов
+            true_range = [0.0] * n
+            dm_plus = [0.0] * n
+            dm_minus = [0.0] * n
             
+            # ШАГ 1: True Range (точно как в TradingView)
+            for i in range(n):
+                if i == 0:
+                    # Первая свеча
+                    true_range[i] = highs[i] - lows[i]
+                else:
+                    # TradingView формула
+                    tr1 = highs[i] - lows[i]
+                    tr2 = abs(highs[i] - closes[i-1])
+                    tr3 = abs(lows[i] - closes[i-1])
+                    true_range[i] = max(tr1, max(tr2, tr3))
+            
+            # ШАГ 2: Directional Movement (точно как в Pine Script)
+            for i in range(n):
+                if i == 0:
+                    dm_plus[i] = 0.0
+                    dm_minus[i] = 0.0
+                else:
+                    # DirectionalMovementPlus = high-nz(high[1]) > nz(low[1])-low ? max(high-nz(high[1]), 0): 0
+                    high_diff = highs[i] - highs[i-1]
+                    low_diff = lows[i-1] - lows[i]
+                    
+                    if high_diff > low_diff:
+                        dm_plus[i] = max(high_diff, 0.0)
+                    else:
+                        dm_plus[i] = 0.0
+                    
+                    # DirectionalMovementMinus = nz(low[1])-low > high-nz(high[1]) ? max(nz(low[1])-low, 0): 0
+                    if low_diff > high_diff:
+                        dm_minus[i] = max(low_diff, 0.0)
+                    else:
+                        dm_minus[i] = 0.0
+            
+            # ШАГ 3: TradingView сглаживание (НЕ Wilder!)
+            # SmoothedTrueRange := nz(SmoothedTrueRange[1]) - (nz(SmoothedTrueRange[1])/len) + TrueRange
+            
+            smoothed_tr = [0.0] * n
+            smoothed_dm_plus = [0.0] * n
+            smoothed_dm_minus = [0.0] * n
+            
+            # Инициализация первых значений
+            smoothed_tr[0] = true_range[0]
+            smoothed_dm_plus[0] = dm_plus[0]
+            smoothed_dm_minus[0] = dm_minus[0]
+            
+            # TradingView сглаживание: prev - prev/len + current
             for i in range(1, n):
-                high_low = highs[i] - lows[i]
-                high_close_prev = abs(highs[i] - closes[i-1])
-                low_close_prev = abs(lows[i] - closes[i-1])
-                tr[i] = max(high_low, high_close_prev, low_close_prev)
+                smoothed_tr[i] = smoothed_tr[i-1] - (smoothed_tr[i-1] / period) + true_range[i]
+                smoothed_dm_plus[i] = smoothed_dm_plus[i-1] - (smoothed_dm_plus[i-1] / period) + dm_plus[i]
+                smoothed_dm_minus[i] = smoothed_dm_minus[i-1] - (smoothed_dm_minus[i-1] / period) + dm_minus[i]
             
-            # ШАГ 2: Directional Movement (ИСПРАВЛЕННЫЙ)
-            plus_dm = [0.0] * n
-            minus_dm = [0.0] * n
+            # ШАГ 4: DI расчет
+            di_plus = [0.0] * n
+            di_minus = [0.0] * n
             
-            for i in range(1, n):
-                high_diff = highs[i] - highs[i-1]
-                low_diff = lows[i-1] - lows[i]  # Важно: именно в таком порядке
-                
-                # Классическая логика Wilder
-                if high_diff > low_diff and high_diff > 0:
-                    plus_dm[i] = high_diff
+            for i in range(n):
+                if smoothed_tr[i] != 0:
+                    di_plus[i] = (smoothed_dm_plus[i] / smoothed_tr[i]) * 100.0
+                    di_minus[i] = (smoothed_dm_minus[i] / smoothed_tr[i]) * 100.0
                 else:
-                    plus_dm[i] = 0.0
-                
-                if low_diff > high_diff and low_diff > 0:
-                    minus_dm[i] = low_diff
-                else:
-                    minus_dm[i] = 0.0
+                    di_plus[i] = 0.0
+                    di_minus[i] = 0.0
             
-            # ШАГ 3: Точное сглаживание Wilder (модифицированное)
-            def wilder_smooth_corrected(values, period):
-                result = [0.0] * len(values)
-                
-                # Первое значение = простая сумма первых period ненулевых значений
-                first_sum = 0
-                count = 0
-                for i in range(1, min(period * 2, len(values))):  # Увеличенное окно поиска
-                    if values[i] > 0:
-                        first_sum += values[i]
-                        count += 1
-                        if count >= period:
-                            break
-                
-                if count > 0:
-                    result[period] = first_sum
-                else:
-                    result[period] = 0
-                
-                # Сглаживание Wilder с коррекцией
-                smoothing_factor = 1.0 / period
-                
-                for i in range(period + 1, len(values)):
-                    # Формула: new = old * (1 - 1/n) + current * (1/n)
-                    result[i] = result[i-1] * (1 - smoothing_factor) + values[i] * smoothing_factor
-                
-                return result
-            
-            # Применяем исправленное сглаживание
-            atr_smooth = wilder_smooth_corrected(tr, period)
-            plus_dm_smooth = wilder_smooth_corrected(plus_dm, period)
-            minus_dm_smooth = wilder_smooth_corrected(minus_dm, period)
-            
-            # ШАГ 4: Расчет +DI и -DI с защитой от деления на ноль
-            plus_di = [0.0] * n
-            minus_di = [0.0] * n
-            
-            for i in range(period, n):
-                if atr_smooth[i] > 0.001:  # Защита от деления на ноль
-                    plus_di[i] = 100.0 * plus_dm_smooth[i] / atr_smooth[i]
-                    minus_di[i] = 100.0 * minus_dm_smooth[i] / atr_smooth[i]
-                else:
-                    plus_di[i] = 0.0
-                    minus_di[i] = 0.0
-            
-            # ШАГ 5: Расчет DX
+            # ШАГ 5: DX расчет
             dx = [0.0] * n
             
-            for i in range(period, n):
-                di_sum = plus_di[i] + minus_di[i]
-                if di_sum > 0.1:  # Защита от деления на малые числа
-                    dx[i] = 100.0 * abs(plus_di[i] - minus_di[i]) / di_sum
+            for i in range(n):
+                di_sum = di_plus[i] + di_minus[i]
+                if di_sum != 0:
+                    dx[i] = abs(di_plus[i] - di_minus[i]) / di_sum * 100.0
                 else:
                     dx[i] = 0.0
             
-            # ШАГ 6: ADX = сглаженный DX (двойное сглаживание)
-            adx_smooth = wilder_smooth_corrected(dx, period)
+            # ШАГ 6: ADX = SMA(DX, period) - ВАЖНО! Не Wilder, а простая SMA!
+            adx = [np.nan] * n
             
-            # Финальная обработка результатов
+            for i in range(period - 1, n):
+                # Простая скользящая средняя
+                window_sum = sum(dx[i - period + 1:i + 1])
+                adx[i] = window_sum / period
+            
+            # Преобразуем в правильный формат с NaN для начальных значений
             adx_result = [np.nan] * n
             plus_di_result = [np.nan] * n
             minus_di_result = [np.nan] * n
             
-            # ADX начинается с двойного периода
-            start_idx = period * 2
-            
-            for i in range(start_idx, n):
-                adx_result[i] = adx_smooth[i] if adx_smooth[i] > 0 else 0.0
-                plus_di_result[i] = plus_di[i]
-                minus_di_result[i] = minus_di[i]
+            # Заполняем значения начиная с period-1
+            for i in range(period - 1, n):
+                adx_result[i] = adx[i]
+                plus_di_result[i] = di_plus[i]
+                minus_di_result[i] = di_minus[i]
             
             result = {
                 'adx': adx_result,
@@ -160,35 +156,46 @@ class TechnicalIndicators:
                 'minus_di': minus_di_result
             }
             
-            # Детальное логирование для анализа
+            # Логирование результата
             current_adx = result['adx'][-1] if not pd.isna(result['adx'][-1]) else None
             current_plus_di = result['plus_di'][-1] if not pd.isna(result['plus_di'][-1]) else None
             current_minus_di = result['minus_di'][-1] if not pd.isna(result['minus_di'][-1]) else None
             
-            if current_adx is not None and current_plus_di is not None and current_minus_di is not None:
-                logger.info(f"📊 ADX: {current_adx:.1f} | +DI: {current_plus_di:.1f} | -DI: {current_minus_di:.1f}")
+            logger.info(f"📊 TradingView ADX:")
+            logger.info(f"   ADX: {current_adx:.1f}" if current_adx else "   ADX: NaN")
+            logger.info(f"   +DI: {current_plus_di:.1f}" if current_plus_di else "   +DI: NaN")
+            logger.info(f"   -DI: {current_minus_di:.1f}" if current_minus_di else "   -DI: NaN")
+            
+            if current_adx and current_plus_di and current_minus_di:
+                # Сравнение с эталоном
+                expected_adx = 61.14
+                expected_plus_di = 15.48
+                expected_minus_di = 29.62
                 
-                # Сравнение с эталоном для отладки
-                adx_diff = abs(current_adx - 66) if current_adx else 999
-                plus_di_diff = abs(current_plus_di - 7) if current_plus_di else 999
-                minus_di_diff = abs(current_minus_di - 33) if current_minus_di else 999
+                adx_diff = abs(current_adx - expected_adx)
+                plus_di_diff = abs(current_plus_di - expected_plus_di)
+                minus_di_diff = abs(current_minus_di - expected_minus_di)
                 total_diff = adx_diff + plus_di_diff + minus_di_diff
                 
-                logger.info(f"🎯 Отклонение от эталона: {total_diff:.1f} (ADX:{adx_diff:.1f} +DI:{plus_di_diff:.1f} -DI:{minus_di_diff:.1f})")
+                logger.info(f"🎯 Сравнение с эталоном:")
+                logger.info(f"   ADX: {current_adx:.1f} vs {expected_adx} (отклонение: {adx_diff:.1f})")
+                logger.info(f"   +DI: {current_plus_di:.1f} vs {expected_plus_di} (отклонение: {plus_di_diff:.1f})")
+                logger.info(f"   -DI: {current_minus_di:.1f} vs {expected_minus_di} (отклонение: {minus_di_diff:.1f})")
+                logger.info(f"   Общее отклонение: {total_diff:.1f}")
                 
-                if total_diff < 20:
-                    logger.info("✅ Хорошая точность ADX")
+                if total_diff < 10:
+                    logger.info("🎉 ОТЛИЧНАЯ ТОЧНОСТЬ!")
+                elif total_diff < 20:
+                    logger.info("✅ ХОРОШАЯ ТОЧНОСТЬ")
                 elif total_diff < 40:
-                    logger.info("⚠️ Средняя точность ADX")
+                    logger.info("⚠️ СРЕДНЯЯ ТОЧНОСТЬ")
                 else:
-                    logger.info("❌ Низкая точность ADX")
-            else:
-                logger.warning(f"⚠️ Проблемы с расчетом: ADX={current_adx} +DI={current_plus_di} -DI={current_minus_di}")
+                    logger.info("❌ НИЗКАЯ ТОЧНОСТЬ - возможно проблема с данными")
             
             return result
             
         except Exception as e:
-            logger.error(f"❌ Ошибка расчета ADX: {e}")
+            logger.error(f"❌ Ошибка расчета TradingView ADX: {e}")
             import traceback
             traceback.print_exc()
             return {
@@ -199,64 +206,33 @@ class TechnicalIndicators:
     
     @staticmethod
     def validate_data(highs: List[float], lows: List[float], closes: List[float]) -> bool:
-        """Улучшенная валидация данных"""
+        """Валидация данных"""
         if not (len(highs) == len(lows) == len(closes)):
             logger.error(f"❌ Различная длина массивов: H:{len(highs)} L:{len(lows)} C:{len(closes)}")
             return False
         
-        if len(highs) < 50:
-            logger.warning(f"⚠️ Мало данных: {len(highs)} < 50")
+        if len(highs) < 30:
+            logger.warning(f"⚠️ Мало данных: {len(highs)} < 30")
         
-        # Подсчет проблемных свечей
         invalid_count = 0
-        zero_range_count = 0
-        
         for i in range(len(highs)):
             h, l, c = highs[i], lows[i], closes[i]
-            
-            # Проверка логики цен
             if not (l <= c <= h and l <= h and l > 0):
                 invalid_count += 1
                 if invalid_count <= 3:
-                    logger.warning(f"⚠️ [{i}] Неверная логика: H:{h:.2f} L:{l:.2f} C:{c:.2f}")
-            
-            # Проверка нулевого диапазона
-            if abs(h - l) < 0.001:
-                zero_range_count += 1
+                    logger.warning(f"⚠️ [{i}] H:{h:.2f} L:{l:.2f} C:{c:.2f}")
         
         valid_ratio = (len(highs) - invalid_count) / len(highs)
-        
-        logger.info(f"📊 Валидация данных:")
-        logger.info(f"   Всего свечей: {len(highs)}")
-        logger.info(f"   Неверная логика: {invalid_count}")
-        logger.info(f"   Нулевой диапазон: {zero_range_count}")
-        logger.info(f"   Валидность: {valid_ratio:.1%}")
+        logger.info(f"📊 Валидность: {len(highs)} свечей, {invalid_count} ошибок ({valid_ratio:.1%})")
         
         return valid_ratio >= 0.8
     
     @staticmethod
     def debug_data(highs: List[float], lows: List[float], closes: List[float], count: int = 5):
-        """Расширенная отладка данных"""
-        logger.info(f"🔍 ОТЛАДКА ПОСЛЕДНИХ {count} СВЕЧЕЙ:")
+        """Отладка данных"""
+        logger.info(f"🔍 ПОСЛЕДНИЕ {count} СВЕЧЕЙ:")
         start_idx = max(0, len(closes) - count)
         
         for i in range(start_idx, len(closes)):
             h, l, c = highs[i], lows[i], closes[i]
-            prev_c = closes[i-1] if i > 0 else c
-            
-            # Компоненты True Range
-            tr1 = h - l
-            tr2 = abs(h - prev_c)
-            tr3 = abs(l - prev_c)
-            tr = max(tr1, tr2, tr3)
-            
-            # Directional Movement
-            if i > 0:
-                high_diff = h - highs[i-1]
-                low_diff = lows[i-1] - l
-                plus_dm = max(high_diff, 0) if high_diff > low_diff and high_diff > 0 else 0
-                minus_dm = max(low_diff, 0) if low_diff > high_diff and low_diff > 0 else 0
-            else:
-                plus_dm = minus_dm = 0
-            
-            logger.info(f"🔍 [{i:2d}] H:{h:7.2f} L:{l:7.2f} C:{c:7.2f} TR:{tr:5.2f} +DM:{plus_dm:5.2f} -DM:{minus_dm:5.2f}")
+            logger.info(f"🔍 [{i:2d}] H:{h:7.2f} L:{l:7.2f} C:{c:7.2f}")
