@@ -133,6 +133,11 @@ class SignalProcessor:
                         timestamp=df.iloc[-1]['timestamp'],
                         price=market_data['current_price'],
                         ema20=market_data['ema20'],
+                        # Фиктивные значения для совместимости с БД
+                        adx=30.0,
+                        plus_di=35.0,
+                        minus_di=20.0,
+                        # GPT данные
                         gpt_recommendation=gpt_advice.recommendation,
                         gpt_confidence=gpt_advice.confidence
                     )
@@ -150,7 +155,11 @@ class SignalProcessor:
                     symbol=symbol,
                     timestamp=df.iloc[-1]['timestamp'],
                     price=market_data['current_price'],
-                    ema20=market_data['ema20']
+                    ema20=market_data['ema20'],
+                    # Фиктивные значения для совместимости
+                    adx=30.0,
+                    plus_di=35.0,
+                    minus_di=20.0
                 )
                 return signal
             
