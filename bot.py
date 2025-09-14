@@ -65,7 +65,7 @@ class MarketTimeChecker:
         return main_session or evening_session
 
 class TradingBot:
-    """Основной класс торгового бота"""
+    """Основной класс торгового бота с гибридной стратегией"""
     
     def __init__(self, telegram_token: str, tinkoff_token: str, database_url: str, openai_token: Optional[str] = None):
         self.telegram_token = telegram_token
@@ -86,34 +86,53 @@ class TradingBot:
         self.is_running = False
         self._signal_tasks = {}
         
-        logger.info(f"🤖 Бот инициализирован (GPT: {'✅' if self.gpt_analyzer else '❌'})")
+        strategy_info = "🤖 GPT + 📊 EMA20" if self.gpt_analyzer else "📊 Только EMA20"
+        logger.info(f"🤖 Бот инициализирован (Стратегия: {strategy_info})")
         
     async def start(self):
-        """Запуск бота"""
+        """Запуск бота с проверкой гибридной стратегии"""
         try:
             # 1. Инициализируем БД
             logger.info("🗄️ Инициализация БД...")
             await self.db.initialize()
             
-            # 2. Создаем Telegram приложение
+            # 2. НОВАЯ ПРОВЕРКА: Тестируем гибридную стратегию
+            logger.info("🧪 Проверка гибридной стратегии...")
+            try:
+                from src.indicators import TechnicalIndicators
+                
+                # Быстрый тест индикаторов
+                test_prices = [100, 101, 102, 103, 104]
+                ema = TechnicalIndicators.calculate_ema(test_prices, 3)
+                adx_compat = TechnicalIndicators.calculate_adx(test_prices, test_prices, test_prices)
+                
+                logger.info(f"✅ EMA работает: {ema[-1]:.2f}")
+                logger.info(f"✅ ADX совместимость: {adx_compat['adx'][-1]}")
+                logger.info("🎉 Гибридная стратегия готова к работе!")
+                
+            except Exception as e:
+                logger.error(f"❌ Ошибка проверки гибридной стратегии: {e}")
+                logger.error("🚨 Запуск может быть нестабильным!")
+            
+            # 3. Создаем Telegram приложение
             self.app = Application.builder().token(self.telegram_token).build()
             
-            # 3. Передаем app в модули
+            # 4. Передаем app в модули
             self.message_sender.set_app(self.app)
             self.user_interface.set_app(self.app)
             
-            # 4. Добавляем обработчики
+            # 5. Добавляем обработчики
             self._add_handlers()
             
-            # 5. Запускаем мониторинг
+            # 6. Запускаем мониторинг
             self.is_running = True
             await self._start_monitoring()
             
-            # 6. Запускаем Telegram polling
+            # 7. Запускаем Telegram polling
             await self.app.initialize()
             await self.app.start()
             
-            # 7. Устанавливаем меню команд
+            # 8. Устанавливаем меню команд
             await self._setup_bot_menu()
             
             await self.app.bot.delete_webhook(drop_pending_updates=True)
@@ -186,8 +205,8 @@ class TradingBot:
         logger.info(f"📊 Мониторинг запущен для {len(self._signal_tasks)} акций")
     
     async def _monitor_ticker(self, symbol: str):
-        """Мониторинг одного тикера"""
-        logger.info(f"🔄 Мониторинг {symbol} запущен")
+        """Мониторинг одного тикера с гибридной стратегией"""
+        logger.info(f"🔄 Мониторинг {symbol} запущен (гибридная стратегия)")
         
         while self.is_running:
             try:
@@ -197,16 +216,22 @@ class TradingBot:
                     await asyncio.sleep(1200)  # 20 минут
                     continue
                 
-                # Анализируем рынок в торговое время
+                # === НОВАЯ ЛОГИКА ГИБРИДНОЙ СТРАТЕГИИ ===
+                
+                # Анализируем рынок с помощью нового процессора
                 signal = await self.signal_processor.analyze_market(symbol)
+                
+                # Проверяем пик тренда (через GPT или волатильность)
                 peak_signal = await self.signal_processor.check_peak_trend(symbol)
+                
+                # Получаем количество активных позиций
                 active_positions = await self.db.get_active_positions_count(symbol)
                 
-                # Логика отправки сигналов
+                # Логика отправки сигналов (БЕЗ ИЗМЕНЕНИЙ)
                 if signal and active_positions == 0:
                     # Новый сигнал покупки
                     await self.message_sender.send_buy_signal(signal)
-                    logger.info(f"📈 Сигнал покупки {symbol}: {signal.price:.2f}")
+                    logger.info(f"📈 Сигнал покупки {symbol}: {signal.price:.2f} (GPT: {getattr(signal, 'gpt_recommendation', 'N/A')})")
                 
                 elif peak_signal and active_positions > 0:
                     # Пик тренда
@@ -218,6 +243,13 @@ class TradingBot:
                     current_price = await self.signal_processor.get_current_price(symbol)
                     await self.message_sender.send_cancel_signal(symbol, current_price)
                     logger.info(f"❌ Отмена сигнала {symbol}")
+                
+                else:
+                    # Логируем состояние для отладки
+                    if signal:
+                        logger.info(f"✅ Сигнал {symbol} остается актуальным")
+                    else:
+                        logger.info(f"⏳ Ожидаем сигнал {symbol}...")
                 
                 # Всегда ждем 20 минут
                 await asyncio.sleep(1200)  # 20 минут
@@ -231,8 +263,9 @@ class TradingBot:
 
 
 async def main():
-    """Главная функция"""
+    """Главная функция с информацией о гибридной стратегии"""
     logger.info("🚀 Запуск котёнка...")
+    logger.info("⚡ ГИБРИДНАЯ СТРАТЕГИЯ: Базовый фильтр + GPT анализ")
     
     # Получаем переменные окружения
     telegram_token = os.getenv("TELEGRAM_TOKEN")
@@ -251,7 +284,11 @@ async def main():
         logger.error("❌ DATABASE_URL не найден")
         return
     
+    # НОВОЕ ЛОГИРОВАНИЕ
+    strategy_info = "🤖 GPT + 📊 EMA20" if openai_token else "📊 Только EMA20"
     logger.info(f"🔑 Токены: TG✅ Tinkoff✅ DB✅ GPT{'✅' if openai_token else '❌'}")
+    logger.info(f"⚡ Стратегия: {strategy_info}")
+    logger.info("🎯 Базовый фильтр: цена > EMA20 + торговое время")
     
     # Проверяем торговое время при запуске
     market_checker = MarketTimeChecker()
@@ -279,7 +316,8 @@ async def main():
 
 
 if __name__ == "__main__":
-    logger.info("🐱 РЕВУЩИЙ КОТЁНОК - МУЛЬТИАКЦИИ")
+    logger.info("🐱 РЕВУЩИЙ КОТЁНОК - ГИБРИДНАЯ СТРАТЕГИЯ")
+    logger.info("📊 EMA20 + 🤖 GPT + ⚡ Упрощённые индикаторы")
     
     try:
         asyncio.run(main())
