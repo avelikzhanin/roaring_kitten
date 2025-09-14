@@ -3,177 +3,230 @@ import pandas as pd
 from typing import List, Dict
 import logging
 
-# Импортируем TA-Lib только для EMA
-try:
-    import talib
-    logger = logging.getLogger(__name__)
-    logger.info("✅ TA-Lib загружен")
-except ImportError as e:
-    logger = logging.getLogger(__name__)
-    logger.error(f"❌ TA-Lib не установлен: {e}")
-    raise ImportError("TA-Lib обязателен для работы бота")
+logger = logging.getLogger(__name__)
 
 class TechnicalIndicators:
-    """Минимальный класс индикаторов - только EMA и TradingView совместимый ADX"""
+    """Класс индикаторов для Railway - только ручной расчет, без TA-Lib"""
     
     @staticmethod
     def calculate_ema(prices: List[float], period: int) -> List[float]:
-        """Расчет EMA через TA-Lib"""
+        """Ручной расчет EMA (для Railway без TA-Lib)"""
         if len(prices) < period:
-            logger.warning(f"Недостаточно данных для EMA{period}")
+            logger.warning(f"⚠️ Недостаточно данных для EMA{period}: {len(prices)} < {period}")
             return [np.nan] * len(prices)
         
         try:
-            prices_array = np.array(prices, dtype=float)
-            ema = talib.EMA(prices_array, timeperiod=period)
-            result = ema.tolist()
+            result = [np.nan] * len(prices)
             
-            current_ema = result[-1] if not pd.isna(result[-1]) else np.nan
-            logger.info(f"📈 EMA{period}: {current_ema:.2f}")
+            # Коэффициент сглаживания
+            multiplier = 2.0 / (period + 1)
+            
+            # Первое значение EMA = SMA
+            sma = np.mean(prices[:period])
+            result[period - 1] = sma
+            
+            # Рассчитываем остальные значения
+            for i in range(period, len(prices)):
+                ema = (prices[i] * multiplier) + (result[i - 1] * (1 - multiplier))
+                result[i] = ema
+            
+            current_ema = result[-1] if not pd.isna(result[-1]) else None
+            logger.info(f"📈 EMA{period}: {current_ema:.2f}" if current_ema else f"📈 EMA{period}: NaN")
             
             return result
             
         except Exception as e:
-            logger.error(f"Ошибка расчета EMA{period}: {e}")
-            raise RuntimeError(f"Не удалось рассчитать EMA{period}: {e}")
+            logger.error(f"❌ Ошибка расчета EMA{period}: {e}")
+            return [np.nan] * len(prices)
     
     @staticmethod
-    def _wilder_smoothing(values: List[float], period: int) -> List[float]:
-        """Wilder's smoothing для ADX - точно как в TradingView Pine Script"""
-        result = [np.nan] * len(values)
-        
-        # Находим первое валидное значение
-        first_valid_idx = None
-        for i, val in enumerate(values):
-            if not pd.isna(val):
-                first_valid_idx = i
-                break
-        
-        if first_valid_idx is None or first_valid_idx + period > len(values):
-            return result
-        
-        # Инициализация
-        smoothed = values[first_valid_idx] if not pd.isna(values[first_valid_idx]) else 0.0
-        result[first_valid_idx] = smoothed
-        
-        # Wilder's smoothing: prev - (prev/len) + current
-        for i in range(first_valid_idx + 1, len(values)):
-            if not pd.isna(values[i]):
-                smoothed = smoothed - (smoothed / period) + values[i]
-                result[i] = smoothed
-        
-        return result
-    
-    @staticmethod 
-    def _simple_moving_average(values: List[float], period: int) -> List[float]:
-        """SMA для ADX - точно как в Pine Script sma()"""
-        result = [np.nan] * len(values)
-        
-        for i in range(period - 1, len(values)):
-            window = values[i - period + 1:i + 1]
-            valid_values = [v for v in window if not pd.isna(v)]
-            
-            if len(valid_values) == period:
-                result[i] = sum(valid_values) / period
-        
-        return result
-    
-    @staticmethod
-    def calculate_tradingview_adx(highs: List[float], lows: List[float], 
-                                 closes: List[float], period: int = 14) -> Dict:
-        """Точная реплика TradingView индикатора "ADX and DI for v4" """
+    def calculate_adx(highs: List[float], lows: List[float], closes: List[float], period: int = 14) -> Dict:
+        """Упрощенный расчет ADX для Railway"""
         
         if len(highs) < period * 2:
-            logger.warning(f"Недостаточно данных для TradingView ADX")
+            logger.warning(f"⚠️ Недостаточно данных для ADX: {len(highs)} < {period * 2}")
             return {
                 'adx': [np.nan] * len(highs),
                 'plus_di': [np.nan] * len(highs),
                 'minus_di': [np.nan] * len(highs)
             }
         
-        n = len(highs)
-        
-        # Шаг 1: True Range
-        true_ranges = [np.nan]
-        for i in range(1, n):
-            tr1 = highs[i] - lows[i]
-            tr2 = abs(highs[i] - closes[i-1])
-            tr3 = abs(lows[i] - closes[i-1])
-            true_ranges.append(max(tr1, tr2, tr3))
-        
-        # Шаг 2: Directional Movement
-        dm_plus = [np.nan]  
-        dm_minus = [np.nan]
-        
-        for i in range(1, n):
-            high_diff = highs[i] - highs[i-1]
-            low_diff = lows[i-1] - lows[i]
+        try:
+            n = len(highs)
             
-            if high_diff > low_diff:
-                plus_dm = max(high_diff, 0)
-                minus_dm = 0.0
-            elif low_diff > high_diff:
-                plus_dm = 0.0
-                minus_dm = max(low_diff, 0)
-            else:
-                plus_dm = 0.0
-                minus_dm = 0.0
+            # 1. Расчет True Range
+            tr_values = [0.0] * n
+            for i in range(1, n):
+                tr1 = highs[i] - lows[i]
+                tr2 = abs(highs[i] - closes[i-1])
+                tr3 = abs(lows[i] - closes[i-1])
+                tr_values[i] = max(tr1, tr2, tr3)
             
-            dm_plus.append(plus_dm)
-            dm_minus.append(minus_dm)
-        
-        # Шаг 3: Wilder's Smoothing для TR и DM
-        smoothed_tr = TechnicalIndicators._wilder_smoothing(true_ranges, period)
-        smoothed_dm_plus = TechnicalIndicators._wilder_smoothing(dm_plus, period) 
-        smoothed_dm_minus = TechnicalIndicators._wilder_smoothing(dm_minus, period)
-        
-        # Шаг 4: DI
-        plus_di = []
-        minus_di = []
-        
-        for i in range(n):
-            if pd.isna(smoothed_tr[i]) or smoothed_tr[i] == 0:
-                plus_di.append(np.nan)
-                minus_di.append(np.nan)
-            else:
-                plus_di_val = (smoothed_dm_plus[i] / smoothed_tr[i]) * 100
-                minus_di_val = (smoothed_dm_minus[i] / smoothed_tr[i]) * 100
-                plus_di.append(plus_di_val)
-                minus_di.append(minus_di_val)
-        
-        # Шаг 5: DX
-        dx_values = []
-        for i in range(n):
-            if pd.isna(plus_di[i]) or pd.isna(minus_di[i]):
-                dx_values.append(np.nan)
-            else:
-                di_sum = plus_di[i] + minus_di[i]
-                if di_sum == 0:
-                    dx_values.append(0.0)
+            # 2. Расчет Directional Movement
+            plus_dm = [0.0] * n
+            minus_dm = [0.0] * n
+            
+            for i in range(1, n):
+                high_diff = highs[i] - highs[i-1]
+                low_diff = lows[i-1] - lows[i]
+                
+                if high_diff > low_diff and high_diff > 0:
+                    plus_dm[i] = high_diff
                 else:
-                    dx_val = abs(plus_di[i] - minus_di[i]) / di_sum * 100
-                    dx_values.append(dx_val)
-        
-        # Шаг 6: ADX через SMA (не Wilder's!)
-        adx_values = TechnicalIndicators._simple_moving_average(dx_values, period)
-        
-        return {
-            'adx': adx_values,
-            'plus_di': plus_di, 
-            'minus_di': minus_di
-        }
+                    plus_dm[i] = 0.0
+                
+                if low_diff > high_diff and low_diff > 0:
+                    minus_dm[i] = low_diff
+                else:
+                    minus_dm[i] = 0.0
+            
+            # 3. Сглаживание (упрощенная версия Wilder)
+            smoothed_tr = TechnicalIndicators._simple_smooth(tr_values, period)
+            smoothed_plus_dm = TechnicalIndicators._simple_smooth(plus_dm, period)
+            smoothed_minus_dm = TechnicalIndicators._simple_smooth(minus_dm, period)
+            
+            # 4. Расчет DI
+            plus_di = [np.nan] * n
+            minus_di = [np.nan] * n
+            
+            for i in range(period, n):
+                if smoothed_tr[i] > 0:
+                    plus_di[i] = 100.0 * smoothed_plus_dm[i] / smoothed_tr[i]
+                    minus_di[i] = 100.0 * smoothed_minus_dm[i] / smoothed_tr[i]
+                else:
+                    plus_di[i] = 0.0
+                    minus_di[i] = 0.0
+            
+            # 5. Расчет DX
+            dx_values = [np.nan] * n
+            
+            for i in range(period, n):
+                if not pd.isna(plus_di[i]) and not pd.isna(minus_di[i]):
+                    di_sum = plus_di[i] + minus_di[i]
+                    if di_sum > 0:
+                        dx_values[i] = 100.0 * abs(plus_di[i] - minus_di[i]) / di_sum
+                    else:
+                        dx_values[i] = 0.0
+            
+            # 6. ADX = простая скользящая средняя от DX
+            adx_values = TechnicalIndicators._simple_smooth(dx_values, period)
+            
+            result = {
+                'adx': adx_values,
+                'plus_di': plus_di,
+                'minus_di': minus_di
+            }
+            
+            # Логируем результат
+            current_adx = result['adx'][-1] if not pd.isna(result['adx'][-1]) else None
+            current_plus_di = result['plus_di'][-1] if not pd.isna(result['plus_di'][-1]) else None
+            current_minus_di = result['minus_di'][-1] if not pd.isna(result['minus_di'][-1]) else None
+            
+            if current_adx and current_plus_di and current_minus_di:
+                logger.info(f"📊 ADX: {current_adx:.1f} | +DI: {current_plus_di:.1f} | -DI: {current_minus_di:.1f}")
+            else:
+                logger.warning("📊 ADX индикаторы содержат NaN")
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка расчета ADX: {e}")
+            import traceback
+            traceback.print_exc()
+            return {
+                'adx': [np.nan] * len(highs),
+                'plus_di': [np.nan] * len(highs),
+                'minus_di': [np.nan] * len(highs)
+            }
     
     @staticmethod
-    def calculate_adx(highs: List[float], lows: List[float], closes: List[float], period: int = 14) -> Dict:
-        """Расчет ADX точно как в TradingView индикаторе "ADX and DI for v4" """
+    def _simple_smooth(values: List[float], period: int) -> List[float]:
+        """Упрощенное сглаживание для Railway"""
+        result = [np.nan] * len(values)
         
-        result = TechnicalIndicators.calculate_tradingview_adx(highs, lows, closes, period)
+        # Находим первую позицию для начала расчета
+        start_idx = period - 1
         
-        # Логируем результат
-        current_adx = result['adx'][-1] if not pd.isna(result['adx'][-1]) else np.nan
-        current_plus_di = result['plus_di'][-1] if not pd.isna(result['plus_di'][-1]) else np.nan
-        current_minus_di = result['minus_di'][-1] if not pd.isna(result['minus_di'][-1]) else np.nan
+        # Первое значение = простая средняя
+        if start_idx < len(values):
+            window_values = []
+            for i in range(max(0, start_idx - period + 1), start_idx + 1):
+                if not pd.isna(values[i]) and values[i] != 0:
+                    window_values.append(values[i])
+            
+            if len(window_values) > 0:
+                result[start_idx] = sum(window_values) / len(window_values)
         
-        logger.info(f"📊 ADX: {current_adx:.1f} | +DI: {current_plus_di:.1f} | -DI: {current_minus_di:.1f}")
+        # Остальные значения - экспоненциальное сглаживание
+        alpha = 2.0 / (period + 1)  # Коэффициент сглаживания
+        
+        for i in range(start_idx + 1, len(values)):
+            if not pd.isna(result[i-1]) and not pd.isna(values[i]):
+                result[i] = alpha * values[i] + (1 - alpha) * result[i-1]
         
         return result
+    
+    @staticmethod
+    def validate_data(highs: List[float], lows: List[float], closes: List[float]) -> bool:
+        """Валидация данных перед расчетом"""
+        if not (len(highs) == len(lows) == len(closes)):
+            logger.error(f"❌ Различная длина массивов: H:{len(highs)} L:{len(lows)} C:{len(closes)}")
+            return False
+        
+        if len(highs) < 30:
+            logger.warning(f"⚠️ Мало данных: {len(highs)} < 30")
+        
+        # Проверяем валидность цен
+        invalid_count = 0
+        for i in range(len(highs)):
+            h, l, c = highs[i], lows[i], closes[i]
+            if not (l <= c <= h and l <= h and l > 0):
+                invalid_count += 1
+                if invalid_count <= 5:  # Показываем только первые 5 ошибок
+                    logger.warning(f"⚠️ Индекс {i}: H:{h:.2f} L:{l:.2f} C:{c:.2f}")
+        
+        valid_ratio = (len(highs) - invalid_count) / len(highs)
+        
+        if valid_ratio < 0.8:  # Если меньше 80% валидных данных
+            logger.error(f"❌ Слишком много невалидных данных: {invalid_count}/{len(highs)} ({valid_ratio:.1%})")
+            return False
+        
+        logger.info(f"✅ Данные валидны: {len(highs)} свечей, {invalid_count} предупреждений ({valid_ratio:.1%})")
+        return True
+    
+    @staticmethod
+    def debug_data(highs: List[float], lows: List[float], closes: List[float], count: int = 5):
+        """Отладка данных"""
+        logger.info(f"🔍 ОТЛАДКА ПОСЛЕДНИХ {count} СВЕЧЕЙ:")
+        start_idx = max(0, len(closes) - count)
+        
+        for i in range(start_idx, len(closes)):
+            logger.info(f"🔍 [{i:2d}] H:{highs[i]:7.2f} L:{lows[i]:7.2f} C:{closes[i]:7.2f}")
+    
+    @staticmethod
+    def calculate_simple_trend(prices: List[float], short_period: int = 5, long_period: int = 20) -> str:
+        """Простой анализ тренда для дополнительной проверки"""
+        if len(prices) < long_period:
+            return "insufficient_data"
+        
+        try:
+            # Короткая и длинная средние
+            short_sma = np.mean(prices[-short_period:])
+            long_sma = np.mean(prices[-long_period:])
+            current_price = prices[-1]
+            
+            # Определяем тренд
+            if current_price > short_sma > long_sma:
+                return "strong_uptrend"
+            elif current_price > short_sma and short_sma > long_sma * 1.001:  # Небольшая погрешность
+                return "uptrend"
+            elif current_price < short_sma < long_sma:
+                return "strong_downtrend"
+            elif current_price < short_sma and short_sma < long_sma * 0.999:
+                return "downtrend"
+            else:
+                return "sideways"
+                
+        except Exception as e:
+            logger.error(f"Ошибка анализа тренда: {e}")
+            return "error"
