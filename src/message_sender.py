@@ -6,7 +6,7 @@ from telegram.error import TelegramError, TimedOut, NetworkError
 logger = logging.getLogger(__name__)
 
 class MessageSender:
-    """Отправщик сообщений подписчикам"""
+    """Отправщик сообщений подписчикам с поддержкой гибридной стратегии"""
     
     def __init__(self, database, gpt_analyzer=None, tinkoff_provider=None):
         self.db = database
@@ -19,7 +19,7 @@ class MessageSender:
         self.app = app
     
     async def send_buy_signal(self, signal):
-        """Отправка сигнала покупки"""
+        """Отправка сигнала покупки с поддержкой гибридной стратегии"""
         if not self.app:
             logger.error("Telegram приложение не установлено")
             return
@@ -30,13 +30,36 @@ class MessageSender:
             logger.info(f"Нет подписчиков для {signal.symbol}")
             return
         
-        # Формируем сообщение
+        # Формируем базовое сообщение
         message = self._format_buy_signal(signal)
         
-        # Получаем GPT анализ
-        gpt_data = await self._get_gpt_analysis(signal)
-        if gpt_data:
-            message += f"\n{gpt_data['formatted_message']}"
+        # Добавляем GPT анализ если есть в сигнале
+        if hasattr(signal, 'gpt_recommendation') and signal.gpt_recommendation:
+            gpt_message = f"""
+
+🤖 <b>АНАЛИЗ GPT ({signal.symbol}):</b>
+📊 <b>Рекомендация:</b> {signal.gpt_recommendation}
+🎯 <b>Уверенность:</b> {signal.gpt_confidence}%
+⚡ <b>Стратегия:</b> Гибридный анализ (EMA20 + GPT)"""
+            message += gpt_message
+        else:
+            # Режим без GPT
+            message += f"""
+
+📊 <b>ТЕХНИЧЕСКИЙ АНАЛИЗ ({signal.symbol}):</b>
+✅ Цена выше EMA20 - восходящий тренд
+✅ Базовый фильтр пройден
+⚡ <b>Стратегия:</b> Упрощённый технический анализ"""
+        
+        # Подготавливаем данные для БД (используем значения из signal)
+        gpt_data = None
+        if hasattr(signal, 'gpt_recommendation') and signal.gpt_recommendation:
+            gpt_data = {
+                'recommendation': signal.gpt_recommendation,
+                'confidence': signal.gpt_confidence,
+                'take_profit': None,  # Пока не используем
+                'stop_loss': None     # Пока не используем
+            }
         
         # Сохраняем сигнал в БД
         signal_id = await self.db.save_signal(
@@ -44,10 +67,10 @@ class MessageSender:
             signal_type='BUY',
             price=signal.price,
             ema20=signal.ema20,
-            adx=signal.adx,
-            plus_di=signal.plus_di,
-            minus_di=signal.minus_di,
-            gpt_data=gpt_data['db_data'] if gpt_data else None
+            adx=signal.adx,          # Фиктивные значения для совместимости
+            plus_di=signal.plus_di,   # Фиктивные значения
+            minus_di=signal.minus_di, # Фиктивные значения
+            gpt_data=gpt_data
         )
         
         if not signal_id:
@@ -81,15 +104,20 @@ class MessageSender:
 
 💰 <b>Цена:</b> {current_price:.2f} ₽
 
-📊 ADX > 45 - пик тренда!
-Время фиксировать прибыль.{profit_info}
+📊 <b>Причина:</b> GPT определил пик тренда
+⚡ Время фиксировать прибыль{profit_info}
 
 🔍 <b>Продолжаем мониторинг...</b>"""
         
-        # Сохраняем сигнал
+        # Сохраняем сигнал с фиктивными значениями
         await self.db.save_signal(
-            symbol=symbol, signal_type='PEAK', price=current_price,
-            ema20=current_price * 0.98, adx=47, plus_di=35, minus_di=20
+            symbol=symbol, 
+            signal_type='PEAK', 
+            price=current_price,
+            ema20=current_price * 0.98,  # Примерное значение
+            adx=45.0,    # Фиктивное "пиковое" значение
+            plus_di=35.0, 
+            minus_di=20.0
         )
         
         # Отправляем
@@ -117,14 +145,21 @@ class MessageSender:
 
 💰 <b>Цена:</b> {current_price:.2f} ₽
 
-⚠️ <b>Причина:</b> Условия больше не выполняются{profit_info}
+⚠️ <b>Причина:</b> Базовые условия не выполняются:
+• Цена может быть ниже EMA20
+• GPT не рекомендует продолжать{profit_info}
 
 🔍 <b>Продолжаем мониторинг...</b>"""
         
         # Сохраняем сигнал
         await self.db.save_signal(
-            symbol=symbol, signal_type='SELL', price=current_price,
-            ema20=current_price * 0.98, adx=20, plus_di=25, minus_di=30
+            symbol=symbol, 
+            signal_type='SELL', 
+            price=current_price,
+            ema20=current_price * 0.98,  # Примерное значение
+            adx=20.0,    # Фиктивное "слабый тренд"
+            plus_di=25.0, 
+            minus_di=30.0  # minus_di > plus_di для продажи
         )
         
         # Отправляем
@@ -138,83 +173,22 @@ class MessageSender:
         logger.info(f"❌ Сигнал отмены {symbol} отправлен: {success_count} получателей")
     
     def _format_buy_signal(self, signal) -> str:
-        """Форматирование сигнала покупки"""
+        """Форматирование сигнала покупки для гибридной стратегии"""
         return f"""🔔 <b>СИГНАЛ ПОКУПКИ {signal.symbol}</b>
 
 💰 <b>Цена:</b> {signal.price:.2f} ₽
 📈 <b>EMA20:</b> {signal.ema20:.2f} ₽ (цена выше)
 
-📊 <b>Индикаторы:</b>
-• <b>ADX:</b> {signal.adx:.1f} (сильный тренд >25)
-• <b>+DI:</b> {signal.plus_di:.1f}
-• <b>-DI:</b> {signal.minus_di:.1f}
-• <b>Разница DI:</b> {signal.plus_di - signal.minus_di:.1f}"""
+📊 <b>Базовые условия:</b>
+✅ Восходящий тренд (цена > EMA20)
+✅ Торговое время активно
+✅ Базовый фильтр пройден"""
     
     async def _get_gpt_analysis(self, signal) -> Optional[dict]:
-        """Получение GPT анализа для сигнала"""
-        if not self.gpt_analyzer:
-            return None
-        
-        try:
-            # Получаем свечные данные для GPT
-            ticker_info = await self.db.get_ticker_info(signal.symbol)
-            candles_data = None
-            
-            if ticker_info and self.tinkoff_provider:
-                try:
-                    candles = await self.tinkoff_provider.get_candles_for_ticker(
-                        ticker_info['figi'], hours=100
-                    )
-                    df = self.tinkoff_provider.candles_to_dataframe(candles)
-                    
-                    if not df.empty:
-                        candles_data = []
-                        for _, row in df.iterrows():
-                            candles_data.append({
-                                'timestamp': row['timestamp'],
-                                'open': float(row['open']),
-                                'high': float(row['high']),
-                                'low': float(row['low']),
-                                'close': float(row['close']),
-                                'volume': int(row['volume'])
-                            })
-                except Exception as e:
-                    logger.warning(f"Не удалось получить свечи для GPT {signal.symbol}: {e}")
-            
-            signal_data = {
-                'price': signal.price,
-                'ema20': signal.ema20,
-                'adx': signal.adx,
-                'plus_di': signal.plus_di,
-                'minus_di': signal.minus_di
-            }
-            
-            gpt_advice = await self.gpt_analyzer.analyze_signal(
-                signal_data, candles_data, is_manual_check=False, symbol=signal.symbol
-            )
-            
-            if gpt_advice:
-                formatted_message = self.gpt_analyzer.format_advice_for_telegram(gpt_advice, signal.symbol)
-                
-                # Добавляем предупреждения
-                if gpt_advice.recommendation == 'AVOID':
-                    formatted_message += "\n\n⚠️ <b>ВНИМАНИЕ:</b> GPT не рекомендует покупку!"
-                elif gpt_advice.recommendation == 'WEAK_BUY':
-                    formatted_message += "\n\n⚡ <b>Осторожно:</b> GPT рекомендует минимальный риск"
-                
-                return {
-                    'formatted_message': formatted_message,
-                    'db_data': {
-                        'recommendation': gpt_advice.recommendation,
-                        'confidence': gpt_advice.confidence,
-                        'take_profit': gpt_advice.take_profit,
-                        'stop_loss': gpt_advice.stop_loss
-                    }
-                }
-            
-        except Exception as e:
-            logger.error(f"Ошибка GPT анализа для {signal.symbol}: {e}")
-        
+        """УСТАРЕВШИЙ: GPT анализ теперь встроен в signal"""
+        # Этот метод больше не используется в гибридной стратегии
+        # GPT анализ уже включён в объект signal
+        logger.warning("⚠️ _get_gpt_analysis вызван в режиме совместимости")
         return None
     
     async def _get_profit_summary(self, symbol: str, current_price: float) -> str:
