@@ -1,8 +1,10 @@
 import asyncio
 import logging
-from datetime import datetime
-from typing import Optional
+from datetime import datetime, time
+import pytz
+from typing import Optional, Dict, List
 import pandas as pd
+import numpy as np
 from dataclasses import dataclass
 
 from .indicators import TechnicalIndicators
@@ -11,27 +13,82 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class TradingSignal:
-    """Структура торгового сигнала"""
+    """Структура торгового сигнала для гибридной стратегии"""
     symbol: str
     timestamp: datetime
     price: float
     ema20: float
-    adx: float
-    plus_di: float
-    minus_di: float
+    # Убрали ADX/DI поля
+    gpt_recommendation: Optional[str] = None
+    gpt_confidence: Optional[int] = None
 
 class SignalProcessor:
-    """Обработчик торговых сигналов с подробной отладкой"""
+    """Упрощённый обработчик сигналов: базовый фильтр + GPT решения"""
     
     def __init__(self, tinkoff_provider, database, gpt_analyzer=None):
         self.tinkoff_provider = tinkoff_provider
         self.db = database
         self.gpt_analyzer = gpt_analyzer
+        self.moscow_tz = pytz.timezone('Europe/Moscow')
+        
+        logger.info(f"🔄 SignalProcessor инициализирован (GPT: {'✅' if gpt_analyzer else '❌'})")
+    
+    def is_market_open(self) -> bool:
+        """Проверка торгового времени (все сессии включая выходные)"""
+        now_moscow = datetime.now(self.moscow_tz)
+        current_time = now_moscow.time()
+        current_weekday = now_moscow.weekday()  # 0=пн, 6=вс
+        
+        if current_weekday < 5:  # Пн-Пт
+            # Основная сессия: 09:50 - 18:50 МСК
+            main_session = time(9, 50) <= current_time <= time(18, 50)
+            # Вечерняя сессия: 19:00 - 23:49 МСК  
+            evening_session = time(19, 0) <= current_time <= time(23, 49)
+            return main_session or evening_session
+        else:  # Сб-Вс
+            # Дополнительная сессия: 10:00 - 19:00 МСК
+            weekend_session = time(10, 0) <= current_time <= time(19, 0)
+            return weekend_session
+    
+    def get_current_session(self) -> str:
+        """Определение текущей торговой сессии"""
+        now_moscow = datetime.now(self.moscow_tz)
+        current_time = now_moscow.time()
+        current_weekday = now_moscow.weekday()
+        
+        if current_weekday < 5:  # Пн-Пт
+            if time(9, 50) <= current_time <= time(18, 50):
+                return 'main'
+            elif time(19, 0) <= current_time <= time(23, 49):
+                return 'evening'
+        else:  # Сб-Вс
+            if time(10, 0) <= current_time <= time(19, 0):
+                return 'weekend'
+        
+        return 'closed'
+    
+    def get_time_quality(self) -> str:
+        """Оценка качества торгового времени"""
+        now_moscow = datetime.now(self.moscow_tz)
+        current_time = now_moscow.time()
+        current_weekday = now_moscow.weekday()
+        
+        if current_weekday < 5:  # Пн-Пт
+            if time(11, 0) <= current_time <= time(16, 0):
+                return 'premium'  # Лучшее время
+            elif time(9, 50) <= current_time <= time(18, 50):
+                return 'normal'   # Основная сессия
+            elif time(19, 0) <= current_time <= time(23, 49):
+                return 'evening'  # Вечерняя сессия
+        else:  # Выходные
+            return 'weekend'
+        
+        return 'closed'
     
     async def analyze_market(self, symbol: str) -> Optional[TradingSignal]:
-        """Анализ рынка для конкретной акции с подробной отладкой"""
+        """Упрощённый анализ: базовый фильтр + GPT решение"""
         try:
-            logger.info(f"🔍 НАЧИНАЕМ АНАЛИЗ {symbol}")
+            logger.info(f"🔍 ГИБРИДНЫЙ АНАЛИЗ {symbol}")
             
             # Получаем информацию о тикере
             ticker_info = await self.db.get_ticker_info(symbol)
@@ -39,14 +96,12 @@ class SignalProcessor:
                 logger.error(f"Тикер {symbol} не найден в БД")
                 return None
             
-            logger.info(f"📊 Тикер найден: {ticker_info['name']} (FIGI: {ticker_info['figi']})")
-            
-            # Получаем свечи
+            # Получаем свечи для анализа
             candles = await self.tinkoff_provider.get_candles_for_ticker(
                 ticker_info['figi'], hours=120
             )
             
-            if len(candles) < 50:
+            if len(candles) < 30:
                 logger.warning(f"Недостаточно данных для {symbol}: {len(candles)} свечей")
                 return None
             
@@ -57,116 +112,309 @@ class SignalProcessor:
                 logger.error(f"Пустой DataFrame для {symbol}")
                 return None
             
-            # Подробное логирование последних свечей
-            logger.info(f"📊 ПОСЛЕДНИЕ 5 СВЕЧЕЙ {symbol}:")
-            for i, (_, row) in enumerate(df.tail().iterrows()):
-                logger.info(f"  {i+1}. {row['timestamp'].strftime('%H:%M %d.%m')} | "
-                           f"O:{row['open']:.2f} H:{row['high']:.2f} L:{row['low']:.2f} C:{row['close']:.2f} V:{row['volume']}")
+            # ЭТАП 1: БАЗОВЫЙ ФИЛЬТР (простые технические условия)
+            if not await self._check_basic_filter(df, symbol):
+                logger.info(f"⏳ Базовый фильтр не пройден для {symbol}")
+                return None
             
-            # Рассчитываем индикаторы
-            signal = self._calculate_indicators_with_debug(df, symbol)
+            logger.info(f"✅ Базовый фильтр пройден для {symbol}")
             
-            return signal
+            # ЭТАП 2: ПОДГОТОВКА ДАННЫХ ДЛЯ GPT
+            market_data = self._prepare_market_data(df, symbol)
+            
+            # ЭТАП 3: GPT ПРИНИМАЕТ РЕШЕНИЕ
+            if self.gpt_analyzer:
+                gpt_advice = await self._get_gpt_decision(market_data, symbol)
+                
+                if gpt_advice and gpt_advice.recommendation in ['BUY', 'WEAK_BUY']:
+                    # GPT рекомендует покупку - создаём сигнал
+                    signal = TradingSignal(
+                        symbol=symbol,
+                        timestamp=df.iloc[-1]['timestamp'],
+                        price=market_data['current_price'],
+                        ema20=market_data['ema20'],
+                        gpt_recommendation=gpt_advice.recommendation,
+                        gpt_confidence=gpt_advice.confidence
+                    )
+                    
+                    logger.info(f"🎉 GPT РЕКОМЕНДУЕТ {gpt_advice.recommendation} для {symbol}")
+                    return signal
+                else:
+                    rec = gpt_advice.recommendation if gpt_advice else 'UNKNOWN'
+                    logger.info(f"⏳ GPT не рекомендует покупку {symbol}: {rec}")
+                    return None
+            else:
+                # Работаем без GPT - создаём сигнал при прохождении базового фильтра
+                logger.warning("🤖 GPT недоступен, работаем только по базовому фильтру")
+                signal = TradingSignal(
+                    symbol=symbol,
+                    timestamp=df.iloc[-1]['timestamp'],
+                    price=market_data['current_price'],
+                    ema20=market_data['ema20']
+                )
+                return signal
             
         except Exception as e:
             logger.error(f"Ошибка анализа рынка {symbol}: {e}")
             return None
     
-    def _calculate_indicators_with_debug(self, df, symbol: str) -> Optional[TradingSignal]:
-        """Расчет технических индикаторов с подробной отладкой"""
+    async def _check_basic_filter(self, df: pd.DataFrame, symbol: str) -> bool:
+        """Проверка базового фильтра: цена > EMA20 + торговое время"""
         try:
-            logger.info(f"🧮 РАСЧЕТ ИНДИКАТОРОВ ДЛЯ {symbol}")
+            # 1. Проверяем торговое время
+            if not self.is_market_open():
+                session = self.get_current_session()
+                logger.info(f"📅 Рынок закрыт для {symbol} (сессия: {session})")
+                return False
             
+            # 2. Рассчитываем EMA20
+            closes = df['close'].tolist()
+            ema20 = TechnicalIndicators.calculate_ema(closes, 20)
+            
+            current_price = closes[-1]
+            current_ema20 = ema20[-1]
+            
+            if pd.isna(current_ema20):
+                logger.warning(f"EMA20 не рассчитана для {symbol}")
+                return False
+            
+            # 3. Проверяем основное условие: цена > EMA20
+            price_above_ema = current_price > current_ema20
+            
+            # Логирование результатов
+            session = self.get_current_session()
+            time_quality = self.get_time_quality()
+            
+            logger.info(f"🔍 БАЗОВЫЙ ФИЛЬТР {symbol}:")
+            logger.info(f"   💰 Цена: {current_price:.2f} ₽")
+            logger.info(f"   📈 EMA20: {current_ema20:.2f} ₽")
+            logger.info(f"   📊 Цена > EMA20: {'✅' if price_above_ema else '❌'}")
+            logger.info(f"   ⏰ Сессия: {session} ({time_quality})")
+            
+            return price_above_ema
+            
+        except Exception as e:
+            logger.error(f"Ошибка базового фильтра {symbol}: {e}")
+            return False
+    
+    def _prepare_market_data(self, df: pd.DataFrame, symbol: str) -> Dict:
+        """Подготовка богатых данных для GPT анализа"""
+        try:
             closes = df['close'].tolist()
             highs = df['high'].tolist()
             lows = df['low'].tolist()
+            volumes = df['volume'].tolist()
             
-            logger.info(f"📊 Данные для расчета:")
-            logger.info(f"   Всего свечей: {len(closes)}")
-            logger.info(f"   Последняя цена: {closes[-1]:.2f}")
-            logger.info(f"   Диапазон цен: {min(closes):.2f} - {max(closes):.2f}")
-            
-            # Рассчитываем EMA20
-            logger.info(f"📈 Расчет EMA20...")
-            ema20 = TechnicalIndicators.calculate_ema(closes, 20)
-            
-            # Рассчитываем ADX (ИСПРАВЛЕННЫЙ)
-            logger.info(f"📊 Расчет ADX...")
-            adx_data = TechnicalIndicators.calculate_adx(highs, lows, closes, 14)
-            
-            # Текущие значения
+            # Основные показатели
             current_price = closes[-1]
+            ema20 = TechnicalIndicators.calculate_ema(closes, 20)
             current_ema20 = ema20[-1]
-            current_adx = adx_data['adx'][-1]
-            current_plus_di = adx_data['plus_di'][-1]
-            current_minus_di = adx_data['minus_di'][-1]
             
-            # Проверяем на NaN
-            if any(pd.isna(val) for val in [current_ema20, current_adx, current_plus_di, current_minus_di]):
-                logger.warning(f"Индикаторы содержат NaN для {symbol}")
-                logger.warning(f"EMA20: {current_ema20}, ADX: {current_adx}, +DI: {current_plus_di}, -DI: {current_minus_di}")
-                return None
+            # Анализ объёмов
+            avg_volume_5d = np.mean(volumes[-120:]) if len(volumes) >= 120 else np.mean(volumes)
+            current_volume = volumes[-1]
+            volume_ratio = current_volume / avg_volume_5d if avg_volume_5d > 0 else 1.0
             
-            # ПОДРОБНОЕ ЛОГИРОВАНИЕ РЕЗУЛЬТАТОВ
-            logger.info(f"")
-            logger.info(f"🎯 РЕЗУЛЬТАТЫ РАСЧЕТОВ {symbol}:")
-            logger.info(f"   💰 Текущая цена: {current_price:.2f} ₽")
-            logger.info(f"   📈 EMA20: {current_ema20:.2f} ₽")
-            logger.info(f"   📊 ADX: {current_adx:.1f}")
-            logger.info(f"   📈 +DI: {current_plus_di:.1f}")
-            logger.info(f"   📉 -DI: {current_minus_di:.1f}")
-            logger.info(f"   🔄 Разница DI: {current_plus_di - current_minus_di:.1f}")
-            logger.info(f"")
+            # Анализ уровней поддержки/сопротивления
+            price_levels = self._analyze_price_levels(df)
             
-            # Проверка условий сигнала
-            condition_1 = current_price > current_ema20
-            condition_2 = current_adx > 25
-            condition_3 = current_plus_di > current_minus_di
-            condition_4 = current_plus_di - current_minus_di > 1
+            # Ценовое движение
+            price_movement = self._analyze_price_movement(closes)
             
-            logger.info(f"🧐 ПРОВЕРКА УСЛОВИЙ СИГНАЛА {symbol}:")
-            logger.info(f"   1. Цена > EMA20 ({current_price:.2f} > {current_ema20:.2f}): {'✅' if condition_1 else '❌'}")
-            logger.info(f"   2. ADX > 25 ({current_adx:.1f} > 25): {'✅' if condition_2 else '❌'}")
-            logger.info(f"   3. +DI > -DI ({current_plus_di:.1f} > {current_minus_di:.1f}): {'✅' if condition_3 else '❌'}")
-            logger.info(f"   4. Разница DI > 1 ({current_plus_di - current_minus_di:.1f} > 1): {'✅' if condition_4 else '❌'}")
+            # Свечные данные для GPT (последние 50 свечей)
+            candles_data = []
+            for i in range(max(0, len(df) - 50), len(df)):
+                row = df.iloc[i]
+                candles_data.append({
+                    'timestamp': row['timestamp'],
+                    'open': float(row['open']),
+                    'high': float(row['high']),
+                    'low': float(row['low']),
+                    'close': float(row['close']),
+                    'volume': int(row['volume'])
+                })
             
-            conditions = [condition_1, condition_2, condition_3, condition_4]
-            conditions_met = sum(conditions)
-            
-            logger.info(f"")
-            logger.info(f"📊 ИТОГ: {conditions_met}/4 условия выполнены")
-            
-            if all(conditions):
-                logger.info(f"🎉 ВСЕ УСЛОВИЯ ВЫПОЛНЕНЫ ДЛЯ {symbol} - ГЕНЕРИРУЕМ СИГНАЛ!")
+            market_data = {
+                # Базовые данные
+                'symbol': symbol,
+                'current_price': current_price,
+                'ema20': current_ema20,
+                'price_above_ema': current_price > current_ema20,
                 
-                signal = TradingSignal(
-                    symbol=symbol,
-                    timestamp=df.iloc[-1]['timestamp'],
-                    price=current_price,
-                    ema20=current_ema20,
-                    adx=current_adx,
-                    plus_di=current_plus_di,
-                    minus_di=current_minus_di
-                )
+                # Свечные данные
+                'candles_data': candles_data,
                 
-                logger.info(f"✅ Сигнал создан: {signal}")
-                return signal
-            else:
-                logger.info(f"⏳ Условия не выполнены для {symbol} ({conditions_met}/4)")
-                logger.info(f"   Ждем улучшения показателей...")
+                # Анализ объёмов
+                'volume_analysis': {
+                    'current_volume': current_volume,
+                    'avg_volume_5d': avg_volume_5d,
+                    'volume_ratio': volume_ratio,
+                    'volume_trend': self._get_volume_trend(volumes)
+                },
+                
+                # Уровни поддержки/сопротивления
+                'price_levels': price_levels,
+                
+                # Ценовое движение
+                'price_movement': price_movement,
+                
+                # Контекст времени
+                'trading_session': self.get_current_session(),
+                'time_quality': self.get_time_quality(),
+                
+                # Технические показатели для GPT
+                'conditions_met': True  # Базовый фильтр уже пройден
+            }
             
-            return None
+            logger.info(f"📊 Подготовлены данные для GPT анализа {symbol}")
+            return market_data
             
         except Exception as e:
-            logger.error(f"Ошибка расчета индикаторов {symbol}: {e}")
-            import traceback
-            logger.error(f"Подробности ошибки: {traceback.format_exc()}")
+            logger.error(f"Ошибка подготовки данных для {symbol}: {e}")
+            return {}
+    
+    def _analyze_price_levels(self, df: pd.DataFrame) -> Dict:
+        """Анализ уровней поддержки и сопротивления"""
+        try:
+            # Последние 50 свечей для анализа уровней
+            recent_data = df.tail(50) if len(df) > 50 else df
+            
+            highs = recent_data['high'].tolist()
+            lows = recent_data['low'].tolist()
+            closes = recent_data['close'].tolist()
+            
+            current_price = closes[-1]
+            
+            # Поиск уровней сопротивления (локальные максимумы)
+            resistances = []
+            for i in range(2, len(highs) - 2):
+                if (highs[i] > highs[i-1] and highs[i] > highs[i-2] and 
+                    highs[i] > highs[i+1] and highs[i] > highs[i+2]):
+                    if highs[i] > current_price:
+                        resistances.append(highs[i])
+            
+            # Поиск уровней поддержки (локальные минимумы)
+            supports = []
+            for i in range(2, len(lows) - 2):
+                if (lows[i] < lows[i-1] and lows[i] < lows[i-2] and 
+                    lows[i] < lows[i+1] and lows[i] < lows[i+2]):
+                    if lows[i] < current_price:
+                        supports.append(lows[i])
+            
+            resistances = sorted(list(set(resistances)))[:3]  # Ближайшие 3
+            supports = sorted(list(set(supports)), reverse=True)[:3]  # Ближайшие 3
+            
+            return {
+                'current_price': current_price,
+                'nearest_resistance': resistances[0] if resistances else None,
+                'nearest_support': supports[0] if supports else None,
+                'all_resistances': resistances,
+                'all_supports': supports,
+                'recent_high': max(highs),
+                'recent_low': min(lows)
+            }
+            
+        except Exception as e:
+            logger.error(f"Ошибка анализа уровней: {e}")
+            return {}
+    
+    def _analyze_price_movement(self, closes: List[float]) -> Dict:
+        """Анализ ценового движения"""
+        try:
+            if len(closes) < 5:
+                return {}
+            
+            current_price = closes[-1]
+            
+            # Изменения за разные периоды
+            change_1h = ((current_price - closes[-2]) / closes[-2] * 100) if len(closes) >= 2 else 0
+            change_4h = ((current_price - closes[-5]) / closes[-5] * 100) if len(closes) >= 5 else 0
+            change_1d = ((current_price - closes[-25]) / closes[-25] * 100) if len(closes) >= 25 else 0
+            
+            # Волатильность за 5 дней
+            if len(closes) >= 25:
+                recent_changes = [abs(closes[i] - closes[i-1]) / closes[i-1] * 100 
+                                for i in range(-25, -1)]
+                volatility_5d = np.mean(recent_changes)
+            else:
+                volatility_5d = 0
+            
+            return {
+                'change_1h': round(change_1h, 2),
+                'change_4h': round(change_4h, 2),
+                'change_1d': round(change_1d, 2),
+                'volatility_5d': round(volatility_5d, 2)
+            }
+            
+        except Exception as e:
+            logger.error(f"Ошибка анализа движения: {e}")
+            return {}
+    
+    def _get_volume_trend(self, volumes: List[int]) -> str:
+        """Определение тренда объёмов"""
+        try:
+            if len(volumes) < 10:
+                return 'unknown'
+            
+            recent_avg = np.mean(volumes[-5:])
+            previous_avg = np.mean(volumes[-10:-5])
+            
+            if recent_avg > previous_avg * 1.1:
+                return 'increasing'
+            elif recent_avg < previous_avg * 0.9:
+                return 'decreasing'
+            else:
+                return 'stable'
+                
+        except Exception:
+            return 'unknown'
+    
+    async def _get_gpt_decision(self, market_data: Dict, symbol: str):
+        """Получение решения от GPT"""
+        try:
+            logger.info(f"🤖 Запрашиваем решение GPT для {symbol}...")
+            
+            # Подготавливаем данные для GPT
+            signal_data = {
+                'price': market_data['current_price'],
+                'ema20': market_data['ema20'],
+                'conditions_met': market_data['conditions_met']
+            }
+            
+            # Добавляем дополнительную информацию если есть
+            if 'price_movement' in market_data:
+                signal_data.update(market_data['price_movement'])
+            
+            # Запрашиваем анализ у GPT
+            gpt_advice = await self.gpt_analyzer.analyze_signal(
+                signal_data=signal_data,
+                candles_data=market_data.get('candles_data'),
+                is_manual_check=False,
+                symbol=symbol
+            )
+            
+            if gpt_advice:
+                logger.info(f"🤖 GPT ответ для {symbol}: {gpt_advice.recommendation} ({gpt_advice.confidence}%)")
+                return gpt_advice
+            else:
+                logger.warning(f"🤖 GPT не дал ответа для {symbol}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Ошибка GPT анализа для {symbol}: {e}")
             return None
+    
+    # === Остальные методы остаются без изменений ===
     
     async def get_detailed_market_status(self, symbol: str) -> str:
         """Получение детального статуса рынка для конкретной акции"""
         try:
             logger.info(f"🔄 Получаем детальный статус для {symbol}...")
+            
+            # Проверяем торговое время
+            if not self.is_market_open():
+                session = self.get_current_session()
+                return f"⏰ <b>Рынок закрыт</b>\n\nТекущая сессия: {session}\n\nПопробуйте в торговое время."
             
             # Получаем информацию о тикере
             ticker_info = await self.db.get_ticker_info(symbol)
@@ -178,7 +426,7 @@ class SignalProcessor:
                 timeout=30
             )
             
-            if len(candles) < 50:
+            if len(candles) < 30:
                 logger.warning(f"⚠️ Недостаточно данных для анализа {symbol}")
                 return f"❌ <b>Недостаточно данных для анализа {symbol}</b>\n\nПопробуйте позже."
             
@@ -189,96 +437,49 @@ class SignalProcessor:
                 logger.warning(f"⚠️ Пустой DataFrame для {symbol}")
                 return f"❌ <b>Ошибка получения данных {symbol}</b>"
             
-            # Получаем текущие значения индикаторов
-            closes = df['close'].tolist()
-            highs = df['high'].tolist()
-            lows = df['low'].tolist()
+            # Подготавливаем данные
+            market_data = self._prepare_market_data(df, symbol)
             
-            # Расчет индикаторов
-            ema20 = TechnicalIndicators.calculate_ema(closes, 20)
-            adx_data = TechnicalIndicators.calculate_adx(highs, lows, closes, 14)
+            # Проверяем базовый фильтр
+            basic_filter_passed = await self._check_basic_filter(df, symbol)
             
-            # Последние значения
-            current_price = closes[-1]
-            current_ema20 = ema20[-1]
-            current_adx = adx_data['adx'][-1]
-            current_plus_di = adx_data['plus_di'][-1]
-            current_minus_di = adx_data['minus_di'][-1]
+            # Формируем базовое сообщение
+            current_price = market_data['current_price']
+            current_ema20 = market_data['ema20']
+            price_above_ema = current_price > current_ema20
             
-            # Проверяем условия
-            price_above_ema = current_price > current_ema20 if not pd.isna(current_ema20) else False
-            strong_trend = current_adx > 25 if not pd.isna(current_adx) else False
-            positive_direction = current_plus_di > current_minus_di if not pd.isna(current_plus_di) and not pd.isna(current_minus_di) else False
-            di_difference = (current_plus_di - current_minus_di) > 1 if not pd.isna(current_plus_di) and not pd.isna(current_minus_di) else False
-            peak_trend = current_adx > 45 if not pd.isna(current_adx) else False
+            session = self.get_current_session()
+            time_quality = self.get_time_quality()
             
-            all_conditions_met = all([price_above_ema, strong_trend, positive_direction, di_difference])
-            
-            # Проверяем активные позиции из БД для этой акции
-            active_positions = await self.db.get_active_positions_count(symbol)
-            peak_warning = ""
-            if peak_trend and active_positions > 0:
-                peak_warning = f"\n🔥 <b>ВНИМАНИЕ: ADX > 45 - пик тренда {symbol}! Время продавать!</b>"
-            elif peak_trend:
-                peak_warning = f"\n🔥 <b>ADX > 45 - пик тренда {symbol}</b>"
-            
-            message = f"""📊 <b>ТЕКУЩЕЕ СОСТОЯНИЕ АКЦИЙ {symbol}</b>
+            message = f"""📊 <b>СОСТОЯНИЕ {symbol}</b>
 
 💰 <b>Цена:</b> {current_price:.2f} ₽
 📈 <b>EMA20:</b> {current_ema20:.2f} ₽ {'✅' if price_above_ema else '❌'}
 
-📊 <b>Индикаторы:</b>
-• <b>ADX:</b> {current_adx:.1f} {'✅' if strong_trend else '❌'} (нужно >25)
-• <b>+DI:</b> {current_plus_di:.1f}
-• <b>-DI:</b> {current_minus_di:.1f} {'✅' if positive_direction else '❌'}
-• <b>Разница DI:</b> {current_plus_di - current_minus_di:.1f} {'✅' if di_difference else '❌'} (нужно >1){peak_warning}
+⏰ <b>Торговая сессия:</b> {session} ({time_quality})
 
-{'🔔 <b>Все условия выполнены - ожидайте сигнал!</b>' if all_conditions_met else '⏳ <b>Ожидаем улучшения показателей...</b>'}"""
+🔍 <b>Базовый фильтр:</b> {'✅ Пройден' if basic_filter_passed else '❌ Не пройден'}"""
             
             # Добавляем GPT анализ
-            if self.gpt_analyzer:
+            if self.gpt_analyzer and basic_filter_passed:
                 try:
-                    logger.info(f"🤖 Подготавливаем данные для GPT анализа {symbol}...")
-                    candles_data = []
-                    try:
-                        for _, row in df.iterrows():
-                            candles_data.append({
-                                'timestamp': row['timestamp'],
-                                'open': float(row['open']),
-                                'high': float(row['high']),
-                                'low': float(row['low']),
-                                'close': float(row['close']),
-                                'volume': int(row['volume'])
-                            })
-                    except Exception as e:
-                        logger.warning(f"⚠️ Ошибка подготовки данных свечей для {symbol}: {e}")
-                        candles_data = None
-                    
-                    signal_data = {
-                        'price': current_price,
-                        'ema20': current_ema20,
-                        'adx': current_adx,
-                        'plus_di': current_plus_di,
-                        'minus_di': current_minus_di,
-                        'conditions_met': all_conditions_met
-                    }
-                    
                     logger.info(f"🤖 Запрашиваем GPT анализ для {symbol}...")
-                    gpt_advice = await self.gpt_analyzer.analyze_signal(
-                        signal_data, 
-                        candles_data, 
-                        is_manual_check=True,
-                        symbol=symbol
-                    )
+                    
+                    gpt_advice = await self._get_gpt_decision(market_data, symbol)
                     if gpt_advice:
                         message += f"\n{self.gpt_analyzer.format_advice_for_telegram(gpt_advice, symbol)}"
                         logger.info(f"✅ GPT дал рекомендацию для {symbol}: {gpt_advice.recommendation}")
                     else:
                         message += "\n\n🤖 <i>GPT анализ временно недоступен</i>"
                         logger.warning(f"⚠️ GPT анализ недоступен для {symbol}")
+                        
                 except Exception as e:
                     logger.error(f"❌ Ошибка GPT анализа для {symbol}: {e}")
                     message += "\n\n🤖 <i>GPT анализ временно недоступен</i>"
+            elif not basic_filter_passed:
+                message += "\n\n⏳ <b>Ожидаем улучшения условий...</b>"
+            else:
+                message += "\n\n📊 <b>Базовый фильтр пройден</b>\n🤖 <i>GPT анализ недоступен</i>"
             
             return message
                 
@@ -291,8 +492,9 @@ class SignalProcessor:
             return f"❌ <b>Ошибка получения данных для анализа {symbol}</b>\n\nВозможны временные проблемы с внешними сервисами."
     
     async def check_peak_trend(self, symbol: str) -> Optional[float]:
-        """Проверка пика тренда (ADX > 45)"""
+        """Проверка пика тренда - теперь через GPT"""
         try:
+            # Получаем данные
             ticker_info = await self.db.get_ticker_info(symbol)
             if not ticker_info:
                 return None
@@ -301,28 +503,50 @@ class SignalProcessor:
                 ticker_info['figi'], hours=120
             )
             
-            if len(candles) < 50:
+            if len(candles) < 30:
                 return None
             
             df = self.tinkoff_provider.candles_to_dataframe(candles)
             if df.empty:
                 return None
             
-            # Рассчитываем ADX
-            closes = df['close'].tolist()
-            highs = df['high'].tolist()
-            lows = df['low'].tolist()
+            # Подготавливаем данные для GPT
+            market_data = self._prepare_market_data(df, symbol)
+            current_price = market_data['current_price']
             
-            adx_data = TechnicalIndicators.calculate_adx(highs, lows, closes, 14)
-            current_adx = adx_data['adx'][-1]
-            current_price = closes[-1]
+            # Спрашиваем у GPT о пике тренда
+            if self.gpt_analyzer:
+                try:
+                    # Специальный анализ для пика
+                    signal_data = {
+                        'price': current_price,
+                        'ema20': market_data['ema20'],
+                        'conditions_met': True,
+                        'check_peak': True  # Специальный флаг
+                    }
+                    
+                    gpt_advice = await self.gpt_analyzer.analyze_signal(
+                        signal_data=signal_data,
+                        candles_data=market_data.get('candles_data'),
+                        is_manual_check=False,
+                        symbol=symbol
+                    )
+                    
+                    # Если GPT рекомендует AVOID из-за пика
+                    if gpt_advice and gpt_advice.recommendation == 'AVOID':
+                        if 'пик' in gpt_advice.reasoning.lower() or 'peak' in gpt_advice.reasoning.lower():
+                            logger.info(f"🔥 GPT определил пик тренда {symbol}: {current_price:.1f}")
+                            return current_price
+                    
+                except Exception as e:
+                    logger.error(f"Ошибка GPT анализа пика {symbol}: {e}")
             
-            if pd.isna(current_adx):
-                return None
-                
-            if current_adx > 45:
-                logger.info(f"🔥 Пик тренда {symbol}: ADX {current_adx:.1f}")
-                return current_price
+            # Fallback: простая проверка высокой волатильности
+            if 'price_movement' in market_data:
+                volatility = market_data['price_movement'].get('volatility_5d', 0)
+                if volatility > 5.0:  # Высокая волатильность может быть пиком
+                    logger.info(f"🔥 Высокая волатильность {symbol}: {volatility:.1f}%")
+                    return current_price
                 
             return None
             
