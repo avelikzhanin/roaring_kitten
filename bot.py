@@ -1,7 +1,8 @@
 import asyncio
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, time
+import pytz
 from typing import Optional
 
 from telegram import BotCommand
@@ -22,11 +23,53 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 
+# ============================================================================
+# ТОРГОВОЕ РАСПИСАНИЕ MOEX (актуально на 2025 год):
+# ============================================================================
+# РАБОЧИЕ ДНИ (Пн-Пт):
+#   Основная сессия:  09:50 - 18:50 МСК  
+#   Вечерняя сессия:  19:00 - 23:49 МСК
+# 
+# ВЫХОДНЫЕ ДНИ (Сб-Вс с 1 марта 2025):
+#   Дополнительная сессия выходного дня: 10:00 - 19:00 МСК
+# 
+# Итого: почти 7 дней торгов в неделю!
+# ============================================================================
+
+class MarketTimeChecker:
+    """Проверка торгового времени MOEX - только основная и вечерняя сессии"""
+    
+    def __init__(self):
+        self.moscow_tz = pytz.timezone('Europe/Moscow')
+        # Основная сессия: 09:50 - 18:50 МСК
+        self.main_session_start = time(9, 50)
+        self.main_session_end = time(18, 50)
+        # Вечерняя сессия: 19:00 - 23:49 МСК
+        self.evening_session_start = time(19, 0)
+        self.evening_session_end = time(23, 49)
+        
+    def is_market_open(self) -> bool:
+        """Проверяет открыт ли рынок (только основная и вечерняя сессии)"""
+        now_moscow = datetime.now(self.moscow_tz)
+        current_time = now_moscow.time()
+        current_weekday = now_moscow.weekday()
+        
+        # Только рабочие дни
+        if current_weekday >= 5:  # Сб, Вс
+            return False
+        
+        # Проверяем две торговые сессии
+        main_session = (self.main_session_start <= current_time <= self.main_session_end)
+        evening_session = (self.evening_session_start <= current_time <= self.evening_session_end)
+        
+        return main_session or evening_session
+
 class TradingBot:
     """Основной класс торгового бота"""
     
     def __init__(self, telegram_token: str, tinkoff_token: str, database_url: str, openai_token: Optional[str] = None):
         self.telegram_token = telegram_token
+        self.market_checker = MarketTimeChecker()
         
         # Инициализируем компоненты
         self.tinkoff_provider = TinkoffDataProvider(tinkoff_token)
@@ -148,7 +191,13 @@ class TradingBot:
         
         while self.is_running:
             try:
-                # Анализируем рынок
+                # Проверяем торговое время (только основная и вечерняя сессии)
+                if not self.market_checker.is_market_open():
+                    # Рынок закрыт - просто ждем 20 минут (как в торговое время)
+                    await asyncio.sleep(1200)  # 20 минут
+                    continue
+                
+                # Анализируем рынок в торговое время
                 signal = await self.signal_processor.analyze_market(symbol)
                 peak_signal = await self.signal_processor.check_peak_trend(symbol)
                 active_positions = await self.db.get_active_positions_count(symbol)
@@ -170,14 +219,15 @@ class TradingBot:
                     await self.message_sender.send_cancel_signal(symbol, current_price)
                     logger.info(f"❌ Отмена сигнала {symbol}")
                 
-                # Пауза между проверками
+                # Всегда ждем 20 минут
                 await asyncio.sleep(1200)  # 20 минут
                 
             except asyncio.CancelledError:
+                logger.info(f"❌ Мониторинг {symbol} отменен")
                 break
             except Exception as e:
                 logger.error(f"Ошибка мониторинга {symbol}: {e}")
-                await asyncio.sleep(60)
+                await asyncio.sleep(60)  # Ждем минуту при ошибке
 
 
 async def main():
@@ -202,6 +252,13 @@ async def main():
         return
     
     logger.info(f"🔑 Токены: TG✅ Tinkoff✅ DB✅ GPT{'✅' if openai_token else '❌'}")
+    
+    # Проверяем торговое время при запуске
+    market_checker = MarketTimeChecker()
+    if market_checker.is_market_open():
+        logger.info("🟢 Запуск в торговое время")
+    else:
+        logger.info("🔴 Запуск вне торгового времени")
     
     # Запускаем бота
     bot = TradingBot(
