@@ -21,7 +21,7 @@ class TradingSignal:
     minus_di: float
 
 class SignalProcessor:
-    """Обработчик торговых сигналов"""
+    """Обработчик торговых сигналов с минимальными данными"""
     
     def __init__(self, tinkoff_provider, database, gpt_analyzer=None):
         self.tinkoff_provider = tinkoff_provider
@@ -29,9 +29,9 @@ class SignalProcessor:
         self.gpt_analyzer = gpt_analyzer
     
     async def analyze_market(self, symbol: str) -> Optional[TradingSignal]:
-        """Анализ рынка для конкретной акции"""
+        """Анализ рынка для конкретной акции с 14 свечами"""
         try:
-            logger.info(f"🔍 Анализ {symbol}")
+            logger.info(f"🔍 Анализ {symbol} с минимальными данными")
             
             # Получаем информацию о тикере
             ticker_info = await self.db.get_ticker_info(symbol)
@@ -39,16 +39,17 @@ class SignalProcessor:
                 logger.error(f"Тикер {symbol} не найден")
                 return None
             
-            # Получаем свечи (100 часов)
+            # ИЗМЕНЕНО: Запрашиваем только 20 часов вместо 100
+            # Это даст нам ~14-20 свечей для расчета ADX
             candles = await self.tinkoff_provider.get_candles_for_ticker(
-                ticker_info['figi'], hours=100
+                ticker_info['figi'], hours=20  # ИЗМЕНЕНО: было 100
             )
             
-            if len(candles) < 30:  # Минимум для 100 часов
-                logger.warning(f"Недостаточно данных для {symbol}: {len(candles)} свечей")
-                return None
+            logger.info(f"📊 Получено {len(candles)} свечей (запрашивали 20 часов)")
             
-            logger.info(f"📊 Получено {len(candles)} свечей")
+            if len(candles) < 15:  # Минимум для ADX с периодом 14
+                logger.warning(f"Недостаточно данных для {symbol}: {len(candles)} < 15")
+                return None
             
             df = self.tinkoff_provider.candles_to_dataframe(candles)
             if df.empty:
@@ -65,31 +66,66 @@ class SignalProcessor:
             return None
     
     def _calculate_indicators(self, df, symbol: str) -> Optional[TradingSignal]:
-        """Расчет технических индикаторов"""
+        """Расчет технических индикаторов с минимальными данными"""
         try:
             closes = df['close'].tolist()
             highs = df['high'].tolist()
             lows = df['low'].tolist()
             
-            # Рассчитываем индикаторы
-            ema20 = TechnicalIndicators.calculate_ema(closes, 20)
+            logger.info(f"📊 Расчет индикаторов для {len(closes)} свечей")
+            
+            # ИЗМЕНЕНО: Используем все доступные данные для EMA20
+            # Если свечей меньше 20, EMA будет рассчитан на меньшем периоде
+            if len(closes) >= 20:
+                ema20 = TechnicalIndicators.calculate_ema(closes, 20)
+            else:
+                # Если мало данных, используем период равный половине доступных данных
+                period = max(5, len(closes) // 2)
+                ema20 = TechnicalIndicators.calculate_ema(closes, period)
+                logger.info(f"⚠️ Используем EMA{period} вместо EMA20 (мало данных)")
+            
+            # Расчет ADX с периодом 14
             adx_data = TechnicalIndicators.calculate_adx(highs, lows, closes, 14)
             
             # Текущие значения
             current_price = closes[-1]
-            current_ema20 = ema20[-1]
-            current_adx = adx_data['adx'][-1]
-            current_plus_di = adx_data['plus_di'][-1]
-            current_minus_di = adx_data['minus_di'][-1]
+            current_ema20 = ema20[-1] if not pd.isna(ema20[-1]) else None
+            current_adx = adx_data['adx'][-1] if not pd.isna(adx_data['adx'][-1]) else None
+            current_plus_di = adx_data['plus_di'][-1] if not pd.isna(adx_data['plus_di'][-1]) else None
+            current_minus_di = adx_data['minus_di'][-1] if not pd.isna(adx_data['minus_di'][-1]) else None
             
             # Проверяем на NaN
             if any(pd.isna(val) for val in [current_ema20, current_adx, current_plus_di, current_minus_di]):
                 logger.warning(f"Индикаторы содержат NaN для {symbol}")
                 return None
             
-            # Логируем результаты компактно
-            logger.info(f"💰 {symbol}: {current_price:.2f} ₽ | EMA20: {current_ema20:.2f}")
+            # Логируем результаты
+            logger.info(f"💰 {symbol}: {current_price:.2f} ₽ | EMA: {current_ema20:.2f}")
             logger.info(f"📊 ADX: {current_adx:.1f} | +DI: {current_plus_di:.1f} | -DI: {current_minus_di:.1f}")
+            
+            # Сравнение с эталоном (для отладки)
+            if symbol == 'SBER':
+                expected_adx = 57.34
+                expected_plus_di = 17.51  
+                expected_minus_di = 28.56
+                
+                adx_diff = abs(current_adx - expected_adx)
+                plus_di_diff = abs(current_plus_di - expected_plus_di)
+                minus_di_diff = abs(current_minus_di - expected_minus_di)
+                total_diff = adx_diff + plus_di_diff + minus_di_diff
+                
+                logger.info(f"🎯 Сравнение с эталоном SBER:")
+                logger.info(f"   ADX: {current_adx:.1f} vs {expected_adx} (откл: {adx_diff:.1f})")
+                logger.info(f"   +DI: {current_plus_di:.1f} vs {expected_plus_di} (откл: {plus_di_diff:.1f})")
+                logger.info(f"   -DI: {current_minus_di:.1f} vs {expected_minus_di} (откл: {minus_di_diff:.1f})")
+                logger.info(f"   Общее отклонение: {total_diff:.1f}")
+                
+                if total_diff < 20:
+                    logger.info("🎉 ОТЛИЧНАЯ ТОЧНОСТЬ с минимальными данными!")
+                elif total_diff < 40:
+                    logger.info("✅ ХОРОШАЯ ТОЧНОСТЬ с минимальными данными!")
+                else:
+                    logger.info("⚠️ СРЕДНЯЯ ТОЧНОСТЬ - возможно нужно еще меньше данных")
             
             # Проверка условий сигнала
             condition_1 = current_price > current_ema20
@@ -130,20 +166,23 @@ class SignalProcessor:
             return None
     
     async def get_detailed_market_status(self, symbol: str) -> str:
-        """Получение детального статуса рынка"""
+        """Получение детального статуса рынка с минимальными данными"""
         try:
-            logger.info(f"🔄 Статус {symbol}")
+            logger.info(f"🔄 Статус {symbol} с минимальными данными")
             
             ticker_info = await self.db.get_ticker_info(symbol)
             if not ticker_info:
                 return f"❌ <b>Акция {symbol} не поддерживается</b>"
             
+            # ИЗМЕНЕНО: Запрашиваем только 20 часов
             candles = await asyncio.wait_for(
-                self.tinkoff_provider.get_candles_for_ticker(ticker_info['figi'], hours=100),
+                self.tinkoff_provider.get_candles_for_ticker(ticker_info['figi'], hours=20),
                 timeout=45
             )
             
-            if len(candles) < 30:  # Минимум для 100 часов
+            logger.info(f"📊 Получено {len(candles)} свечей для детального анализа")
+            
+            if len(candles) < 15:
                 return f"❌ <b>Недостаточно данных для анализа {symbol}</b>\nПолучено {len(candles)} свечей."
             
             df = self.tinkoff_provider.candles_to_dataframe(candles)
@@ -155,7 +194,14 @@ class SignalProcessor:
             highs = df['high'].tolist()
             lows = df['low'].tolist()
             
-            ema20 = TechnicalIndicators.calculate_ema(closes, 20)
+            # EMA с адаптивным периодом
+            if len(closes) >= 20:
+                ema20 = TechnicalIndicators.calculate_ema(closes, 20)
+                ema_period = 20
+            else:
+                ema_period = max(5, len(closes) // 2)
+                ema20 = TechnicalIndicators.calculate_ema(closes, ema_period)
+            
             adx_data = TechnicalIndicators.calculate_adx(highs, lows, closes, 14)
             
             current_price = closes[-1]
@@ -181,10 +227,13 @@ class SignalProcessor:
             elif peak_trend:
                 peak_warning = f"\n🔥 <b>ADX > 45 - пик тренда {symbol}</b>"
             
+            ema_text = f"EMA{ema_period}" if ema_period != 20 else "EMA20"
+            
             message = f"""📊 <b>ТЕКУЩЕЕ СОСТОЯНИЕ АКЦИЙ {symbol}</b>
+<i>Анализ на {len(closes)} свечах</i>
 
 💰 <b>Цена:</b> {current_price:.2f} ₽
-📈 <b>EMA20:</b> {current_ema20:.2f} ₽ {'✅' if price_above_ema else '❌'}
+📈 <b>{ema_text}:</b> {current_ema20:.2f} ₽ {'✅' if price_above_ema else '❌'}
 
 📊 <b>Индикаторы:</b>
 • <b>ADX:</b> {current_adx:.1f} {'✅' if strong_trend else '❌'} (нужно >25)
@@ -194,8 +243,32 @@ class SignalProcessor:
 
 {'🔔 <b>Все условия выполнены - ожидайте сигнал!</b>' if all_conditions_met else '⏳ <b>Ожидаем улучшения показателей...</b>'}"""
             
+            # Добавляем сравнение с эталоном для SBER
+            if symbol == 'SBER' and not pd.isna(current_adx):
+                expected_adx = 57.34
+                expected_plus_di = 17.51
+                expected_minus_di = 28.56
+                
+                adx_diff = abs(current_adx - expected_adx)
+                plus_di_diff = abs(current_plus_di - expected_plus_di)
+                minus_di_diff = abs(current_minus_di - expected_minus_di)
+                total_diff = adx_diff + plus_di_diff + minus_di_diff
+                
+                message += f"\n\n🎯 <b>Точность расчета:</b>\n"
+                message += f"ADX: {current_adx:.1f} vs эталон {expected_adx} (откл: {adx_diff:.1f})\n"
+                message += f"+DI: {current_plus_di:.1f} vs эталон {expected_plus_di} (откл: {plus_di_diff:.1f})\n"
+                message += f"-DI: {current_minus_di:.1f} vs эталон {expected_minus_di} (откл: {minus_di_diff:.1f})\n"
+                message += f"Общее отклонение: <b>{total_diff:.1f}</b>"
+                
+                if total_diff < 20:
+                    message += " 🎉"
+                elif total_diff < 40:
+                    message += " ✅"
+                else:
+                    message += " ⚠️"
+            
             # Добавляем GPT анализ
-            if self.gpt_analyzer:
+            if self.gpt_analyzer and not pd.isna(current_adx):
                 try:
                     candles_data = []
                     for _, row in df.iterrows():
@@ -238,17 +311,18 @@ class SignalProcessor:
             return f"❌ <b>Ошибка получения данных {symbol}</b>"
     
     async def check_peak_trend(self, symbol: str) -> Optional[float]:
-        """Проверка пика тренда (ADX > 45)"""
+        """Проверка пика тренда с минимальными данными"""
         try:
             ticker_info = await self.db.get_ticker_info(symbol)
             if not ticker_info:
                 return None
                 
+            # ИЗМЕНЕНО: только 20 часов данных
             candles = await self.tinkoff_provider.get_candles_for_ticker(
-                ticker_info['figi'], hours=100
+                ticker_info['figi'], hours=20
             )
             
-            if len(candles) < 30:
+            if len(candles) < 15:
                 return None
             
             df = self.tinkoff_provider.candles_to_dataframe(candles)
