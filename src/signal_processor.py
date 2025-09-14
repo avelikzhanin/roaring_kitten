@@ -222,6 +222,8 @@ class SignalProcessor:
             elif peak_trend:
                 peak_warning = f"\n🔥 <b>ADX > 45 - пик тренда {symbol}</b>"
             
+            ema_text = f"EMA{ema_period}" if ema_period != 20 else "EMA20"
+            
             message = f"""📊 <b>ТЕКУЩЕЕ СОСТОЯНИЕ АКЦИЙ {symbol}</b>
 <i>Анализ на {len(closes)} свечах</i>
 
