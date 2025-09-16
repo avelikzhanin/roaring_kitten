@@ -13,18 +13,27 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class TradingSignal:
-    """Структура торгового сигнала с совместимостью для старой БД"""
+    """Чистая структура торгового сигнала (без фиктивных полей)"""
     symbol: str
     timestamp: datetime
     price: float
     ema20: float
-    # Фиктивные поля для совместимости с БД
-    adx: float = 30.0  # Фиксированное "сильный тренд"
-    plus_di: float = 35.0  # Фиксированное значение
-    minus_di: float = 20.0  # plus_di > minus_di для покупки
     # Новые поля GPT
     gpt_recommendation: Optional[str] = None
     gpt_confidence: Optional[int] = None
+    
+    # Свойства для совместимости с БД (фиктивные значения только при сохранении)
+    @property
+    def adx(self) -> float:
+        return 30.0  # Фиктивное значение для БД
+    
+    @property 
+    def plus_di(self) -> float:
+        return 35.0  # Фиктивное значение для БД
+    
+    @property
+    def minus_di(self) -> float:
+        return 20.0  # Фиктивное значение для БД
 
 class SignalProcessor:
     """Упрощённый обработчик сигналов: базовый фильтр + GPT решения"""
@@ -131,16 +140,12 @@ class SignalProcessor:
                 gpt_advice = await self._get_gpt_decision(market_data, symbol)
                 
                 if gpt_advice and gpt_advice.recommendation in ['BUY', 'WEAK_BUY']:
-                    # GPT рекомендует покупку - создаём сигнал
+                    # GPT рекомендует покупку - создаём чистый сигнал
                     signal = TradingSignal(
                         symbol=symbol,
                         timestamp=df.iloc[-1]['timestamp'],
                         price=market_data['current_price'],
                         ema20=market_data['ema20'],
-                        # Фиктивные значения для совместимости с БД
-                        adx=30.0,
-                        plus_di=35.0,
-                        minus_di=20.0,
                         # GPT данные
                         gpt_recommendation=gpt_advice.recommendation,
                         gpt_confidence=gpt_advice.confidence
@@ -153,17 +158,13 @@ class SignalProcessor:
                     logger.info(f"⏳ GPT не рекомендует покупку {symbol}: {rec}")
                     return None
             else:
-                # Работаем без GPT - создаём сигнал при прохождении базового фильтра
+                # Работаем без GPT - создаём базовый сигнал
                 logger.warning("🤖 GPT недоступен, работаем только по базовому фильтру")
                 signal = TradingSignal(
                     symbol=symbol,
                     timestamp=df.iloc[-1]['timestamp'],
                     price=market_data['current_price'],
-                    ema20=market_data['ema20'],
-                    # Фиктивные значения для совместимости
-                    adx=30.0,
-                    plus_di=35.0,
-                    minus_di=20.0
+                    ema20=market_data['ema20']
                 )
                 return signal
             
