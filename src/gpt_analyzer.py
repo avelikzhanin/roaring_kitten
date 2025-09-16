@@ -1,4 +1,4 @@
-# src/gpt_analyzer.py - ОЧИЩЕННАЯ ВЕРСИЯ без избыточных логов
+# src/gpt_analyzer.py - СОВРЕМЕННАЯ ВЕРСИЯ без ADX/DI
 import logging
 import aiohttp
 import json
@@ -24,74 +24,79 @@ class GPTAdvice:
     timeframe: Optional[str] = None      # Временной горизонт
 
 class GPTMarketAnalyzer:
-    """Анализатор для обогащения торговых сигналов с помощью GPT"""
+    """СОВРЕМЕННЫЙ анализатор для гибридной стратегии (БЕЗ ADX/DI)"""
     
     def __init__(self, openai_api_key: str):
         self.api_key = openai_api_key
         self.base_url = "https://api.openai.com/v1/chat/completions"
         
-        # Базовый системный промпт
-        self.base_system_prompt = """Ты опытный технический аналитик российского рынка акций с 15-летним опытом работы с голубыми фишками.
+        # НОВЫЙ системный промпт без ADX/DI
+        self.base_system_prompt = """Ты профессиональный трейдер российского рынка с 20-летним опытом анализа голубых фишек.
 
-ТВОЯ ЗАДАЧА: Дать детальный профессиональный анализ {symbol} с конкретными уровнями и рекомендациями для ЗАРАБОТКА.
+ТВОЯ РОЛЬ: Принимать торговые решения на основе СОВРЕМЕННОГО анализа {symbol} для получения ПРИБЫЛИ.
 
-ПРИНЦИПЫ АНАЛИЗА:
-- Анализируй ПОЛНУЮ картину: технические индикаторы + исторические данные + уровни
-- Определяй конкретные уровни поддержки/сопротивления по свечным данным
-- Давай четкие TP/SL ТОЛЬКО для покупок (BUY/WEAK_BUY)
-- Для WAIT/AVOID указывай какие уровни/показатели ждать
-- Учитывай объемы торгов и динамику цены
-- Будь ЧЕСТНЫМ - если ситуация неясная, так и скажи
+ДАННЫЕ ДЛЯ АНАЛИЗА:
+- Ценовое движение относительно EMA20 (базовый тренд)
+- Объёмы торгов и их динамика  
+- Уровни поддержки и сопротивления
+- Свечные паттерны (последние 50 свечей)
+- Волатильность и momentum
+- Контекст торговой сессии
 
-РЕКОМЕНДАЦИИ:
-- BUY: уверенно покупать (80-100%) + обязательно TP/SL
-- WEAK_BUY: можно попробовать осторожно (60-79%) + осторожные TP/SL  
-- WAIT: ждать лучших условий (40-59%) + какие уровни ждем (БЕЗ TP/SL!)
-- AVOID: точно не покупать (<40%) + объяснение почему (БЕЗ TP/SL!)
+ПРИНЦИПЫ РЕШЕНИЙ:
+- ЧЕСТНОСТЬ: если ситуация неясная, говори прямо
+- КОНКРЕТНОСТЬ: точные цифры вместо "около" или "примерно"  
+- ПРИБЫЛЬ: фокус на заработке, а не на академической теории
+- РИСКИ: всегда предупреждай о главных опасностях
+- ВРЕМЯ: учитывай качество торговой сессии
+
+ТИПЫ РЕКОМЕНДАЦИЙ:
+- BUY: уверенная покупка (75-100%) → обязательно TP/SL
+- WEAK_BUY: осторожная покупка (60-74%) → консервативные TP/SL
+- WAIT: ждать лучшего момента (40-59%) → указать какие уровни ждать
+- AVOID: не покупать сейчас (<40%) → объяснить почему
 
 {ticker_specific_context}
 
-ОБЯЗАТЕЛЬНО указывай:
-- Конкретные цифры уровней (не "около", а точные значения)
-- Логику размещения TP/SL только для покупок
-- Временные горизонты для ожиданий
+ТРЕБОВАНИЯ К ОТВЕТУ:
+- Конкретные числовые уровни (не "около 300", а "302.50")
+- TP/SL только для BUY/WEAK_BUY
+- Временные рамки для всех решений
+- Анализ рисков
 
-Отвечай ТОЛЬКО в JSON формате."""
+Отвечай СТРОГО в JSON формате."""
 
-        # Контексты для разных тикеров
+        # Контексты для разных тикеров (обновлённые)
         self.ticker_contexts = {
             'SBER': """
-КОНТЕКСТ SBER:
-- Обычно торгуется 280-330 рублей (волатильность 2-5% в день)
-- Премиум время торгов: 11:00-16:00 МСК
-- Реагирует на: новости ЦБ, санкции, нефть, дивиденды
-- Ликвидная акция с узким спредом
-- Сильная поддержка на уровне 270-280 ₽
-- Основное сопротивление 320-340 ₽""",
+СПЕЦИФИКА SBER:
+- Типичный диапазон: 280-330 ₽ (волатильность 2-5%/день)
+- Премиум торги: 11:00-16:00 МСК (максимальная ликвидность)
+- Реакция на: решения ЦБ, санкции, нефть, дивиденды, геополитику
+- Ключевые уровни: поддержка 270-280₽, сопротивление 320-340₽
+- Объёмы: норма 1-3М/час, всплески до 5М+ на новостях""",
 
             'GAZP': """
-КОНТЕКСТ GAZP:
-- Обычно торгуется 120-180 рублей (волатильность 3-7% в день)
-- Премиум время торгов: 11:00-16:00 МСК
-- Реагирует на: цены на газ, санкции, геополитику, сезонность
-- Высокая волатильность из-за внешних факторов
-- Сильная поддержка на уровне 120-130 ₽
-- Основное сопротивление 170-190 ₽""",
+СПЕЦИФИКА GAZP:
+- Типичный диапазон: 120-180 ₽ (волатильность 3-7%/день)
+- Премиум торги: 11:00-16:00 МСК
+- Реакция на: цены на газ, санкции, геополитику, сезонность отопления
+- Ключевые уровни: поддержка 120-130₽, сопротивление 170-190₽
+- Особенность: высокая волатильность из-за внешних факторов""",
 
             'LKOH': """
-КОНТЕКСТ LKOH:
-- Обычно торгуется 6000-8000 рублей (волатильность 2-6% в день)
-- Премиум время торгов: 11:00-16:00 МСК
-- Реагирует на: цены на нефть, санкции, курс рубля, дивиденды
-- Менее ликвидная чем SBER, больший спред
-- Сильная поддержка на уровне 6000-6200 ₽
-- Основное сопротивление 7500-8000 ₽""",
+СПЕЦИФИКА LKOH:
+- Типичный диапазон: 6000-8000 ₽ (волатильность 2-6%/день)  
+- Премиум торги: 11:00-16:00 МСК
+- Реакция на: цены на нефть Brent, санкции, курс рубля, дивиденды
+- Ключевые уровни: поддержка 6000-6200₽, сопротивление 7500-8000₽
+- Особенность: менее ликвидная, больший спред чем SBER""",
 
             'DEFAULT': """
-КОНТЕКСТ АКЦИИ:
-- Премиум время торгов: 11:00-16:00 МСК
-- Реагирует на общерыночные факторы и новости компании
-- Анализируй исторические уровни из предоставленных данных"""
+ОБЩИЕ ПРИНЦИПЫ:
+- Учитывай общерыночные факторы и новости компании
+- Анализируй исторические уровни из предоставленных данных
+- Премиум время торгов: 11:00-16:00 МСК"""
         }
 
     def get_system_prompt(self, symbol: str) -> str:
@@ -104,13 +109,13 @@ class GPTMarketAnalyzer:
 
     async def analyze_signal(self, signal_data: Dict, candles_data: Optional[List] = None, 
                            is_manual_check: bool = False, symbol: str = 'SBER') -> Optional[GPTAdvice]:
-        """Анализ торгового сигнала с помощью GPT"""
+        """СОВРЕМЕННЫЙ анализ торгового сигнала (БЕЗ ADX/DI)"""
         try:
             # Получаем правильный системный промпт для тикера
             system_prompt = self.get_system_prompt(symbol)
             
-            # Создаем промпт
-            prompt = self._create_enhanced_prompt(signal_data, candles_data, is_manual_check, symbol)
+            # Создаем СОВРЕМЕННЫЙ промпт
+            prompt = self._create_modern_prompt(signal_data, candles_data, is_manual_check, symbol)
             
             response = await self._call_openai_api(prompt, system_prompt)
             
@@ -123,133 +128,87 @@ class GPTMarketAnalyzer:
             logger.error(f"Ошибка анализа GPT для {symbol}: {e}")
             return None
     
-    def _analyze_price_levels(self, candles_data: List) -> Dict:
-        """Анализ уровней поддержки и сопротивления"""
-        if not candles_data or len(candles_data) < 20:
-            return {}
-        
-        # Последние 50 свечей для анализа уровней
-        recent_candles = candles_data[-50:] if len(candles_data) > 50 else candles_data
-        
-        highs = [candle['high'] for candle in recent_candles]
-        lows = [candle['low'] for candle in recent_candles]
-        closes = [candle['close'] for candle in recent_candles]
-        volumes = [candle['volume'] for candle in recent_candles]
-        
-        current_price = closes[-1]
-        
-        # Поиск уровней
-        resistances = []
-        for i in range(2, len(highs) - 2):
-            if (highs[i] > highs[i-1] and highs[i] > highs[i-2] and 
-                highs[i] > highs[i+1] and highs[i] > highs[i+2]):
-                if highs[i] > current_price:
-                    resistances.append(highs[i])
-        
-        supports = []
-        for i in range(2, len(lows) - 2):
-            if (lows[i] < lows[i-1] and lows[i] < lows[i-2] and 
-                lows[i] < lows[i+1] and lows[i] < lows[i+2]):
-                if lows[i] < current_price:
-                    supports.append(lows[i])
-        
-        resistances.sort()
-        supports.sort(reverse=True)
-        
-        # Волатильность
-        price_changes = [abs(closes[i] - closes[i-1]) / closes[i-1] * 100 
-                        for i in range(1, len(closes))]
-        avg_volatility = np.mean(price_changes) if price_changes else 2.0
-        
-        # Средний объем
-        avg_volume = np.mean(volumes) if volumes else 0
-        recent_volume = np.mean(volumes[-5:]) if len(volumes) >= 5 else avg_volume
-        
-        return {
-            'current_price': current_price,
-            'nearest_resistance': resistances[0] if resistances else None,
-            'nearest_support': supports[0] if supports else None,
-            'all_resistances': resistances[:3],
-            'all_supports': supports[:3],
-            'avg_volatility': round(avg_volatility, 2),
-            'volume_ratio': round(recent_volume / avg_volume, 2) if avg_volume > 0 else 1.0,
-            'price_range_5d': {'high': max(highs[-25:]), 'low': min(lows[-25:])} if len(highs) >= 25 else None
-        }
-    
-    def _create_enhanced_prompt(self, signal_data: Dict, candles_data: Optional[List], 
-                              is_manual_check: bool, symbol: str = 'SBER') -> str:
-        """Создание промпта для GPT"""
+    def _create_modern_prompt(self, signal_data: Dict, candles_data: Optional[List], 
+                             is_manual_check: bool, symbol: str = 'SBER') -> str:
+        """Создание СОВРЕМЕННОГО промпта без ADX/DI"""
         
         # Анализ уровней если есть данные свечей
-        levels_analysis = {}
-        candles_info = ""
+        levels_info = ""
+        volume_info = ""
+        movement_info = ""
         
-        if candles_data:
+        if candles_data and len(candles_data) > 10:
             levels_analysis = self._analyze_price_levels(candles_data)
             
             if levels_analysis:
-                candles_info = f"""
-📈 АНАЛИЗ УРОВНЕЙ (последние 50 свечей):
+                levels_info = f"""
+📈 УРОВНИ ПОДДЕРЖКИ/СОПРОТИВЛЕНИЯ:
 • Ближайшее сопротивление: {levels_analysis.get('nearest_resistance', 'не найдено')} ₽
 • Ближайшая поддержка: {levels_analysis.get('nearest_support', 'не найдено')} ₽
-• Средняя волатильность: {levels_analysis.get('avg_volatility', 0)}% в день
-• Соотношение объемов: {levels_analysis.get('volume_ratio', 1.0)} (текущий/средний)"""
+• Диапазон 50 свечей: {levels_analysis.get('range_low', 0):.2f} - {levels_analysis.get('range_high', 0):.2f} ₽"""
         
-        # Проверяем выполнены ли технические условия
+        # Анализ объёмов
+        if 'volume_analysis' in signal_data and signal_data['volume_analysis']:
+            vol = signal_data['volume_analysis']
+            volume_info = f"""
+🔊 АНАЛИЗ ОБЪЁМОВ:
+• Текущий объём: {vol.get('current_volume', 0):,} акций
+• Отношение к среднему: {vol.get('volume_ratio', 1.0):.2f}x
+• Тренд объёмов: {vol.get('volume_trend', 'unknown')}"""
+        
+        # Движение цены  
+        movement_info = ""
+        for key in ['change_1h', 'change_4h', 'change_1d', 'volatility_5d']:
+            if key in signal_data:
+                if key == 'volatility_5d':
+                    movement_info += f"\n• Волатильность 5д: {signal_data[key]:.1f}%"
+                else:
+                    period = key.replace('change_', '').upper()
+                    movement_info += f"\n• Изменение {period}: {signal_data[key]:+.2f}%"
+        
+        if movement_info:
+            movement_info = f"\n📊 ДВИЖЕНИЕ ЦЕНЫ:{movement_info}"
+        
+        # Проверяем выполнены ли базовые условия
         conditions_met = signal_data.get('conditions_met', True)
+        price_above_ema = signal_data.get('price_above_ema', True)
         
-        # Анализ силы индикаторов
-        adx_value = signal_data['adx']
-        if adx_value > 40:
-            adx_strength = "очень сильный"
-        elif adx_value > 25:
-            adx_strength = "сильный" 
-        else:
-            adx_strength = "СЛАБЫЙ"
-        
-        di_difference = signal_data['plus_di'] - signal_data['minus_di']
-        if di_difference > 15:
-            di_strength = "очень сильное"
-        elif di_difference > 10:
-            di_strength = "сильное"
-        elif di_difference > 5:
-            di_strength = "среднее"
-        elif di_difference > 1:
-            di_strength = "слабое"
-        else:
-            di_strength = "ОТСУТСТВУЕТ"
-        
-        price_above_ema_percent = ((signal_data['price'] / signal_data['ema20'] - 1) * 100)
-        
+        # Контекст времени торгов
         current_hour = datetime.now().hour
-        if 11 <= current_hour <= 16:
-            session_quality = "премиум время"
-        elif 10 <= current_hour <= 18:
-            session_quality = "нормальное время"
-        else:
-            session_quality = "плохое время для входа"
+        session = signal_data.get('trading_session', 'unknown')
+        time_quality = signal_data.get('time_quality', 'unknown')
         
-        signal_type = "Ручная проверка" if is_manual_check else "Автоматический сигнал"
+        if time_quality == 'premium':
+            session_desc = "отличное время (премиум часы)"
+        elif time_quality == 'normal':
+            session_desc = "нормальное время"
+        elif time_quality == 'evening':
+            session_desc = "вечерняя сессия"
+        else:
+            session_desc = f"сессия {session}"
         
         # Определяем статус условий стратегии
-        if conditions_met:
-            strategy_status = "✅ ВСЕ УСЛОВИЯ ВЫПОЛНЕНЫ"
+        if conditions_met and price_above_ema:
+            strategy_status = "✅ БАЗОВЫЙ ФИЛЬТР ПРОЙДЕН"
             analysis_focus = "ДАТЬ КОНКРЕТНЫЕ TP/SL для покупки"
         else:
-            strategy_status = "❌ УСЛОВИЯ НЕ ВЫПОЛНЕНЫ"
-            analysis_focus = "УКАЗАТЬ какие уровни/показатели ждать для входа (БЕЗ TP/SL)"
+            strategy_status = "❌ БАЗОВЫЕ УСЛОВИЯ НЕ ВЫПОЛНЕНЫ"
+            analysis_focus = "УКАЗАТЬ какие уровни/показатели ждать (БЕЗ TP/SL)"
+        
+        signal_type = "Ручная проверка" if is_manual_check else "Автоматический сигнал"
+        check_peak = signal_data.get('check_peak', False)
+        if check_peak:
+            analysis_focus = "ПРОВЕРИТЬ не пик ли тренда (продавать?)"
         
         prompt = f"""АНАЛИЗ РЫНОЧНОЙ СИТУАЦИИ {symbol}:
 
-📊 ТЕХНИЧЕСКИЕ ДАННЫЕ:
-• Цена: {signal_data['price']:.2f} ₽
-• EMA20: {signal_data['ema20']:.2f} ₽ (цена {'выше' if price_above_ema_percent > 0 else 'ниже'} на {abs(price_above_ema_percent):.1f}%)
-• ADX: {adx_value:.1f} ({adx_strength} тренд)
-• +DI: {signal_data['plus_di']:.1f} vs -DI: {signal_data['minus_di']:.1f}
-• Преимущество DI: {di_difference:.1f} ({di_strength} доминация){candles_info}
+💰 ОСНОВНЫЕ ДАННЫЕ:
+• Цена: {signal_data.get('price', 0):.2f} ₽
+• EMA20: {signal_data.get('ema20', 0):.2f} ₽ (цена {'выше ✅' if price_above_ema else 'ниже ❌'})
+• Пробой EMA20: {((signal_data.get('price', 0) / signal_data.get('ema20', 1) - 1) * 100):+.2f}%{levels_info}{volume_info}{movement_info}
 
-⏰ КОНТЕКСТ:
-• Время: {datetime.now().strftime('%H:%M МСК')} ({session_quality})
+⏰ ТОРГОВЫЙ КОНТЕКСТ:
+• Время: {datetime.now().strftime('%H:%M МСК')} ({session_desc})
 • Тип проверки: {signal_type}
 • Статус стратегии: {strategy_status}
 
@@ -258,16 +217,64 @@ class GPTMarketAnalyzer:
 Ответь в JSON:
 {{
   "recommendation": "BUY/WEAK_BUY/WAIT/AVOID",
-  "confidence": число_0_100,
-  "reasoning": "объяснение с уровнями (до 600 символов)",
-  "take_profit": "конкретная цена TP только для BUY/WEAK_BUY или null",
-  "stop_loss": "конкретная цена SL только для BUY/WEAK_BUY или null", 
-  "expected_levels": "что ждать для входа (только для WAIT/AVOID) или null",
-  "timeframe": "временной горизонт",
-  "risk_warning": "главные риски"
+  "confidence": число_от_0_до_100,
+  "reasoning": "детальное объяснение с конкретными уровнями (до 600 символов)",
+  "take_profit": "точная цена TP для BUY/WEAK_BUY или null",
+  "stop_loss": "точная цена SL для BUY/WEAK_BUY или null", 
+  "expected_levels": "что ждать для WAIT/AVOID или null",
+  "timeframe": "временной горизонт сделки",
+  "risk_warning": "главные риски текущей ситуации"
 }}"""
         
         return prompt
+    
+    def _analyze_price_levels(self, candles_data: List[Dict]) -> Dict:
+        """Анализ уровней поддержки и сопротивления из свечных данных"""
+        try:
+            if len(candles_data) < 20:
+                return {}
+            
+            # Последние 50 свечей для анализа уровней
+            recent_candles = candles_data[-50:] if len(candles_data) > 50 else candles_data
+            
+            highs = [c['high'] for c in recent_candles]
+            lows = [c['low'] for c in recent_candles]
+            closes = [c['close'] for c in recent_candles]
+            
+            current_price = closes[-1]
+            
+            # Поиск уровней сопротивления (локальные максимумы)
+            resistances = []
+            for i in range(2, len(highs) - 2):
+                if (highs[i] > highs[i-1] and highs[i] > highs[i-2] and 
+                    highs[i] > highs[i+1] and highs[i] > highs[i+2]):
+                    if highs[i] > current_price:
+                        resistances.append(highs[i])
+            
+            # Поиск уровней поддержки (локальные минимумы)
+            supports = []
+            for i in range(2, len(lows) - 2):
+                if (lows[i] < lows[i-1] and lows[i] < lows[i-2] and 
+                    lows[i] < lows[i+1] and lows[i] < lows[i+2]):
+                    if lows[i] < current_price:
+                        supports.append(lows[i])
+            
+            resistances = sorted(list(set(resistances)))[:3]  # Ближайшие 3
+            supports = sorted(list(set(supports)), reverse=True)[:3]  # Ближайшие 3
+            
+            return {
+                'current_price': current_price,
+                'nearest_resistance': resistances[0] if resistances else None,
+                'nearest_support': supports[0] if supports else None,
+                'all_resistances': resistances,
+                'all_supports': supports,
+                'range_high': max(highs),
+                'range_low': min(lows)
+            }
+            
+        except Exception as e:
+            logger.error(f"Ошибка анализа уровней: {e}")
+            return {}
     
     async def _call_openai_api(self, prompt: str, system_prompt: str = None) -> Optional[str]:
         """Вызов OpenAI API"""
@@ -375,22 +382,22 @@ class GPTMarketAnalyzer:
             'AVOID': '⛔'
         }
         
-        # Оценка условий
+        # Оценка уверенности
         if advice.confidence >= 80:
-            confidence_text = "отличные условия"
+            confidence_text = "высокая уверенность"
             confidence_emoji = '🟢'
         elif advice.confidence >= 60:
-            confidence_text = "средние условия"
+            confidence_text = "средняя уверенность"
             confidence_emoji = '🟡'
         else:
-            confidence_text = "плохие условия"
+            confidence_text = "низкая уверенность"
             confidence_emoji = '🔴'
         
         result = f"""
-🐱 <b>КОТЁНОК АНАЛИЗИРУЕТ {symbol}:</b>
-{rec_emoji.get(advice.recommendation, '❓')} <b>{advice.recommendation}</b> | {confidence_emoji} {confidence_text}
+🤖 <b>GPT АНАЛИЗ {symbol}:</b>
+{rec_emoji.get(advice.recommendation, '❓')} <b>{advice.recommendation}</b> | {confidence_emoji} {confidence_text} ({advice.confidence}%)
 
-💡 <b>Анализ:</b> {advice.reasoning}"""
+💡 <b>Обоснование:</b> {advice.reasoning}"""
         
         # TP/SL ТОЛЬКО для покупок
         if advice.recommendation in ['BUY', 'WEAK_BUY']:
@@ -398,29 +405,15 @@ class GPTMarketAnalyzer:
                 result += f"\n🎯 <b>Take Profit:</b> {advice.take_profit}"
             if advice.stop_loss:
                 result += f"\n🛑 <b>Stop Loss:</b> {advice.stop_loss}"
+            if advice.timeframe:
+                result += f"\n⏰ <b>Горизонт:</b> {advice.timeframe}"
         
         # Expected levels ТОЛЬКО для ожидания
         elif advice.recommendation in ['WAIT', 'AVOID'] and advice.expected_levels:
-            if advice.expected_levels.strip().startswith('{') and advice.expected_levels.strip().endswith('}'):
-                try:
-                    levels_data = json.loads(advice.expected_levels)
-                    
-                    levels_text = []
-                    if 'breakout_level' in levels_data:
-                        levels_text.append(f"пробой {levels_data['breakout_level']} ₽")
-                    if 'support_level' in levels_data:
-                        levels_text.append(f"поддержка {levels_data['support_level']} ₽")
-                    if 'resistance_level' in levels_data:
-                        levels_text.append(f"сопротивление {levels_data['resistance_level']} ₽")
-                    
-                    if levels_text:
-                        result += f"\n📊 <b>Ждать:</b> {', '.join(levels_text)}"
-                    else:
-                        result += f"\n📊 <b>Ждать:</b> {advice.expected_levels}"
-                        
-                except (json.JSONDecodeError, KeyError):
-                    result += f"\n📊 <b>Ждать:</b> {advice.expected_levels}"
-            else:
-                result += f"\n📊 <b>Ждать:</b> {advice.expected_levels}"
+            result += f"\n📊 <b>Ждать:</b> {advice.expected_levels}"
+        
+        # Предупреждение о рисках
+        if advice.risk_warning:
+            result += f"\n\n⚠️ <b>Риски:</b> {advice.risk_warning}"
         
         return result
