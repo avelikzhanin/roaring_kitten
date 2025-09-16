@@ -13,12 +13,16 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class TradingSignal:
-    """Структура торгового сигнала для гибридной стратегии"""
+    """Структура торгового сигнала с совместимостью для старой БД"""
     symbol: str
     timestamp: datetime
     price: float
     ema20: float
-    # Убрали ADX/DI поля
+    # Фиктивные поля для совместимости с БД
+    adx: float = 30.0  # Фиксированное "сильный тренд"
+    plus_di: float = 35.0  # Фиксированное значение
+    minus_di: float = 20.0  # plus_di > minus_di для покупки
+    # Новые поля GPT
     gpt_recommendation: Optional[str] = None
     gpt_confidence: Optional[int] = None
 
@@ -379,22 +383,34 @@ class SignalProcessor:
             return 'unknown'
     
     async def _get_gpt_decision(self, market_data: Dict, symbol: str):
-        """Получение решения от GPT"""
+        """Получение решения от GPT с современными данными (БЕЗ фиктивных ADX/DI)"""
         try:
             logger.info(f"🤖 Запрашиваем решение GPT для {symbol}...")
             
-            # Подготавливаем данные для GPT
+            # Подготавливаем РЕАЛЬНЫЕ данные для GPT - без фиктивных значений
             signal_data = {
+                # Основные данные
                 'price': market_data['current_price'],
                 'ema20': market_data['ema20'],
-                'conditions_met': market_data['conditions_met']
+                'price_above_ema': market_data['price_above_ema'],
+                'conditions_met': market_data['conditions_met'],
+                
+                # Анализ объёмов (реальные данные)
+                'volume_analysis': market_data.get('volume_analysis', {}),
+                
+                # Уровни поддержки/сопротивления (реальные данные)
+                'price_levels': market_data.get('price_levels', {}),
+                
+                # Контекст времени
+                'trading_session': market_data.get('trading_session', 'unknown'),
+                'time_quality': market_data.get('time_quality', 'unknown')
             }
             
-            # Добавляем дополнительную информацию если есть
+            # Добавляем движение цены если есть
             if 'price_movement' in market_data:
                 signal_data.update(market_data['price_movement'])
             
-            # Запрашиваем анализ у GPT
+            # Запрашиваем анализ у GPT с СОВРЕМЕННЫМИ данными
             gpt_advice = await self.gpt_analyzer.analyze_signal(
                 signal_data=signal_data,
                 candles_data=market_data.get('candles_data'),
@@ -411,6 +427,7 @@ class SignalProcessor:
                 
         except Exception as e:
             logger.error(f"Ошибка GPT анализа для {symbol}: {e}")
+            logger.error(f"Переданные данные: {list(signal_data.keys()) if 'signal_data' in locals() else 'не подготовлены'}")
             return None
     
     # === Остальные методы остаются без изменений ===
@@ -501,7 +518,7 @@ class SignalProcessor:
             return f"❌ <b>Ошибка получения данных для анализа {symbol}</b>\n\nВозможны временные проблемы с внешними сервисами."
     
     async def check_peak_trend(self, symbol: str) -> Optional[float]:
-        """Проверка пика тренда - теперь через GPT"""
+        """Проверка пика тренда - теперь через GPT с реальными данными"""
         try:
             # Получаем данные
             ticker_info = await self.db.get_ticker_info(symbol)
@@ -526,13 +543,24 @@ class SignalProcessor:
             # Спрашиваем у GPT о пике тренда
             if self.gpt_analyzer:
                 try:
-                    # Специальный анализ для пика
+                    # Специальный анализ для пика с РЕАЛЬНЫМИ данными
                     signal_data = {
+                        # Основные данные
                         'price': current_price,
                         'ema20': market_data['ema20'],
+                        'price_above_ema': market_data['price_above_ema'],
                         'conditions_met': True,
-                        'check_peak': True  # Специальный флаг
+                        'check_peak': True,  # Специальный флаг для пика
+                        
+                        # Реальные данные для анализа пика
+                        'volume_analysis': market_data.get('volume_analysis', {}),
+                        'price_levels': market_data.get('price_levels', {}),
+                        'trading_session': market_data.get('trading_session', 'unknown')
                     }
+                    
+                    # Добавляем движение цены для анализа пика
+                    if 'price_movement' in market_data:
+                        signal_data.update(market_data['price_movement'])
                     
                     gpt_advice = await self.gpt_analyzer.analyze_signal(
                         signal_data=signal_data,
