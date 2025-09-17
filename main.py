@@ -38,12 +38,12 @@ async def get_sber_data():
             to_date = datetime.now()
             from_date = to_date - timedelta(days=30)
             
-            # Получаем свечи
+            # Получаем свечи (меняем на часовой таймфрейм)
             candles_data = []
             for candle in client.get_all_candles(
                 figi=SBER_FIGI,
                 from_=from_date,
-                interval=CandleInterval.CANDLE_INTERVAL_DAY
+                interval=CandleInterval.CANDLE_INTERVAL_HOUR  # Часовые вместо дневных
             ):
                 candles_data.append({
                     'high': float(quotation_to_decimal(candle.high)),
