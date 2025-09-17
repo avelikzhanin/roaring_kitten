@@ -6,7 +6,7 @@ from telegram.error import TelegramError, TimedOut, NetworkError
 logger = logging.getLogger(__name__)
 
 class MessageSender:
-    """Отправщик сообщений подписчикам с РЕАЛЬНЫМИ ADX от GPT"""
+    """Отправщик сообщений с РЕАЛЬНЫМИ ADX значениями от GPT"""
     
     def __init__(self, database, gpt_analyzer=None, tinkoff_provider=None):
         self.db = database
@@ -42,7 +42,7 @@ class MessageSender:
             # Fallback: базовая информация GPT с ADX
             adx_info = ""
             if signal.adx > 0:
-                adx_info = f"\n📊 <b>ADX (от GPT):</b> {signal.adx:.1f} | +DI: {signal.plus_di:.1f} | -DI: {signal.minus_di:.1f}"
+                adx_info = f"\n📊 <b>РЕАЛЬНЫЙ ADX от GPT:</b> {signal.adx:.1f} | +DI: {signal.plus_di:.1f} | -DI: {signal.minus_di:.1f}"
             
             message += f"""
 
@@ -65,8 +65,8 @@ class MessageSender:
             gpt_data = {
                 'recommendation': signal.gpt_recommendation,
                 'confidence': signal.gpt_confidence,
-                'take_profit': None,  # Можно добавить позже
-                'stop_loss': None     # Можно добавить позже
+                'take_profit': getattr(signal.gpt_full_advice, 'take_profit', None) if hasattr(signal, 'gpt_full_advice') and signal.gpt_full_advice else None,
+                'stop_loss': getattr(signal.gpt_full_advice, 'stop_loss', None) if hasattr(signal, 'gpt_full_advice') and signal.gpt_full_advice else None
             }
         
         # Сохраняем сигнал в БД с РЕАЛЬНЫМИ ADX значениями от GPT
@@ -75,7 +75,7 @@ class MessageSender:
             signal_type='BUY',
             price=signal.price,
             ema20=signal.ema20,
-            # НОВОЕ: РЕАЛЬНЫЕ ADX значения от GPT (не фиктивные!)
+            # РЕАЛЬНЫЕ ADX значения от GPT (не фиктивные!)
             adx=signal.adx,
             plus_di=signal.plus_di,
             minus_di=signal.minus_di,
@@ -116,7 +116,7 @@ class MessageSender:
         
         if last_signal and last_signal.get('adx'):
             real_adx = float(last_signal['adx'])
-            adx_info = f"\n📊 <b>РЕАЛЬНЫЙ ADX:</b> {real_adx:.1f} > 45 (экстремально сильный тренд)"
+            adx_info = f"\n📊 <b>РЕАЛЬНЫЙ ADX от GPT:</b> {real_adx:.1f} > 45 (экстремально сильный тренд)"
             adx_value = real_adx
         
         message = f"""🔥 <b>ПИК ТРЕНДА - ПРОДАЁМ {symbol}!</b>
@@ -226,24 +226,6 @@ class MessageSender:
 📈 <b>EMA20:</b> {signal.ema20:.2f} ₽ (цена выше){adx_section}
 
 ✅ <b>ВСЕ УСЛОВИЯ ВЫПОЛНЕНЫ</b>"""
-    
-    async def _get_gpt_analysis(self, signal) -> Optional[dict]:
-        """УСТАРЕВШИЙ: GPT анализ теперь в signal объекте"""
-        logger.warning("⚠️ _get_gpt_analysis устарел - используйте данные из signal объекта")
-        
-        # Возвращаем данные из signal если есть
-        if hasattr(signal, 'gpt_recommendation') and signal.gpt_recommendation:
-            adx_info = f" (ADX: {signal.adx:.1f})" if signal.adx > 0 else ""
-            return {
-                'formatted_message': f"""
-🤖 <b>GPT АНАЛИЗ:</b> {signal.gpt_recommendation} ({signal.gpt_confidence}%){adx_info}""",
-                'db_data': {
-                    'recommendation': signal.gpt_recommendation,
-                    'confidence': signal.gpt_confidence
-                }
-            }
-        
-        return None
     
     async def _get_profit_summary(self, symbol: str, current_price: float) -> str:
         """Получение сводки по прибыли"""
