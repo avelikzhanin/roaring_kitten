@@ -8,14 +8,14 @@ import logging
 logger = logging.getLogger(__name__)
 
 class DatabaseManager:
-    """Менеджер базы данных для торгового бота с поддержкой множественных акций"""
+    """Менеджер базы данных для торгового бота с поддержкой множественных акций (БЕЗ ADX)"""
     
     def __init__(self, database_url: str):
         self.database_url = database_url
         self.pool: Optional[asyncpg.Pool] = None
         
     async def initialize(self):
-        """Инициализация подключения к БД"""
+        """Инициализация подключения к БД с миграцией ADX"""
         try:
             logger.info(f"🔗 Подключаемся к БД...")
             
@@ -32,14 +32,15 @@ class DatabaseManager:
                 version = await conn.fetchval('SELECT version()')
                 logger.info(f"✅ Подключено к PostgreSQL: {version[:50]}...")
             
-            # Создаем таблицы с миграциями
+            # Создаем таблицы с миграциями (включая удаление ADX)
             await self.create_tables()
+            await self.migrate_remove_adx()  # НОВОЕ: Удаляем ADX колонки
             
             # Добавляем тикеры и мигрируем старых пользователей
             await self.ensure_tickers()
             await self.migrate_existing_users()
             
-            logger.info("✅ База данных полностью инициализирована")
+            logger.info("✅ База данных полностью инициализирована (БЕЗ ADX)")
             
         except Exception as e:
             logger.error(f"❌ Ошибка инициализации БД: {e}")
@@ -52,8 +53,39 @@ class DatabaseManager:
             await self.pool.close()
             logger.info("📊 Соединение с БД закрыто")
     
+    async def migrate_remove_adx(self):
+        """НОВОЕ: Миграция - удаление ADX, plus_di, minus_di из signals"""
+        if not self.pool:
+            return
+            
+        try:
+            async with self.pool.acquire() as conn:
+                # Проверяем, существуют ли колонки ADX
+                adx_exists = await conn.fetchval('''
+                    SELECT EXISTS (
+                        SELECT 1 FROM information_schema.columns 
+                        WHERE table_name = 'signals' AND column_name = 'adx'
+                    )
+                ''')
+                
+                if adx_exists:
+                    logger.info("🔄 Удаляем устаревшие ADX колонки из signals...")
+                    
+                    # Удаляем колонки ADX/DI
+                    await conn.execute('ALTER TABLE signals DROP COLUMN IF EXISTS adx')
+                    await conn.execute('ALTER TABLE signals DROP COLUMN IF EXISTS plus_di')
+                    await conn.execute('ALTER TABLE signals DROP COLUMN IF EXISTS minus_di')
+                    
+                    logger.info("✅ ADX колонки успешно удалены")
+                else:
+                    logger.info("✅ ADX колонки уже отсутствуют")
+                    
+        except Exception as e:
+            logger.error(f"❌ Ошибка миграции ADX: {e}")
+            # Не останавливаем инициализацию из-за ошибки миграции
+    
     async def create_tables(self):
-        """Создание всех необходимых таблиц с миграциями"""
+        """Создание всех необходимых таблиц БЕЗ ADX полей"""
         if not self.pool:
             return
             
@@ -94,7 +126,7 @@ class DatabaseManager:
                 ''')
                 logger.info("📋 Добавлена колонка is_active в tickers")
             except Exception as e:
-                logger.info(f"📋 Колонка is_active уже существует в tickers или ошибка: {e}")
+                logger.info(f"📋 Колонка is_active уже существует в tickers: {e}")
             
             # НОВАЯ: Таблица подписок пользователей
             await conn.execute('''
@@ -118,16 +150,13 @@ class DatabaseManager:
                 ON user_subscriptions(ticker_id)
             ''')
             
-            # Обновляем таблицу сигналов
+            # ОБНОВЛЕННАЯ таблица сигналов БЕЗ ADX полей
             await conn.execute('''
                 CREATE TABLE IF NOT EXISTS signals (
                     id SERIAL PRIMARY KEY,
                     signal_type VARCHAR(20) NOT NULL,
                     price DECIMAL(10, 2),
                     ema20 DECIMAL(10, 2),
-                    adx DECIMAL(5, 2),
-                    plus_di DECIMAL(5, 2),
-                    minus_di DECIMAL(5, 2),
                     gpt_recommendation VARCHAR(20),
                     gpt_confidence INTEGER,
                     gpt_take_profit DECIMAL(10, 2),
@@ -144,7 +173,7 @@ class DatabaseManager:
                 ''')
                 logger.info("📋 Добавлена колонка ticker_id в signals")
             except Exception as e:
-                logger.info(f"📋 Колонка ticker_id уже существует в signals или ошибка: {e}")
+                logger.info(f"📋 Колонка ticker_id уже существует в signals: {e}")
             
             await conn.execute('''
                 CREATE INDEX IF NOT EXISTS idx_signals_created 
@@ -170,9 +199,9 @@ class DatabaseManager:
                 ''')
                 logger.info("📋 Добавлена колонка ticker_id в active_positions")
             except Exception as e:
-                logger.info(f"📋 Колонка ticker_id уже существует в active_positions или ошибка: {e}")
+                logger.info(f"📋 Колонка ticker_id уже существует в active_positions: {e}")
             
-            logger.info("📋 Таблицы созданы/обновлены")
+            logger.info("📋 Таблицы созданы/обновлены (БЕЗ ADX полей)")
     
     async def ensure_tickers(self):
         """Добавляем все поддерживаемые тикеры"""
@@ -243,7 +272,7 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"❌ Ошибка миграции пользователей: {e}")
     
-    # === Методы для работы с подписками ===
+    # === Методы для работы с подписками (без изменений) ===
     
     async def get_user_subscriptions(self, telegram_id: int) -> List[Dict]:
         """Получение подписок пользователя"""
@@ -384,7 +413,7 @@ class DatabaseManager:
             logger.error(f"Ошибка получения информации о {symbol}: {e}")
             return None
     
-    # === Обновленные методы для пользователей ===
+    # === Обновленные методы для пользователей (без изменений) ===
     
     async def add_or_update_user(self, telegram_id: int, username: str = None, first_name: str = None) -> bool:
         """Добавление или обновление пользователя"""
@@ -437,12 +466,11 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"Ошибка деактивации пользователя: {e}")
     
-    # === Обновленные методы для сигналов ===
+    # === ОБНОВЛЕННЫЕ методы для сигналов БЕЗ ADX ===
     
     async def save_signal(self, symbol: str, signal_type: str, price: float, 
-                         ema20: float, adx: float, plus_di: float, 
-                         minus_di: float, gpt_data: Dict = None) -> Optional[int]:
-        """Сохранение сигнала в БД"""
+                         ema20: float, gpt_data: Dict = None) -> Optional[int]:
+        """Сохранение сигнала в БД БЕЗ ADX полей"""
         if not self.pool:
             return None
             
@@ -457,30 +485,29 @@ class DatabaseManager:
                     logger.error(f"Тикер {symbol} не найден в БД")
                     return None
                 
-                # Сохраняем сигнал
+                # Сохраняем сигнал БЕЗ ADX полей
                 signal_id = await conn.fetchval('''
                     INSERT INTO signals (
-                        ticker_id, signal_type, price, ema20, adx, 
-                        plus_di, minus_di, gpt_recommendation, 
-                        gpt_confidence, gpt_take_profit, gpt_stop_loss
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                        ticker_id, signal_type, price, ema20, 
+                        gpt_recommendation, gpt_confidence, gpt_take_profit, gpt_stop_loss
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
                     RETURNING id
                 ''', 
-                    ticker_id, signal_type, price, ema20, adx, plus_di, minus_di,
+                    ticker_id, signal_type, price, ema20,
                     gpt_data.get('recommendation') if gpt_data else None,
                     gpt_data.get('confidence') if gpt_data else None,
                     float(gpt_data.get('take_profit', 0) or 0) if gpt_data and gpt_data.get('take_profit') else None,
                     float(gpt_data.get('stop_loss', 0) or 0) if gpt_data and gpt_data.get('stop_loss') else None
                 )
                 
-                logger.info(f"💾 Сигнал {signal_type} для {symbol} сохранен (id={signal_id})")
+                logger.info(f"💾 Сигнал {signal_type} для {symbol} сохранен (id={signal_id}) БЕЗ ADX")
                 return signal_id
                 
         except Exception as e:
             logger.error(f"Ошибка сохранения сигнала для {symbol}: {e}")
             return None
     
-    # === Обновленные методы для позиций ===
+    # === Обновленные методы для позиций (без изменений) ===
     
     async def open_position(self, telegram_id: int, symbol: str, signal_id: int, buy_price: float):
         """Открытие позиции для пользователя"""
@@ -614,7 +641,7 @@ class DatabaseManager:
         return await self.get_subscribers_for_ticker('SBER')
     
     async def get_last_buy_signal(self, symbol: str = 'SBER') -> Optional[Dict]:
-        """Получение последнего сигнала покупки для тикера"""
+        """Получение последнего сигнала покупки для тикера БЕЗ ADX"""
         if not self.pool:
             return None
             
@@ -664,7 +691,7 @@ class DatabaseManager:
                     'SELECT COUNT(*) FROM user_subscriptions WHERE is_active = TRUE'
                 )
                 
-                # Сигналы
+                # Сигналы (БЕЗ ADX статистики)
                 stats['total_signals'] = await conn.fetchval(
                     'SELECT COUNT(*) FROM signals'
                 )
