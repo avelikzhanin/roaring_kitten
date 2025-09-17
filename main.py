@@ -39,21 +39,13 @@ async def get_sber_data():
             from_date = to_date - timedelta(days=30)
             
             # Получаем свечи
-            candles_response = client.get_all_candles(
+            candles_data = []
+            for candle in client.get_all_candles(
                 figi=SBER_FIGI,
                 from_=from_date,
-                to=to_date,
                 interval=CandleInterval.CANDLE_INTERVAL_DAY
-            )
-            
-            if not candles_response:
-                logger.error("No candles data received")
-                return None
-            
-            # Преобразуем в DataFrame
-            data = []
-            for candle in candles_response:
-                data.append({
+            ):
+                candles_data.append({
                     'high': float(quotation_to_decimal(candle.high)),
                     'low': float(quotation_to_decimal(candle.low)),
                     'close': float(quotation_to_decimal(candle.close)),
@@ -61,7 +53,12 @@ async def get_sber_data():
                     'time': candle.time
                 })
             
-            df = pd.DataFrame(data)
+            if not candles_data:
+                logger.error("No candles data received")
+                return None
+            
+            # Преобразуем в DataFrame
+            df = pd.DataFrame(candles_data)
             df = df.sort_values('time').reset_index(drop=True)
             
             if df.empty or len(df) < 20:
