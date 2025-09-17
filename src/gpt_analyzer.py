@@ -1,4 +1,4 @@
-# src/gpt_analyzer.py - СОВРЕМЕННАЯ ВЕРСИЯ без ADX/DI
+# src/gpt_analyzer.py - GPT сам рассчитывает ADX
 import logging
 import aiohttp
 import json
@@ -13,60 +13,89 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class GPTAdvice:
-    """Совет от GPT по сигналу"""
+    """Совет от GPT по сигналу с РЕАЛЬНЫМИ ADX данными"""
     recommendation: str  # "BUY", "AVOID", "WEAK_BUY", "WAIT"
     confidence: int      # 0-100%
     reasoning: str       # Объяснение
     risk_warning: str    # Предупреждение о рисках
-    take_profit: Optional[str] = None    # Целевая прибыль
-    stop_loss: Optional[str] = None      # Стоп-лосс
-    expected_levels: Optional[str] = None # Ожидаемые уровни
-    timeframe: Optional[str] = None      # Временной горизонт
+    
+    # НОВЫЕ поля с РЕАЛЬНЫМИ ADX расчетами от GPT
+    calculated_adx: Optional[float] = None        # ADX рассчитанный GPT
+    calculated_plus_di: Optional[float] = None    # +DI рассчитанный GPT  
+    calculated_minus_di: Optional[float] = None   # -DI рассчитанный GPT
+    
+    # Остальные поля
+    take_profit: Optional[str] = None
+    stop_loss: Optional[str] = None
+    expected_levels: Optional[str] = None
+    timeframe: Optional[str] = None
 
 class GPTMarketAnalyzer:
-    """СОВРЕМЕННЫЙ анализатор для гибридной стратегии (БЕЗ ADX/DI)"""
+    """GPT анализатор с РЕАЛЬНЫМ расчетом ADX/DI"""
     
     def __init__(self, openai_api_key: str):
         self.api_key = openai_api_key
         self.base_url = "https://api.openai.com/v1/chat/completions"
         
-        # НОВЫЙ системный промпт без ADX/DI
-        self.base_system_prompt = """Ты профессиональный трейдер российского рынка с 20-летним опытом анализа голубых фишек.
+        # НОВЫЙ системный промпт с инструкциями по расчету ADX
+        self.base_system_prompt = """Ты профессиональный трейдер российского рынка с 20-летним опытом анализа голубых фишек и математическими навыками расчета технических индикаторов.
 
-ТВОЯ РОЛЬ: Принимать торговые решения на основе СОВРЕМЕННОГО анализа {symbol} для получения ПРИБЫЛИ.
+ТВОЯ РОЛЬ: Рассчитать ADX, +DI, -DI из свечных данных и принять торговое решение для {symbol}.
 
-ДАННЫЕ ДЛЯ АНАЛИЗА:
-- Ценовое движение относительно EMA20 (базовый тренд)
-- Объёмы торгов и их динамика  
-- Уровни поддержки и сопротивления
-- Свечные паттерны (последние 50 свечей)
-- Волатильность и momentum
-- Контекст торговой сессии
+ОБЯЗАТЕЛЬНЫЙ РАСЧЕТ ADX/DI:
+Ты ДОЛЖЕН рассчитать следующие индикаторы по классическим формулам:
 
-ПРИНЦИПЫ РЕШЕНИЙ:
-- ЧЕСТНОСТЬ: если ситуация неясная, говори прямо
-- КОНКРЕТНОСТЬ: точные цифры вместо "около" или "примерно"  
-- ПРИБЫЛЬ: фокус на заработке, а не на академической теории
-- РИСКИ: всегда предупреждай о главных опасностях
-- ВРЕМЯ: учитывай качество торговой сессии
+1. TRUE RANGE (TR):
+   TR = max(High - Low, |High - PrevClose|, |Low - PrevClose|)
 
-ТИПЫ РЕКОМЕНДАЦИЙ:
-- BUY: уверенная покупка (75-100%) → обязательно TP/SL
-- WEAK_BUY: осторожная покупка (60-74%) → консервативные TP/SL
-- WAIT: ждать лучшего момента (40-59%) → указать какие уровни ждать
-- AVOID: не покупать сейчас (<40%) → объяснить почему
+2. DIRECTIONAL MOVEMENT (DM):
+   +DM = High - PrevHigh если > 0 и > (PrevLow - Low), иначе 0
+   -DM = PrevLow - Low если > 0 и > (High - PrevHigh), иначе 0
+
+3. СГЛАЖИВАНИЕ (14-периодное сглаживание Уайлдера):
+   Первое значение = среднее за 14 периодов
+   Последующие = ((предыдущее * 13) + новое значение) / 14
+
+4. DIRECTIONAL INDICATORS:
+   +DI = (+DM14 / TR14) * 100
+   -DI = (-DM14 / TR14) * 100
+
+5. ADX CALCULATION:
+   DX = (|+DI - -DI| / (+DI + -DI)) * 100
+   ADX = 14-периодное сглаживание DX
+
+КРИТЕРИИ СИГНАЛА BUY (ВСЕ ДОЛЖНЫ ВЫПОЛНЯТЬСЯ):
+1. Цена > EMA20 (базовый фильтр уже пройден)
+2. ADX > 25 (сильный тренд)
+3. +DI > -DI (восходящее движение)
+4. (+DI - -DI) > 1 (достаточная разница)
+
+КРИТЕРИИ ПИКА ТРЕНДА (продавать):
+- ADX > 45 (экстремально сильный тренд = пик)
 
 {ticker_specific_context}
 
-ТРЕБОВАНИЯ К ОТВЕТУ:
-- Конкретные числовые уровни (не "около 300", а "302.50")
-- TP/SL только для BUY/WEAK_BUY
-- Временные рамки для всех решений
-- Анализ рисков
+ФОРМАТ ОТВЕТА - СТРОГО JSON:
+{{
+  "calculated_adx": число (твой расчет ADX),
+  "calculated_plus_di": число (твой расчет +DI),
+  "calculated_minus_di": число (твой расчет -DI),
+  "recommendation": "BUY/WEAK_BUY/WAIT/AVOID",
+  "confidence": число_от_0_до_100,
+  "reasoning": "подробное объяснение с показом расчетов ADX",
+  "take_profit": "точная цена для BUY/WEAK_BUY или null",
+  "stop_loss": "точная цена для BUY/WEAK_BUY или null",
+  "expected_levels": "что ждать для WAIT/AVOID или null", 
+  "timeframe": "временной горизонт",
+  "risk_warning": "главные риски"
+}}
 
-Отвечай СТРОГО в JSON формате."""
+ВАЖНО: 
+- Обязательно покажи в reasoning свои расчеты ADX
+- Используй минимум 30 последних свечей для расчета
+- Рекомендация BUY только если ВСЕ критерии ADX выполнены"""
 
-        # Контексты для разных тикеров (обновлённые)
+        # Контексты для разных тикеров
         self.ticker_contexts = {
             'SBER': """
 СПЕЦИФИКА SBER:
@@ -109,53 +138,78 @@ class GPTMarketAnalyzer:
 
     async def analyze_signal(self, signal_data: Dict, candles_data: Optional[List] = None, 
                            is_manual_check: bool = False, symbol: str = 'SBER') -> Optional[GPTAdvice]:
-        """СОВРЕМЕННЫЙ анализ торгового сигнала (БЕЗ ADX/DI)"""
+        """Анализ сигнала с РЕАЛЬНЫМ расчетом ADX через GPT"""
         try:
             # Получаем правильный системный промпт для тикера
             system_prompt = self.get_system_prompt(symbol)
             
-            # Создаем СОВРЕМЕННЫЙ промпт
-            prompt = self._create_modern_prompt(signal_data, candles_data, is_manual_check, symbol)
+            # Создаем промпт с большим количеством свечных данных для расчета ADX
+            prompt = self._create_adx_calculation_prompt(signal_data, candles_data, is_manual_check, symbol)
             
             response = await self._call_openai_api(prompt, system_prompt)
             
             if response:
-                return self._parse_enhanced_advice(response)
+                return self._parse_adx_advice(response)
             
             return None
             
         except Exception as e:
-            logger.error(f"Ошибка анализа GPT для {symbol}: {e}")
+            logger.error(f"Ошибка анализа GPT с ADX для {symbol}: {e}")
             return None
     
-    def _create_modern_prompt(self, signal_data: Dict, candles_data: Optional[List], 
-                             is_manual_check: bool, symbol: str = 'SBER') -> str:
-        """Создание СОВРЕМЕННОГО промпта без ADX/DI"""
+    def _create_adx_calculation_prompt(self, signal_data: Dict, candles_data: Optional[List], 
+                                     is_manual_check: bool, symbol: str = 'SBER') -> str:
+        """Создание промпта с данными для расчета ADX"""
         
-        # Анализ уровней если есть данные свечей
-        levels_info = ""
-        volume_info = ""
-        movement_info = ""
+        # Проверяем наличие достаточного количества свечей
+        if not candles_data or len(candles_data) < 30:
+            return f"""НЕДОСТАТОЧНО ДАННЫХ для расчета ADX {symbol}:
+Получено свечей: {len(candles_data) if candles_data else 0}
+Требуется минимум: 30
+
+Ответь в JSON:
+{{
+  "calculated_adx": null,
+  "calculated_plus_di": null, 
+  "calculated_minus_di": null,
+  "recommendation": "WAIT",
+  "confidence": 20,
+  "reasoning": "Недостаточно исторических данных для расчета ADX",
+  "risk_warning": "Невозможно оценить силу тренда без ADX"
+}}"""
+
+        # Берем последние 50 свечей для надежного расчета ADX
+        analysis_candles = candles_data[-50:] if len(candles_data) > 50 else candles_data
         
-        if candles_data and len(candles_data) > 10:
-            levels_analysis = self._analyze_price_levels(candles_data)
+        # Формируем таблицу свечей для GPT
+        candles_table = "№  | ДАТА_ВРЕМЯ     | OPEN    | HIGH    | LOW     | CLOSE   | VOLUME\n"
+        candles_table += "---|----------------|---------|---------|---------|---------|----------\n"
+        
+        for i, candle in enumerate(analysis_candles):
+            timestamp = candle.get('timestamp', datetime.now())
+            if hasattr(timestamp, 'strftime'):
+                date_str = timestamp.strftime('%d.%m %H:%M')
+            else:
+                date_str = str(timestamp)[:11]
             
-            if levels_analysis:
-                levels_info = f"""
-📈 УРОВНИ ПОДДЕРЖКИ/СОПРОТИВЛЕНИЯ:
-• Ближайшее сопротивление: {levels_analysis.get('nearest_resistance', 'не найдено')} ₽
-• Ближайшая поддержка: {levels_analysis.get('nearest_support', 'не найдено')} ₽
-• Диапазон 50 свечей: {levels_analysis.get('range_low', 0):.2f} - {levels_analysis.get('range_high', 0):.2f} ₽"""
+            candles_table += f"{i+1:2d} | {date_str} | {candle['open']:7.2f} | {candle['high']:7.2f} | {candle['low']:7.2f} | {candle['close']:7.2f} | {candle['volume']:8,}\n"
         
-        # Анализ объёмов
-        if 'volume_analysis' in signal_data and signal_data['volume_analysis']:
+        # Получаем контекстную информацию
+        current_price = signal_data.get('price', 0)
+        current_ema20 = signal_data.get('ema20', 0)
+        session = signal_data.get('trading_session', 'unknown')
+        time_quality = signal_data.get('time_quality', 'unknown')
+        
+        # Анализ объёмов и движения
+        volume_info = ""
+        if 'volume_analysis' in signal_data:
             vol = signal_data['volume_analysis']
             volume_info = f"""
 🔊 АНАЛИЗ ОБЪЁМОВ:
 • Текущий объём: {vol.get('current_volume', 0):,} акций
 • Отношение к среднему: {vol.get('volume_ratio', 1.0):.2f}x
 • Тренд объёмов: {vol.get('volume_trend', 'unknown')}"""
-        
+
         # Движение цены  
         movement_info = ""
         for key in ['change_1h', 'change_4h', 'change_1d', 'volatility_5d']:
@@ -165,165 +219,55 @@ class GPTMarketAnalyzer:
                 else:
                     period = key.replace('change_', '').upper()
                     movement_info += f"\n• Изменение {period}: {signal_data[key]:+.2f}%"
-        
+
         if movement_info:
             movement_info = f"\n📊 ДВИЖЕНИЕ ЦЕНЫ:{movement_info}"
-        
-        # Проверяем выполнены ли базовые условия
-        conditions_met = signal_data.get('conditions_met', True)
-        price_above_ema = signal_data.get('price_above_ema', True)
-        
-        # Контекст времени торгов
-        current_hour = datetime.now().hour
-        session = signal_data.get('trading_session', 'unknown')
-        time_quality = signal_data.get('time_quality', 'unknown')
-        
-        if time_quality == 'premium':
-            session_desc = "отличное время (премиум часы)"
-        elif time_quality == 'normal':
-            session_desc = "нормальное время"
-        elif time_quality == 'evening':
-            session_desc = "вечерняя сессия"
-        else:
-            session_desc = f"сессия {session}"
-        
-        # Определяем статус условий стратегии
-        if conditions_met and price_above_ema:
-            strategy_status = "✅ БАЗОВЫЙ ФИЛЬТР ПРОЙДЕН"
-            analysis_focus = "ДАТЬ КОНКРЕТНЫЕ TP/SL для покупки"
-        else:
-            strategy_status = "❌ БАЗОВЫЕ УСЛОВИЯ НЕ ВЫПОЛНЕНЫ"
-            analysis_focus = "УКАЗАТЬ какие уровни/показатели ждать (БЕЗ TP/SL)"
-        
-        signal_type = "Ручная проверка" if is_manual_check else "Автоматический сигнал"
-        check_peak = signal_data.get('check_peak', False)
-        if check_peak:
-            analysis_focus = "ПРОВЕРИТЬ не пик ли тренда (продавать?)"
-        
-        prompt = f"""АНАЛИЗ РЫНОЧНОЙ СИТУАЦИИ {symbol}:
 
-💰 ОСНОВНЫЕ ДАННЫЕ:
-• Цена: {signal_data.get('price', 0):.2f} ₽
-• EMA20: {signal_data.get('ema20', 0):.2f} ₽ (цена {'выше ✅' if price_above_ema else 'ниже ❌'})
-• Пробой EMA20: {((signal_data.get('price', 0) / signal_data.get('ema20', 1) - 1) * 100):+.2f}%{levels_info}{volume_info}{movement_info}
+        # Уровни поддержки/сопротивления
+        levels_info = ""
+        if 'price_levels' in signal_data and signal_data['price_levels']:
+            levels = signal_data['price_levels']
+            levels_info = f"""
+📈 УРОВНИ ПОДДЕРЖКИ/СОПРОТИВЛЕНИЯ:
+• Ближайшее сопротивление: {levels.get('nearest_resistance', 'не найдено')} ₽
+• Ближайшая поддержка: {levels.get('nearest_support', 'не найдено')} ₽
+• Диапазон: {levels.get('recent_low', 0):.2f} - {levels.get('recent_high', 0):.2f} ₽"""
+
+        signal_type = "Ручная проверка" if is_manual_check else "Автоматический анализ"
+        check_peak = signal_data.get('check_peak', False)
+        task_description = "ПРОВЕРИТЬ пик тренда (ADX>45?)" if check_peak else "РАССЧИТАТЬ ADX и дать рекомендацию"
+
+        prompt = f"""РАСЧЕТ ADX ДЛЯ ТОРГОВОГО РЕШЕНИЯ {symbol}:
+
+💰 ТЕКУЩИЕ ДАННЫЕ:
+• Цена: {current_price:.2f} ₽
+• EMA20: {current_ema20:.2f} ₽ (базовый фильтр {'✅ пройден' if current_price > current_ema20 else '❌ не пройден'})
+• Пробой EMA20: {((current_price / current_ema20 - 1) * 100):+.2f}%{levels_info}{volume_info}{movement_info}
 
 ⏰ ТОРГОВЫЙ КОНТЕКСТ:
-• Время: {datetime.now().strftime('%H:%M МСК')} ({session_desc})
-• Тип проверки: {signal_type}
-• Статус стратегии: {strategy_status}
+• Время: {datetime.now().strftime('%H:%M МСК')} (сессия: {session}, качество: {time_quality})
+• Тип анализа: {signal_type}
 
-🎯 ЗАДАЧА: {analysis_focus}
+📊 СВЕЧНЫЕ ДАННЫЕ ДЛЯ РАСЧЕТА ADX:
+{candles_table}
 
-Ответь в JSON:
-{{
-  "recommendation": "BUY/WEAK_BUY/WAIT/AVOID",
-  "confidence": число_от_0_до_100,
-  "reasoning": "детальное объяснение с конкретными уровнями (до 600 символов)",
-  "take_profit": "точная цена TP для BUY/WEAK_BUY или null",
-  "stop_loss": "точная цена SL для BUY/WEAK_BUY или null", 
-  "expected_levels": "что ждать для WAIT/AVOID или null",
-  "timeframe": "временной горизонт сделки",
-  "risk_warning": "главные риски текущей ситуации"
-}}"""
-        
+🎯 ЗАДАЧА: {task_description}
+
+ИНСТРУКЦИЯ:
+1. Используй последние 30+ свечей из таблицы
+2. Рассчитай TR, +DM, -DM для каждой свечи
+3. Примени 14-периодное сглаживание Уайлдера
+4. Вычисли +DI, -DI, DX, ADX
+5. Покажи ключевые расчеты в reasoning
+6. Дай рекомендацию на основе критериев ADX
+
+КРИТЕРИИ BUY: ADX>25 И +DI>-DI И (+DI--DI)>1
+КРИТЕРИЙ ПИКА: ADX>45"""
+
         return prompt
     
-    def _analyze_price_levels(self, candles_data: List[Dict]) -> Dict:
-        """Анализ уровней поддержки и сопротивления из свечных данных"""
-        try:
-            if len(candles_data) < 20:
-                return {}
-            
-            # Последние 50 свечей для анализа уровней
-            recent_candles = candles_data[-50:] if len(candles_data) > 50 else candles_data
-            
-            highs = [c['high'] for c in recent_candles]
-            lows = [c['low'] for c in recent_candles]
-            closes = [c['close'] for c in recent_candles]
-            
-            current_price = closes[-1]
-            
-            # Поиск уровней сопротивления (локальные максимумы)
-            resistances = []
-            for i in range(2, len(highs) - 2):
-                if (highs[i] > highs[i-1] and highs[i] > highs[i-2] and 
-                    highs[i] > highs[i+1] and highs[i] > highs[i+2]):
-                    if highs[i] > current_price:
-                        resistances.append(highs[i])
-            
-            # Поиск уровней поддержки (локальные минимумы)
-            supports = []
-            for i in range(2, len(lows) - 2):
-                if (lows[i] < lows[i-1] and lows[i] < lows[i-2] and 
-                    lows[i] < lows[i+1] and lows[i] < lows[i+2]):
-                    if lows[i] < current_price:
-                        supports.append(lows[i])
-            
-            resistances = sorted(list(set(resistances)))[:3]  # Ближайшие 3
-            supports = sorted(list(set(supports)), reverse=True)[:3]  # Ближайшие 3
-            
-            return {
-                'current_price': current_price,
-                'nearest_resistance': resistances[0] if resistances else None,
-                'nearest_support': supports[0] if supports else None,
-                'all_resistances': resistances,
-                'all_supports': supports,
-                'range_high': max(highs),
-                'range_low': min(lows)
-            }
-            
-        except Exception as e:
-            logger.error(f"Ошибка анализа уровней: {e}")
-            return {}
-    
-    async def _call_openai_api(self, prompt: str, system_prompt: str = None) -> Optional[str]:
-        """Вызов OpenAI API"""
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json"
-        }
-        
-        if system_prompt is None:
-            system_prompt = self.get_system_prompt('SBER')
-        
-        payload = {
-            "model": "gpt-4o-mini",
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": prompt}
-            ],
-            "temperature": 0.1,
-            "max_tokens": 1000,
-            "response_format": {"type": "json_object"}
-        }
-        
-        timeout = aiohttp.ClientTimeout(total=25)
-        
-        try:
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.post(self.base_url, headers=headers, json=payload) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        content = data['choices'][0]['message']['content']
-                        logger.info("✅ GPT анализ получен")
-                        return content
-                    elif response.status == 429:
-                        logger.warning("⚠️ Rate limit OpenAI API")
-                        return None
-                    else:
-                        error_text = await response.text()
-                        logger.error(f"❌ OpenAI API ошибка {response.status}: {error_text}")
-                        return None
-                        
-        except asyncio.TimeoutError:
-            logger.warning("⏰ Таймаут запроса к OpenAI")
-            return None
-        except Exception as e:
-            logger.error(f"💥 Ошибка OpenAI: {e}")
-            return None
-    
-    def _parse_enhanced_advice(self, response: str) -> Optional[GPTAdvice]:
-        """Парсинг ответа GPT"""
+    def _parse_adx_advice(self, response: str) -> Optional[GPTAdvice]:
+        """Парсинг ответа GPT с ADX расчетами"""
         try:
             data = json.loads(response.strip())
             
@@ -336,8 +280,39 @@ class GPTMarketAnalyzer:
             if not isinstance(confidence, (int, float)) or confidence < 0 or confidence > 100:
                 confidence = 50
             
-            reasoning = str(data.get('reasoning', 'Анализ недоступен'))[:600]
+            reasoning = str(data.get('reasoning', 'Анализ недоступен'))[:800]  # Увеличил лимит для расчетов
             risk_warning = str(data.get('risk_warning', ''))[:300]
+            
+            # НОВОЕ: Извлекаем РЕАЛЬНЫЕ ADX расчеты от GPT
+            calculated_adx = data.get('calculated_adx')
+            calculated_plus_di = data.get('calculated_plus_di') 
+            calculated_minus_di = data.get('calculated_minus_di')
+            
+            # Валидация ADX значений
+            if calculated_adx is not None:
+                try:
+                    calculated_adx = float(calculated_adx)
+                    if calculated_adx < 0 or calculated_adx > 100:
+                        logger.warning(f"ADX вне диапазона: {calculated_adx}")
+                        calculated_adx = None
+                except (ValueError, TypeError):
+                    calculated_adx = None
+            
+            if calculated_plus_di is not None:
+                try:
+                    calculated_plus_di = float(calculated_plus_di)
+                    if calculated_plus_di < 0 or calculated_plus_di > 100:
+                        calculated_plus_di = None
+                except (ValueError, TypeError):
+                    calculated_plus_di = None
+                    
+            if calculated_minus_di is not None:
+                try:
+                    calculated_minus_di = float(calculated_minus_di)
+                    if calculated_minus_di < 0 or calculated_minus_di > 100:
+                        calculated_minus_di = None
+                except (ValueError, TypeError):
+                    calculated_minus_di = None
             
             # TP/SL только для покупок
             take_profit = None
@@ -353,26 +328,86 @@ class GPTMarketAnalyzer:
             
             timeframe = str(data.get('timeframe', ''))[:150] if data.get('timeframe') else None
             
-            return GPTAdvice(
+            advice = GPTAdvice(
                 recommendation=recommendation,
                 confidence=int(confidence),
                 reasoning=reasoning,
                 risk_warning=risk_warning,
+                # НОВЫЕ поля с РЕАЛЬНЫМИ расчетами
+                calculated_adx=calculated_adx,
+                calculated_plus_di=calculated_plus_di,
+                calculated_minus_di=calculated_minus_di,
+                # Остальные поля
                 take_profit=take_profit,
                 stop_loss=stop_loss,
                 expected_levels=expected_levels,
                 timeframe=timeframe
             )
             
+            # Логируем полученные ADX значения
+            if calculated_adx is not None:
+                logger.info(f"🎯 GPT рассчитал ADX: {calculated_adx:.1f}, +DI: {calculated_plus_di:.1f}, -DI: {calculated_minus_di:.1f}")
+            else:
+                logger.warning("⚠️ GPT не смог рассчитать ADX")
+            
+            return advice
+            
         except json.JSONDecodeError as e:
             logger.error(f"❌ Некорректный JSON от GPT: {e}")
+            logger.error(f"Ответ GPT: {response[:200]}...")
             return None
         except Exception as e:
-            logger.error(f"💥 Ошибка парсинга GPT: {e}")
+            logger.error(f"💥 Ошибка парсинга GPT с ADX: {e}")
+            return None
+    
+    async def _call_openai_api(self, prompt: str, system_prompt: str = None) -> Optional[str]:
+        """Вызов OpenAI API с увеличенным лимитом токенов для ADX расчетов"""
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
+        
+        if system_prompt is None:
+            system_prompt = self.get_system_prompt('SBER')
+        
+        payload = {
+            "model": "gpt-4o-mini",
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": 0.1,
+            "max_tokens": 1500,  # Увеличено для подробных расчетов ADX
+            "response_format": {"type": "json_object"}
+        }
+        
+        timeout = aiohttp.ClientTimeout(total=30)  # Увеличен таймаут
+        
+        try:
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.post(self.base_url, headers=headers, json=payload) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        content = data['choices'][0]['message']['content']
+                        logger.info("✅ GPT анализ с ADX получен")
+                        return content
+                    elif response.status == 429:
+                        logger.warning("⚠️ Rate limit OpenAI API")
+                        return None
+                    else:
+                        error_text = await response.text()
+                        logger.error(f"❌ OpenAI API ошибка {response.status}: {error_text}")
+                        return None
+                        
+        except asyncio.TimeoutError:
+            logger.warning("⏰ Таймаут запроса к OpenAI (ADX расчеты)")
+            return None
+        except Exception as e:
+            logger.error(f"💥 Ошибка OpenAI с ADX: {e}")
             return None
     
     def format_advice_for_telegram(self, advice: GPTAdvice, symbol: str = 'SBER') -> str:
-        """Форматирование совета GPT для Telegram"""
+        """Форматирование совета GPT для Telegram с РЕАЛЬНЫМИ ADX данными"""
         
         # Эмодзи для рекомендаций
         rec_emoji = {
@@ -394,8 +429,23 @@ class GPTMarketAnalyzer:
             confidence_emoji = '🔴'
         
         result = f"""
-🤖 <b>GPT АНАЛИЗ {symbol}:</b>
-{rec_emoji.get(advice.recommendation, '❓')} <b>{advice.recommendation}</b> | {confidence_emoji} {confidence_text} ({advice.confidence}%)
+🤖 <b>GPT АНАЛИЗ {symbol} (с расчетом ADX):</b>
+{rec_emoji.get(advice.recommendation, '❓')} <b>{advice.recommendation}</b> | {confidence_emoji} {confidence_text} ({advice.confidence}%)"""
+
+        # НОВОЕ: Показываем РЕАЛЬНЫЕ ADX расчеты от GPT
+        if advice.calculated_adx is not None:
+            adx_status = "🟢" if advice.calculated_adx > 25 else "🔴"
+            di_status = "🟢" if (advice.calculated_plus_di or 0) > (advice.calculated_minus_di or 0) else "🔴"
+            
+            result += f"""
+
+📊 <b>РАСЧЕТЫ ADX (от GPT):</b>
+• <b>ADX:</b> {advice.calculated_adx:.1f} {adx_status} {'(сильный тренд)' if advice.calculated_adx > 25 else '(слабый тренд)'}
+• <b>+DI:</b> {advice.calculated_plus_di:.1f}
+• <b>-DI:</b> {advice.calculated_minus_di:.1f} {di_status}
+• <b>Разница DI:</b> {(advice.calculated_plus_di or 0) - (advice.calculated_minus_di or 0):+.1f}"""
+
+        result += f"""
 
 💡 <b>Обоснование:</b> {advice.reasoning}"""
         
