@@ -1,6 +1,6 @@
 import os
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import logging
 
 import pandas as pd
@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 from tinkoff.invest import Client, CandleInterval
-from tinkoff.invest.utils import quotation_to_decimal
+from tinkoff.invest.utils import quotation_to_decimal, now
 
 # Загружаем переменные окружения
 load_dotenv()
@@ -34,8 +34,8 @@ async def get_sber_data():
     """Получение данных SBER и расчет технических индикаторов"""
     try:
         with Client(TINKOFF_TOKEN) as client:
-            # Получаем данные за последние 30 дней
-            to_date = datetime.now()
+            # Получаем данные за последние 30 дней (используем timezone-aware datetime)
+            to_date = now()  # Текущее время с timezone
             from_date = to_date - timedelta(days=30)
             
             # Получаем свечи (меняем на часовой таймфрейм)
@@ -65,15 +65,16 @@ async def get_sber_data():
                 logger.error("Insufficient data for calculations")
                 return None
             
-            # Расчет технических индикаторов
+            # Расчет технических индикаторов с настройками
             # EMA20
             df['ema20'] = ta.ema(df['close'], length=20)
             
-            # ADX, DI+, DI-
-            adx_data = ta.adx(df['high'], df['low'], df['close'], length=14)
-            df['adx'] = adx_data['ADX_14']
-            df['di_plus'] = adx_data['DMP_14'] 
-            df['di_minus'] = adx_data['DMN_14']
+            # ADX с настраиваемым периодом - попробуйте разные значения
+            adx_period = 21  # Попробуйте 7, 10, 14, 21, 28
+            adx_data = ta.adx(df['high'], df['low'], df['close'], length=adx_period)
+            df['adx'] = adx_data[f'ADX_{adx_period}']
+            df['di_plus'] = adx_data[f'DMP_{adx_period}'] 
+            df['di_minus'] = adx_data[f'DMN_{adx_period}']
             
             # Берем последние значения
             last_row = df.iloc[-1]
