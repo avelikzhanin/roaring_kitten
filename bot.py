@@ -65,7 +65,7 @@ class MarketTimeChecker:
         return main_session or evening_session
 
 class TradingBot:
-    """Основной класс торгового бота с гибридной стратегией БЕЗ ADX"""
+    """Основной класс торгового бота с GPT рассчитывающим РЕАЛЬНЫЙ ADX"""
     
     def __init__(self, telegram_token: str, tinkoff_token: str, database_url: str, openai_token: Optional[str] = None):
         self.telegram_token = telegram_token
@@ -86,30 +86,39 @@ class TradingBot:
         self.is_running = False
         self._signal_tasks = {}
         
-        strategy_info = "🤖 GPT + 📊 EMA20" if self.gpt_analyzer else "📊 Только EMA20"
-        logger.info(f"🤖 Бот инициализирован БЕЗ ADX (Стратегия: {strategy_info})")
+        strategy_info = "🤖 GPT с РЕАЛЬНЫМ ADX + 📊 EMA20" if self.gpt_analyzer else "📊 Только EMA20"
+        logger.info(f"🤖 Бот инициализирован (Стратегия: {strategy_info})")
         
     async def start(self):
-        """Запуск бота с проверкой гибридной стратегии БЕЗ ADX"""
+        """Запуск бота с проверкой стратегии РЕАЛЬНОГО ADX от GPT"""
         try:
             # 1. Инициализируем БД
             logger.info("🗄️ Инициализация БД...")
             await self.db.initialize()
             
-            # 2. НОВАЯ ПРОВЕРКА: Тестируем гибридную стратегию БЕЗ ADX
-            logger.info("🧪 Проверка гибридной стратегии БЕЗ ADX...")
+            # 2. НОВАЯ ПРОВЕРКА: Тестируем стратегию с РЕАЛЬНЫМ ADX
+            logger.info("🧪 Проверка стратегии с РЕАЛЬНЫМ ADX от GPT...")
             try:
                 from src.indicators import TechnicalIndicators
                 
-                # Быстрый тест индикаторов БЕЗ ADX
+                # Быстрый тест индикаторов
                 test_prices = [100, 101, 102, 103, 104]
                 ema = TechnicalIndicators.calculate_ema(test_prices, 3)
                 
                 logger.info(f"✅ EMA работает: {ema[-1]:.2f}")
-                logger.info("🎉 Гибридная стратегия БЕЗ ADX готова к работе!")
+                
+                if self.gpt_analyzer:
+                    logger.info("✅ GPT подключен - будет рассчитывать РЕАЛЬНЫЙ ADX")
+                    logger.info("🎯 КРИТЕРИИ ПОКУПКИ: EMA20 + ADX>25 + +DI>-DI + разница>1")
+                    logger.info("🔥 КРИТЕРИЙ ПИКА: ADX>45 (экстремально сильный тренд)")
+                else:
+                    logger.warning("⚠️ GPT отключен - ADX расчеты недоступны!")
+                    logger.warning("🚨 Без GPT качество сигналов будет низким!")
+                
+                logger.info("🎉 Стратегия с РЕАЛЬНЫМ ADX готова к работе!")
                 
             except Exception as e:
-                logger.error(f"❌ Ошибка проверки гибридной стратегии БЕЗ ADX: {e}")
+                logger.error(f"❌ Ошибка проверки стратегии: {e}")
                 logger.error("🚨 Запуск может быть нестабильным!")
             
             # 3. Создаем Telegram приложение
@@ -136,7 +145,7 @@ class TradingBot:
             await self.app.bot.delete_webhook(drop_pending_updates=True)
             await self.app.updater.start_polling(drop_pending_updates=True)
             
-            logger.info("🎉 Бот запущен БЕЗ ADX!")
+            logger.info("🎉 Бот запущен с РЕАЛЬНЫМ ADX от GPT!")
             await asyncio.gather(*self._signal_tasks.values())
                 
         except Exception as e:
@@ -173,7 +182,7 @@ class TradingBot:
         try:
             commands = [
                 BotCommand("portfolio", "📊 Управление подписками на акции"),
-                BotCommand("signal", "🔍 Проверить текущие сигналы"),
+                BotCommand("signal", "🔍 Проверить текущие сигналы с ADX"),
             ]
             
             await self.app.bot.set_my_commands(commands)
@@ -200,11 +209,11 @@ class TradingBot:
                 self._monitor_ticker(symbol)
             )
         
-        logger.info(f"📊 Мониторинг запущен для {len(self._signal_tasks)} акций БЕЗ ADX")
+        logger.info(f"📊 Мониторинг запущен для {len(self._signal_tasks)} акций с РЕАЛЬНЫМ ADX")
     
     async def _monitor_ticker(self, symbol: str):
-        """Мониторинг одного тикера с гибридной стратегией БЕЗ ADX"""
-        logger.info(f"🔄 Мониторинг {symbol} запущен (гибридная стратегия БЕЗ ADX)")
+        """Мониторинг одного тикера с GPT рассчитывающим РЕАЛЬНЫЙ ADX"""
+        logger.info(f"🔄 Мониторинг {symbol} запущен (GPT рассчитывает РЕАЛЬНЫЙ ADX)")
         
         while self.is_running:
             try:
@@ -214,40 +223,42 @@ class TradingBot:
                     await asyncio.sleep(1200)  # 20 минут
                     continue
                 
-                # === ГИБРИДНАЯ СТРАТЕГИЯ БЕЗ ADX ===
+                # === УМНАЯ СТРАТЕГИЯ С РЕАЛЬНЫМ ADX ОТ GPT ===
                 
-                # Анализируем рынок с помощью нового процессора БЕЗ ADX
+                # Анализируем рынок: базовый фильтр + GPT рассчитывает РЕАЛЬНЫЙ ADX
                 signal = await self.signal_processor.analyze_market(symbol)
                 
-                # Проверяем пик тренда (через GPT или волатильность) БЕЗ ADX
+                # Проверяем пик тренда через РЕАЛЬНЫЙ ADX от GPT (ADX > 45)
                 peak_signal = await self.signal_processor.check_peak_trend(symbol)
                 
                 # Получаем количество активных позиций
                 active_positions = await self.db.get_active_positions_count(symbol)
                 
-                # Логика отправки сигналов (БЕЗ ИЗМЕНЕНИЙ)
+                # Логика отправки сигналов
                 if signal and active_positions == 0:
-                    # Новый сигнал покупки
+                    # Новый сигнал покупки с РЕАЛЬНЫМ ADX от GPT
                     await self.message_sender.send_buy_signal(signal)
-                    logger.info(f"📈 Сигнал покупки {symbol}: {signal.price:.2f} (GPT: {getattr(signal, 'gpt_recommendation', 'N/A')})")
+                    adx_info = f"ADX={signal.adx:.1f}" if signal.adx > 0 else "ADX=расчет"
+                    logger.info(f"📈 Сигнал покупки {symbol}: {signal.price:.2f} ({adx_info}, GPT: {getattr(signal, 'gpt_recommendation', 'N/A')})")
                 
                 elif peak_signal and active_positions > 0:
-                    # Пик тренда
+                    # Пик тренда (РЕАЛЬНЫЙ ADX > 45 от GPT)
                     await self.message_sender.send_peak_signal(symbol, peak_signal)
-                    logger.info(f"🔥 Пик тренда {symbol}: {peak_signal:.2f}")
+                    logger.info(f"🔥 Пик тренда {symbol}: {peak_signal:.2f} (РЕАЛЬНЫЙ ADX > 45)")
                 
                 elif not signal and active_positions > 0:
-                    # Отмена сигнала
+                    # Отмена сигнала (РЕАЛЬНЫЕ ADX условия не выполняются)
                     current_price = await self.signal_processor.get_current_price(symbol)
                     await self.message_sender.send_cancel_signal(symbol, current_price)
-                    logger.info(f"❌ Отмена сигнала {symbol}")
+                    logger.info(f"❌ Отмена сигнала {symbol} (ADX условия нарушены)")
                 
                 else:
                     # Логируем состояние для отладки
                     if signal:
-                        logger.info(f"✅ Сигнал {symbol} остается актуальным")
+                        adx_info = f"(ADX={signal.adx:.1f})" if signal.adx > 0 else ""
+                        logger.info(f"✅ Сигнал {symbol} остается актуальным {adx_info}")
                     else:
-                        logger.info(f"⏳ Ожидаем сигнал {symbol}...")
+                        logger.info(f"⏳ Ожидаем сигнал {symbol} (анализ ADX...)...")
                 
                 # Всегда ждем 20 минут
                 await asyncio.sleep(1200)  # 20 минут
@@ -261,9 +272,9 @@ class TradingBot:
 
 
 async def main():
-    """Главная функция с информацией о гибридной стратегии БЕЗ ADX"""
+    """Главная функция с информацией о стратегии РЕАЛЬНОГО ADX от GPT"""
     logger.info("🚀 Запуск котёнка...")
-    logger.info("⚡ ГИБРИДНАЯ СТРАТЕГИЯ: Базовый фильтр + GPT анализ БЕЗ ADX")
+    logger.info("⚡ УМНАЯ СТРАТЕГИЯ: EMA20 + GPT рассчитывает РЕАЛЬНЫЙ ADX")
     
     # Получаем переменные окружения
     telegram_token = os.getenv("TELEGRAM_TOKEN")
@@ -282,11 +293,25 @@ async def main():
         logger.error("❌ DATABASE_URL не найден")
         return
     
-    # НОВОЕ ЛОГИРОВАНИЕ БЕЗ ADX
-    strategy_info = "🤖 GPT + 📊 EMA20" if openai_token else "📊 Только EMA20"
+    # НОВОЕ ЛОГИРОВАНИЕ с РЕАЛЬНЫМ ADX
+    strategy_info = "🤖 GPT с РЕАЛЬНЫМ ADX + 📊 EMA20" if openai_token else "📊 Только EMA20 (не рекомендуется)"
     logger.info(f"🔑 Токены: TG✅ Tinkoff✅ DB✅ GPT{'✅' if openai_token else '❌'}")
-    logger.info(f"⚡ Стратегия: {strategy_info} БЕЗ ADX")
+    logger.info(f"⚡ Стратегия: {strategy_info}")
     logger.info("🎯 Базовый фильтр: цена > EMA20 + торговое время")
+    
+    if openai_token:
+        logger.info("🤖 GPT будет:")
+        logger.info("   📊 Рассчитывать РЕАЛЬНЫЙ ADX из свечных данных")
+        logger.info("   ✅ Проверять ADX > 25 (сильный тренд)")
+        logger.info("   ✅ Проверять +DI > -DI (восходящее движение)")
+        logger.info("   ✅ Проверять разность DI > 1 (достаточная сила)")
+        logger.info("   🔥 Определять пик при ADX > 45")
+        logger.info("   💾 Сохранять РЕАЛЬНЫЕ значения в БД")
+    else:
+        logger.warning("⚠️ БЕЗ GPT:")
+        logger.warning("   ❌ ADX расчеты недоступны")
+        logger.warning("   ❌ Высокий риск ложных сигналов")
+        logger.warning("   💡 Рекомендуется настроить OPENAI_API_KEY")
     
     # Проверяем торговое время при запуске
     market_checker = MarketTimeChecker()
@@ -314,8 +339,8 @@ async def main():
 
 
 if __name__ == "__main__":
-    logger.info("🐱 РЕВУЩИЙ КОТЁНОК - ГИБРИДНАЯ СТРАТЕГИЯ БЕЗ ADX")
-    logger.info("📊 EMA20 + 🤖 GPT + ⚡ Упрощённые индикаторы")
+    logger.info("🐱 РЕВУЩИЙ КОТЁНОК - УМНАЯ СТРАТЕГИЯ")
+    logger.info("📊 EMA20 + 🤖 GPT рассчитывает РЕАЛЬНЫЙ ADX + ⚡ Точные сигналы")
     
     try:
         asyncio.run(main())
