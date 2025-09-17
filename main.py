@@ -93,23 +93,17 @@ async def get_sber_data():
 
 def format_sber_message(data):
     """Форматирование сообщения с данными SBER"""
-    trend = "📈 Выше EMA" if data['current_price'] > data['ema20'] else "📉 Ниже EMA"
     adx_strength = "Сильный тренд" if data['adx'] > 25 else "Слабый тренд"
-    di_direction = "🟢 Бычий" if data['di_plus'] > data['di_minus'] else "🔴 Медвежий"
     
     message = f"""🏦 <b>SBER - Сбербанк</b>
 
 💰 <b>Цена:</b> {data['current_price']:.2f} ₽
 📊 <b>EMA20:</b> {data['ema20']:.2f} ₽
-{trend}
 
 📈 <b>Технические индикаторы:</b>
 • <b>ADX:</b> {data['adx']:.2f} ({adx_strength})
 • <b>DI+:</b> {data['di_plus']:.2f}
-• <b>DI-:</b> {data['di_minus']:.2f}
-• <b>Направление:</b> {di_direction}
-
-⏰ <i>Обновлено: {datetime.now().strftime('%d.%m.%Y %H:%M')} МСК</i>"""
+• <b>DI-:</b> {data['di_minus']:.2f}"""
     
     return message
 
