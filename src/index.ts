@@ -1,6 +1,6 @@
 import TelegramBot from 'node-telegram-bot-api';
-import { TinkoffInvestApi } from '@tinkoff/invest-openapi-js-sdk';
-import { EMA, ADX, PSAR } from 'technicalindicators';
+import { TinkoffInvestGrpcApi } from '@tinkoff/invest-js';
+import { EMA, ADX } from 'technicalindicators';
 import * as dotenv from 'dotenv';
 
 dotenv.config();
@@ -15,7 +15,7 @@ if (!TELEGRAM_TOKEN || !TINKOFF_TOKEN) {
 }
 
 const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
-const tinkoffApi = new TinkoffInvestApi({
+const tinkoffApi = new TinkoffInvestGrpcApi({
     token: TINKOFF_TOKEN,
     appName: 'SberTelegramBot'
 });
@@ -39,24 +39,24 @@ async function getSberData(): Promise<{
         const to = new Date();
         const from = new Date(to.getTime() - 30 * 24 * 60 * 60 * 1000);
         
-        const candlesResponse = await tinkoffApi.market.candles({
+        const candlesResponse = await tinkoffApi.marketdata.getCandles({
             figi: SBER_FIGI,
-            from: from.toISOString(),
-            to: to.toISOString(),
-            interval: '1day'
+            from: from,
+            to: to,
+            interval: 1 // CandleInterval.CANDLE_INTERVAL_DAY
         });
 
-        if (!candlesResponse.payload.candles || candlesResponse.payload.candles.length === 0) {
+        if (!candlesResponse.candles || candlesResponse.candles.length === 0) {
             console.error('No candle data received');
             return null;
         }
 
-        const candles = candlesResponse.payload.candles;
-        const candleData: CandleData[] = candles.map(candle => ({
-            high: candle.h,
-            low: candle.l,
-            close: candle.c,
-            volume: candle.v
+        const candles = candlesResponse.candles;
+        const candleData: CandleData[] = candles.map((candle: any) => ({
+            high: parseFloat(candle.high?.units || '0') + parseFloat(candle.high?.nano || '0') / 1000000000,
+            low: parseFloat(candle.low?.units || '0') + parseFloat(candle.low?.nano || '0') / 1000000000,
+            close: parseFloat(candle.close?.units || '0') + parseFloat(candle.close?.nano || '0') / 1000000000,
+            volume: parseFloat(candle.volume || '0')
         }));
 
         const closePrices = candleData.map(c => c.close);
