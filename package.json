@@ -1,0 +1,30 @@
+{
+  "name": "sber-telegram-bot",
+  "version": "1.0.0",
+  "description": "Telegram bot for SBER stock monitoring with technical indicators",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts",
+    "clean": "rm -rf dist"
+  },
+  "keywords": ["telegram", "bot", "sber", "stock", "tinkoff", "trading"],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "node-telegram-bot-api": "^0.66.0",
+    "@tinkoff/invest-openapi-js-sdk": "^1.4.8",
+    "technicalindicators": "^3.1.0",
+    "dotenv": "^16.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "@types/node-telegram-bot-api": "^0.64.7",
+    "typescript": "^5.3.2",
+    "ts-node": "^10.9.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
