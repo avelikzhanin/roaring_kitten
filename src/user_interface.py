@@ -5,7 +5,7 @@ from telegram.ext import ContextTypes
 logger = logging.getLogger(__name__)
 
 class UserInterface:
-    """Пользовательский интерфейс бота с РЕАЛЬНЫМИ ADX от GPT"""
+    """Пользовательский интерфейс с РЕАЛЬНЫМИ ADX от GPT"""
     
     def __init__(self, database, signal_processor, gpt_analyzer=None):
         self.db = database
@@ -136,7 +136,7 @@ class UserInterface:
 ⏰ <b>Время:</b> {signal.timestamp.strftime('%H:%M %d.%m.%Y')}"""
                     
                     # Добавляем РЕАЛЬНЫЕ ADX значения если есть
-                    if signal.adx > 0:
+                    if hasattr(signal, 'adx') and signal.adx > 0:
                         adx_status = "🟢 Сильный" if signal.adx >= 25 else "🔴 Слабый"
                         di_status = "🟢 Восходящий" if signal.plus_di > signal.minus_di else "🔴 Нисходящий"
                         
@@ -156,7 +156,8 @@ class UserInterface:
                                 message += f"\n{self.gpt_analyzer.format_advice_for_telegram(gpt_advice, signal.symbol)}"
                             else:
                                 message += "\n\n🤖 <i>Детальный GPT анализ недоступен</i>"
-                        except:
+                        except Exception as e:
+                            logger.error(f"Ошибка GPT анализа: {e}")
                             message += "\n\n🤖 <i>Детальный GPT анализ недоступен</i>"
                 else:
                     message = await self.signal_processor.get_detailed_market_status(symbol)
@@ -234,7 +235,7 @@ class UserInterface:
 ⏰ <b>Время:</b> {signal.timestamp.strftime('%H:%M %d.%m.%Y')}"""
                 
                 # Добавляем РЕАЛЬНЫЕ ADX значения
-                if signal.adx > 0:
+                if hasattr(signal, 'adx') and signal.adx > 0:
                     adx_status = "🟢 Сильный" if signal.adx >= 25 else "🔴 Слабый" 
                     di_status = "🟢 Восходящий" if signal.plus_di > signal.minus_di else "🔴 Нисходящий"
                     
@@ -252,8 +253,8 @@ class UserInterface:
                         gpt_advice = await self._get_gpt_analysis_for_signal(signal)
                         if gpt_advice:
                             message += f"\n{self.gpt_analyzer.format_advice_for_telegram(gpt_advice, signal.symbol)}"
-                    except:
-                        pass
+                    except Exception as e:
+                        logger.error(f"Ошибка GPT анализа для {symbol}: {e}")
             else:
                 message = await self.signal_processor.get_detailed_market_status(symbol)
             
@@ -266,6 +267,10 @@ class UserInterface:
             
         except Exception as e:
             logger.error(f"Ошибка анализа {symbol}: {e}")
+            try:
+                await loading_message.delete()
+            except:
+                pass
             await query.message.reply_text(f"❌ <b>Ошибка анализа {symbol}</b>", parse_mode='HTML')
     
     async def _get_gpt_analysis_for_signal(self, signal):
@@ -283,15 +288,23 @@ class UserInterface:
             'ema20': signal.ema20,
             'price_above_ema': signal.price > signal.ema20,
             'conditions_met': True,  # Если у нас есть сигнал, базовые условия выполнены
-            # Добавляем РЕАЛЬНЫЕ ADX если есть
-            'calculated_adx': signal.adx if signal.adx > 0 else None,
-            'calculated_plus_di': signal.plus_di if signal.plus_di > 0 else None,
-            'calculated_minus_di': signal.minus_di if signal.minus_di > 0 else None
         }
         
-        return await self.gpt_analyzer.analyze_signal(
-            signal_data, None, is_manual_check=True, symbol=signal.symbol
-        )
+        # Добавляем РЕАЛЬНЫЕ ADX если есть
+        if hasattr(signal, 'adx') and signal.adx > 0:
+            signal_data.update({
+                'calculated_adx': signal.adx,
+                'calculated_plus_di': signal.plus_di,
+                'calculated_minus_di': signal.minus_di
+            })
+        
+        try:
+            return await self.gpt_analyzer.analyze_signal(
+                signal_data, None, is_manual_check=True, symbol=signal.symbol
+            )
+        except Exception as e:
+            logger.error(f"Ошибка запроса GPT анализа: {e}")
+            return None
     
     async def _update_portfolio_message(self, query):
         """Обновление сообщения портфеля"""
