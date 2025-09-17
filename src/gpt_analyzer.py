@@ -240,11 +240,16 @@ class GPTMarketAnalyzer:
             resistance = levels.get('nearest_resistance')
             support = levels.get('nearest_support')
             if resistance or support:
+                resistance_text = f"{resistance:.2f}₽ ({((resistance/current_price-1)*100):+.1f}%)" if resistance else "нет"
+                support_text = f"{support:.2f}₽ ({((support/current_price-1)*100):+.1f}%)" if support else "нет"
+                recent_low = levels.get("recent_low", 0)
+                recent_high = levels.get("recent_high", 0)
+                
                 levels_info = f"""
 📊 УРОВНИ:
-• Сопротивление: {resistance:.2f}₽ ({((resistance/current_price-1)*100):+.1f}%)" if resistance else "нет"}
-• Поддержка: {support:.2f}₽ ({((support/current_price-1)*100):+.1f}%)" if support else "нет"}
-• Диапазон: {levels.get('recent_low', 0):.2f} - {levels.get('recent_high', 0):.2f}₽"""
+• Сопротивление: {resistance_text}
+• Поддержка: {support_text}
+• Диапазон: {recent_low:.2f} - {recent_high:.2f}₽"""
 
         signal_type = "Ручная проверка" if is_manual_check else "Автоматический мониторинг"
         check_peak = signal_data.get('check_peak', False)
