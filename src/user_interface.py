@@ -5,7 +5,7 @@ from telegram.ext import ContextTypes
 logger = logging.getLogger(__name__)
 
 class UserInterface:
-    """Пользовательский интерфейс бота"""
+    """Пользовательский интерфейс бота БЕЗ ADX"""
     
     def __init__(self, database, signal_processor, gpt_analyzer=None):
         self.db = database
@@ -18,7 +18,7 @@ class UserInterface:
         self.app = app
     
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Обработчик команды /start"""
+        """Обработчик команды /start БЕЗ ADX"""
         chat_id = update.effective_chat.id
         user = update.effective_user
         
@@ -40,11 +40,11 @@ class UserInterface:
                 "📈 Вы подписаны на торговые сигналы\n"
                 "🔔 Котёнок сообщит о сигналах покупки/продажи\n\n"
                 f"{gpt_status}\n\n"
-                "<b>Стратегия:</b>\n"
+                "<b>Гибридная стратегия:</b>\n"
                 "• EMA20 - цена выше средней\n"
-                "• ADX > 25 - сильный тренд\n"
-                "• +DI > -DI (разница > 1)\n"
-                "• 🔥 ADX > 45 - пик, продавать!\n\n"
+                "• GPT анализ - умные решения\n"
+                "• Базовый фильтр + торговое время\n"
+                "• 🔥 GPT определяет пики тренда\n\n"
                 "<b>Команды:</b>\n"
                 "/stop - отписаться\n"
                 "/signal - проверить сигналы\n"
@@ -102,7 +102,7 @@ class UserInterface:
         await update.message.reply_text(message, parse_mode='HTML', reply_markup=reply_markup)
     
     async def signal_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Обработчик команды /signal"""
+        """Обработчик команды /signal БЕЗ ADX"""
         try:
             chat_id = update.effective_chat.id
             subscriptions = await self.db.get_user_subscriptions(chat_id)
@@ -129,7 +129,6 @@ class UserInterface:
 
 💰 <b>Цена:</b> {signal.price:.2f} ₽
 📈 <b>EMA20:</b> {signal.ema20:.2f} ₽
-📊 <b>ADX:</b> {signal.adx:.1f} | <b>+DI:</b> {signal.plus_di:.1f} | <b>-DI:</b> {signal.minus_di:.1f}
 
 ⏰ <b>Время:</b> {signal.timestamp.strftime('%H:%M %d.%m.%Y')}"""
                     
@@ -199,7 +198,7 @@ class UserInterface:
             await self._analyze_single_ticker(query, symbol)
     
     async def _analyze_single_ticker(self, query, symbol: str):
-        """Анализ одной акции"""
+        """Анализ одной акции БЕЗ ADX"""
         try:
             await query.answer()
             
@@ -215,7 +214,6 @@ class UserInterface:
 
 💰 <b>Цена:</b> {signal.price:.2f} ₽
 📈 <b>EMA20:</b> {signal.ema20:.2f} ₽
-📊 <b>ADX:</b> {signal.adx:.1f} | <b>+DI:</b> {signal.plus_di:.1f} | <b>-DI:</b> {signal.minus_di:.1f}
 
 ⏰ <b>Время:</b> {signal.timestamp.strftime('%H:%M %d.%m.%Y')}"""
                 
@@ -241,16 +239,15 @@ class UserInterface:
             await query.message.reply_text(f"❌ <b>Ошибка анализа {symbol}</b>", parse_mode='HTML')
     
     async def _get_gpt_analysis_for_signal(self, signal):
-        """Получение GPT анализа для сигнала"""
+        """Получение GPT анализа для сигнала БЕЗ ADX"""
         if not self.gpt_analyzer:
             return None
         
         signal_data = {
             'price': signal.price,
             'ema20': signal.ema20,
-            'adx': signal.adx,
-            'plus_di': signal.plus_di,
-            'minus_di': signal.minus_di
+            'price_above_ema': signal.price > signal.ema20,
+            'conditions_met': True  # Если у нас есть сигнал, базовые условия выполнены
         }
         
         return await self.gpt_analyzer.analyze_signal(
