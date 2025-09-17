@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class TradingSignal:
-    """Чистая структура торгового сигнала с полным GPT объектом"""
+    """Чистая структура торгового сигнала БЕЗ ADX (только реальные данные)"""
     symbol: str
     timestamp: datetime
     price: float
@@ -21,23 +21,10 @@ class TradingSignal:
     # GPT данные
     gpt_recommendation: Optional[str] = None
     gpt_confidence: Optional[int] = None
-    gpt_full_advice: Optional[object] = None  # НОВОЕ: Полный GPT объект
-    
-    # Свойства для совместимости с БД (фиктивные значения только при сохранении)
-    @property
-    def adx(self) -> float:
-        return 30.0  # Фиктивное значение для БД
-    
-    @property 
-    def plus_di(self) -> float:
-        return 35.0  # Фиктивное значение для БД
-    
-    @property
-    def minus_di(self) -> float:
-        return 20.0  # Фиктивное значение для БД
+    gpt_full_advice: Optional[object] = None  # Полный GPT объект
 
 class SignalProcessor:
-    """Упрощённый обработчик сигналов: базовый фильтр + GPT решения"""
+    """Упрощённый обработчик сигналов: базовый фильтр + GPT решения (БЕЗ ADX)"""
     
     def __init__(self, tinkoff_provider, database, gpt_analyzer=None):
         self.tinkoff_provider = tinkoff_provider
@@ -45,7 +32,7 @@ class SignalProcessor:
         self.gpt_analyzer = gpt_analyzer
         self.moscow_tz = pytz.timezone('Europe/Moscow')
         
-        logger.info(f"🔄 SignalProcessor инициализирован (GPT: {'✅' if gpt_analyzer else '❌'})")
+        logger.info(f"🔄 SignalProcessor инициализирован БЕЗ ADX (GPT: {'✅' if gpt_analyzer else '❌'})")
     
     def is_market_open(self) -> bool:
         """Проверка торгового времени (все сессии включая выходные)"""
@@ -100,9 +87,9 @@ class SignalProcessor:
         return 'closed'
     
     async def analyze_market(self, symbol: str) -> Optional[TradingSignal]:
-        """Упрощённый анализ: базовый фильтр + GPT решение"""
+        """Упрощённый анализ: базовый фильтр + GPT решение БЕЗ ADX"""
         try:
-            logger.info(f"🔍 ГИБРИДНЫЙ АНАЛИЗ {symbol}")
+            logger.info(f"🔍 ГИБРИДНЫЙ АНАЛИЗ {symbol} (БЕЗ ADX)")
             
             # Получаем информацию о тикере
             ticker_info = await self.db.get_ticker_info(symbol)
@@ -150,7 +137,7 @@ class SignalProcessor:
                         # GPT данные
                         gpt_recommendation=gpt_advice.recommendation,
                         gpt_confidence=gpt_advice.confidence,
-                        gpt_full_advice=gpt_advice  # НОВОЕ: Сохраняем полный GPT объект
+                        gpt_full_advice=gpt_advice  # Полный GPT объект
                     )
                     
                     logger.info(f"🎉 GPT РЕКОМЕНДУЕТ {gpt_advice.recommendation} для {symbol}")
@@ -175,7 +162,7 @@ class SignalProcessor:
             return None
     
     async def _check_basic_filter(self, df: pd.DataFrame, symbol: str) -> bool:
-        """Проверка базового фильтра: цена > EMA20 + торговое время"""
+        """Проверка базового фильтра: цена > EMA20 + торговое время БЕЗ ADX"""
         try:
             # 1. Проверяем торговое время
             if not self.is_market_open():
@@ -201,7 +188,7 @@ class SignalProcessor:
             session = self.get_current_session()
             time_quality = self.get_time_quality()
             
-            logger.info(f"🔍 БАЗОВЫЙ ФИЛЬТР {symbol}:")
+            logger.info(f"🔍 БАЗОВЫЙ ФИЛЬТР {symbol} (БЕЗ ADX):")
             logger.info(f"   💰 Цена: {current_price:.2f} ₽")
             logger.info(f"   📈 EMA20: {current_ema20:.2f} ₽")
             logger.info(f"   📊 Цена > EMA20: {'✅' if price_above_ema else '❌'}")
@@ -214,7 +201,7 @@ class SignalProcessor:
             return False
     
     def _prepare_market_data(self, df: pd.DataFrame, symbol: str) -> Dict:
-        """Подготовка богатых данных для GPT анализа"""
+        """Подготовка богатых данных для GPT анализа БЕЗ ADX"""
         try:
             closes = df['close'].tolist()
             highs = df['high'].tolist()
@@ -282,7 +269,7 @@ class SignalProcessor:
                 'conditions_met': True  # Базовый фильтр уже пройден
             }
             
-            logger.info(f"📊 Подготовлены данные для GPT анализа {symbol}")
+            logger.info(f"📊 Подготовлены данные для GPT анализа {symbol} БЕЗ ADX")
             return market_data
             
         except Exception as e:
@@ -386,11 +373,11 @@ class SignalProcessor:
             return 'unknown'
     
     async def _get_gpt_decision(self, market_data: Dict, symbol: str):
-        """Получение решения от GPT с современными данными (БЕЗ фиктивных ADX/DI)"""
+        """Получение решения от GPT с современными данными БЕЗ ADX"""
         try:
-            logger.info(f"🤖 Запрашиваем решение GPT для {symbol}...")
+            logger.info(f"🤖 Запрашиваем решение GPT для {symbol} БЕЗ ADX...")
             
-            # Подготавливаем РЕАЛЬНЫЕ данные для GPT - без фиктивных значений
+            # Подготавливаем РЕАЛЬНЫЕ данные для GPT - никаких ADX/DI
             signal_data = {
                 # Основные данные
                 'price': market_data['current_price'],
@@ -413,7 +400,7 @@ class SignalProcessor:
             if 'price_movement' in market_data:
                 signal_data.update(market_data['price_movement'])
             
-            # Запрашиваем анализ у GPT с СОВРЕМЕННЫМИ данными
+            # Запрашиваем анализ у GPT с СОВРЕМЕННЫМИ данными БЕЗ ADX
             gpt_advice = await self.gpt_analyzer.analyze_signal(
                 signal_data=signal_data,
                 candles_data=market_data.get('candles_data'),
@@ -433,12 +420,12 @@ class SignalProcessor:
             logger.error(f"Переданные данные: {list(signal_data.keys()) if 'signal_data' in locals() else 'не подготовлены'}")
             return None
     
-    # === Остальные методы остаются без изменений ===
+    # === Остальные методы обновлены БЕЗ ADX ===
     
     async def get_detailed_market_status(self, symbol: str) -> str:
-        """Получение детального статуса рынка для конкретной акции"""
+        """Получение детального статуса рынка для конкретной акции БЕЗ ADX"""
         try:
-            logger.info(f"🔄 Получаем детальный статус для {symbol}...")
+            logger.info(f"🔄 Получаем детальный статус для {symbol} БЕЗ ADX...")
             
             # Проверяем торговое время
             if not self.is_market_open():
@@ -521,7 +508,7 @@ class SignalProcessor:
             return f"❌ <b>Ошибка получения данных для анализа {symbol}</b>\n\nВозможны временные проблемы с внешними сервисами."
     
     async def check_peak_trend(self, symbol: str) -> Optional[float]:
-        """Проверка пика тренда - теперь через GPT с реальными данными"""
+        """Проверка пика тренда - теперь через GPT БЕЗ ADX с реальными данными"""
         try:
             # Получаем данные
             ticker_info = await self.db.get_ticker_info(symbol)
@@ -543,10 +530,10 @@ class SignalProcessor:
             market_data = self._prepare_market_data(df, symbol)
             current_price = market_data['current_price']
             
-            # Спрашиваем у GPT о пике тренда
+            # Спрашиваем у GPT о пике тренда БЕЗ ADX
             if self.gpt_analyzer:
                 try:
-                    # Специальный анализ для пика с РЕАЛЬНЫМИ данными
+                    # Специальный анализ для пика с РЕАЛЬНЫМИ данными БЕЗ ADX
                     signal_data = {
                         # Основные данные
                         'price': current_price,
@@ -555,7 +542,7 @@ class SignalProcessor:
                         'conditions_met': True,
                         'check_peak': True,  # Специальный флаг для пика
                         
-                        # Реальные данные для анализа пика
+                        # Реальные данные для анализа пика БЕЗ ADX
                         'volume_analysis': market_data.get('volume_analysis', {}),
                         'price_levels': market_data.get('price_levels', {}),
                         'trading_session': market_data.get('trading_session', 'unknown')
@@ -581,7 +568,7 @@ class SignalProcessor:
                 except Exception as e:
                     logger.error(f"Ошибка GPT анализа пика {symbol}: {e}")
             
-            # Fallback: простая проверка высокой волатильности
+            # Fallback: простая проверка высокой волатильности БЕЗ ADX
             if 'price_movement' in market_data:
                 volatility = market_data['price_movement'].get('volatility_5d', 0)
                 if volatility > 5.0:  # Высокая волатильность может быть пиком
