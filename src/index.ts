@@ -1,5 +1,5 @@
 import TelegramBot from 'node-telegram-bot-api';
-import { TinkoffInvestGrpcApi } from '@tinkoff/invest-js';
+import { TTechApiClient } from '@tinkoff/invest-js';
 import { EMA, ADX } from 'technicalindicators';
 import * as dotenv from 'dotenv';
 
@@ -15,16 +15,18 @@ if (!TELEGRAM_TOKEN || !TINKOFF_TOKEN) {
 }
 
 const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
-const tinkoffApi = new TinkoffInvestGrpcApi({
-    token: TINKOFF_TOKEN,
-    appName: 'SberTelegramBot'
+const tinkoffApi = new TTechApiClient({
+    token: TINKOFF_TOKEN
 });
 
 interface CandleData {
     high: number;
     low: number;
     close: number;
-    volume: number;
+}
+
+function quotationToNumber(quotation: any): number {
+    return (quotation?.units || 0) + (quotation?.nano || 0) / 1000000000;
 }
 
 async function getSberData(): Promise<{
@@ -39,11 +41,11 @@ async function getSberData(): Promise<{
         const to = new Date();
         const from = new Date(to.getTime() - 30 * 24 * 60 * 60 * 1000);
         
-        const candlesResponse = await tinkoffApi.marketdata.getCandles({
+        const candlesResponse = await tinkoffApi.marketData.getCandles({
             figi: SBER_FIGI,
-            from: from,
-            to: to,
-            interval: 1 // CandleInterval.CANDLE_INTERVAL_DAY
+            from: from.toISOString(),
+            to: to.toISOString(),
+            interval: 5 // CANDLE_INTERVAL_DAY = 5
         });
 
         if (!candlesResponse.candles || candlesResponse.candles.length === 0) {
@@ -53,10 +55,9 @@ async function getSberData(): Promise<{
 
         const candles = candlesResponse.candles;
         const candleData: CandleData[] = candles.map((candle: any) => ({
-            high: parseFloat(candle.high?.units || '0') + parseFloat(candle.high?.nano || '0') / 1000000000,
-            low: parseFloat(candle.low?.units || '0') + parseFloat(candle.low?.nano || '0') / 1000000000,
-            close: parseFloat(candle.close?.units || '0') + parseFloat(candle.close?.nano || '0') / 1000000000,
-            volume: parseFloat(candle.volume || '0')
+            high: quotationToNumber(candle.high),
+            low: quotationToNumber(candle.low),
+            close: quotationToNumber(candle.close)
         }));
 
         const closePrices = candleData.map(c => c.close);
