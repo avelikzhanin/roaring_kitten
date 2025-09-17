@@ -318,66 +318,7 @@ class TechnicalIndicators:
         except Exception:
             return {'strength': 'unknown', 'direction': 'sideways', 'score': 0}
 
-    @staticmethod
-    def calculate_momentum(prices: List[float], period: int = 14) -> List[float]:
-        """Расчет момента (простая альтернатива ADX для силы тренда)"""
-        if len(prices) < period + 1:
-            return [np.nan] * len(prices)
-        
-        momentum = []
-        for i in range(len(prices)):
-            if i < period:
-                momentum.append(np.nan)
-            else:
-                current_price = prices[i]
-                past_price = prices[i - period]
-                if past_price > 0:
-                    mom = ((current_price - past_price) / past_price) * 100
-                    momentum.append(mom)
-                else:
-                    momentum.append(np.nan)
-        
-        return momentum
-    
-    @staticmethod
-    def calculate_rsi(prices: List[float], period: int = 14) -> List[float]:
-        """Расчет RSI (Relative Strength Index)"""
-        if len(prices) < period + 1:
-            return [np.nan] * len(prices)
-        
-        # Рассчитываем изменения цен
-        changes = []
-        for i in range(1, len(prices)):
-            change = prices[i] - prices[i-1]
-            changes.append(change)
-        
-        rsi = [np.nan]  # Первое значение всегда NaN
-        
-        for i in range(len(changes)):
-            if i < period - 1:
-                rsi.append(np.nan)
-            else:
-                # Получаем окно изменений
-                window = changes[i - period + 1:i + 1]
-                
-                # Разделяем на прибыли и убытки
-                gains = [change if change > 0 else 0 for change in window]
-                losses = [abs(change) if change < 0 else 0 for change in window]
-                
-                # Средние значения
-                avg_gain = np.mean(gains)
-                avg_loss = np.mean(losses)
-                
-                # RSI расчет
-                if avg_loss == 0:
-                    rsi_value = 100
-                else:
-                    rs = avg_gain / avg_loss
-                    rsi_value = 100 - (100 / (1 + rs))
-                
-                rsi.append(rsi_value)
-        
-        return rsi
+
 
 # === ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ===
 
@@ -404,11 +345,6 @@ def quick_market_summary(candles_data: List[Dict]) -> Dict:
         price_position = TechnicalIndicators.calculate_price_position(current_price, highs, lows)
         patterns = TechnicalIndicators.detect_candle_patterns(candles_data)
         
-        # Дополнительные индикаторы
-        momentum = TechnicalIndicators.calculate_momentum(prices, 14)
-        rsi = TechnicalIndicators.calculate_rsi(prices, 14)
-        volatility = TechnicalIndicators.calculate_volatility(prices, 20)
-        
         return {
             'current_price': current_price,
             'ema20': current_ema20,
@@ -417,9 +353,6 @@ def quick_market_summary(candles_data: List[Dict]) -> Dict:
             'trend_analysis': trend_analysis,
             'price_position': price_position,
             'patterns': patterns,
-            'momentum': momentum[-1] if not np.isnan(momentum[-1]) else None,
-            'rsi': rsi[-1] if not np.isnan(rsi[-1]) else None,
-            'volatility': volatility[-1] if not np.isnan(volatility[-1]) else None,
             'data_quality': 'good' if len(candles_data) > 50 else 'limited'
         }
         
