@@ -33,15 +33,20 @@ class MessageSender:
         # Формируем базовое сообщение
         message = self._format_buy_signal(signal)
         
-        # Добавляем GPT анализ если есть в сигнале
-        if hasattr(signal, 'gpt_recommendation') and signal.gpt_recommendation:
-            gpt_message = f"""
+        # ИСПРАВЛЕНО: Используем ПОЛНЫЙ GPT анализ если есть
+        if hasattr(signal, 'gpt_full_advice') and signal.gpt_full_advice and self.gpt_analyzer:
+            # Используем полное форматирование GPT с TP/SL, обоснованием, рисками
+            message += f"\n{self.gpt_analyzer.format_advice_for_telegram(signal.gpt_full_advice, signal.symbol)}"
+            
+        elif hasattr(signal, 'gpt_recommendation') and signal.gpt_recommendation:
+            # Fallback: базовая информация GPT  
+            message += f"""
 
 🤖 <b>АНАЛИЗ GPT ({signal.symbol}):</b>
 📊 <b>Рекомендация:</b> {signal.gpt_recommendation}
 🎯 <b>Уверенность:</b> {signal.gpt_confidence}%
-⚡ <b>Стратегия:</b> Гибридный анализ (EMA20 + GPT)"""
-            message += gpt_message
+⚡ <b>Стратегия:</b> Гибридный анализ (EMA20 + GPT)
+⚠️ <i>Детальный анализ временно недоступен</i>"""
         else:
             # Режим без GPT
             message += f"""
@@ -185,10 +190,20 @@ class MessageSender:
 ✅ Базовый фильтр пройден"""
     
     async def _get_gpt_analysis(self, signal) -> Optional[dict]:
-        """УСТАРЕВШИЙ: GPT анализ теперь встроен в signal"""
-        # Этот метод больше не используется в гибридной стратегии
-        # GPT анализ уже включён в объект signal
-        logger.warning("⚠️ _get_gpt_analysis вызван в режиме совместимости")
+        """УСТАРЕВШИЙ: GPT анализ теперь в signal объекте"""
+        logger.warning("⚠️ _get_gpt_analysis устарел - используйте данные из signal объекта")
+        
+        # Возвращаем данные из signal если есть
+        if hasattr(signal, 'gpt_recommendation') and signal.gpt_recommendation:
+            return {
+                'formatted_message': f"""
+🤖 <b>GPT АНАЛИЗ:</b> {signal.gpt_recommendation} ({signal.gpt_confidence}%)""",
+                'db_data': {
+                    'recommendation': signal.gpt_recommendation,
+                    'confidence': signal.gpt_confidence
+                }
+            }
+        
         return None
     
     async def _get_profit_summary(self, symbol: str, current_price: float) -> str:
