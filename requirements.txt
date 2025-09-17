@@ -1,0 +1,5 @@
+python-telegram-bot
+tinkoff-invest
+pandas-ta
+pandas
+python-dotenv==1.0.0
