@@ -13,14 +13,15 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class TradingSignal:
-    """Чистая структура торгового сигнала (без фиктивных полей)"""
+    """Чистая структура торгового сигнала с полным GPT объектом"""
     symbol: str
     timestamp: datetime
     price: float
     ema20: float
-    # Новые поля GPT
+    # GPT данные
     gpt_recommendation: Optional[str] = None
     gpt_confidence: Optional[int] = None
+    gpt_full_advice: Optional[object] = None  # НОВОЕ: Полный GPT объект
     
     # Свойства для совместимости с БД (фиктивные значения только при сохранении)
     @property
@@ -140,7 +141,7 @@ class SignalProcessor:
                 gpt_advice = await self._get_gpt_decision(market_data, symbol)
                 
                 if gpt_advice and gpt_advice.recommendation in ['BUY', 'WEAK_BUY']:
-                    # GPT рекомендует покупку - создаём чистый сигнал
+                    # GPT рекомендует покупку - создаём сигнал с полным GPT объектом
                     signal = TradingSignal(
                         symbol=symbol,
                         timestamp=df.iloc[-1]['timestamp'],
@@ -148,7 +149,8 @@ class SignalProcessor:
                         ema20=market_data['ema20'],
                         # GPT данные
                         gpt_recommendation=gpt_advice.recommendation,
-                        gpt_confidence=gpt_advice.confidence
+                        gpt_confidence=gpt_advice.confidence,
+                        gpt_full_advice=gpt_advice  # НОВОЕ: Сохраняем полный GPT объект
                     )
                     
                     logger.info(f"🎉 GPT РЕКОМЕНДУЕТ {gpt_advice.recommendation} для {symbol}")
