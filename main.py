@@ -78,7 +78,7 @@ async def get_sber_data():
             df['ema20'] = ta.ema(df['close'], length=20)
             
             # ADX с 4 разными методами сглаживания
-            adx_period = 14
+            adx_period = 13
             
             # Вариант 1: RMA (Relative MA) - классический Wilder's ADX
             adx_rma = ta.adx(df['high'], df['low'], df['close'], length=adx_period, mamode='rma')
