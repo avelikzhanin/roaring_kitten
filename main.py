@@ -34,15 +34,15 @@ async def get_sber_data():
         to_date = datetime.now()
         from_date = to_date - timedelta(days=7)
         
-        # MOEX API для получения часовых свечей SBER
+        # MOEX API для получения часовых свечей SBER (как TradingView)
         url = "https://iss.moex.com/iss/engines/stock/markets/shares/securities/SBER/candles.json"
         params = {
             'from': from_date.strftime('%Y-%m-%d'),
             'till': to_date.strftime('%Y-%m-%d'),
-            'interval': '60'  # 60 минут = часовые свечи
+            'interval': '60'  # 60 минут = часовые свечи (как TradingView)
         }
         
-        logger.info(f"Запрашиваем данные MOEX API с {from_date.strftime('%Y-%m-%d')} по {to_date.strftime('%Y-%m-%d')}")
+        logger.info(f"Запрашиваем данные MOEX API с {from_date.strftime('%Y-%m-%d')} по {to_date.strftime('%Y-%m-%d')} (часовой таймфрейм)")
         
         # Делаем запрос к MOEX API с httpx
         async with httpx.AsyncClient() as client:
@@ -78,8 +78,12 @@ async def get_sber_data():
         
         logger.info(f"Получено {len(candles_data)} часовых свечей с MOEX")
         
-        # Показываем временной диапазон
+        # ДИАГНОСТИКА: показываем последние несколько свечей
         if candles_data:
+            logger.info("🔍 ПОСЛЕДНИЕ 3 СВЕЧИ (для диагностики):")
+            for i, candle in enumerate(candles_data[-3:]):
+                logger.info(f"   {i+1}. {candle['time']} | O:{candle['open']:.2f} H:{candle['high']:.2f} L:{candle['low']:.2f} C:{candle['close']:.2f}")
+            
             first_time = candles_data[0]['time']
             last_time = candles_data[-1]['time']
             logger.info(f"Диапазон времени (МСК): {first_time} → {last_time}")
@@ -92,7 +96,7 @@ async def get_sber_data():
         # Преобразуем в DataFrame
         df = pd.DataFrame(candles_data)
         
-        # Расчет технических индикаторов (стандартные настройки)
+        # Расчет технических индикаторов (стандартные настройки pandas-ta)
         df['ema20'] = ta.ema(df['close'], length=20)
         adx_data = ta.adx(df['high'], df['low'], df['close'], length=14, mamode='rma')
         df['adx'] = adx_data['ADX_14']
@@ -102,7 +106,11 @@ async def get_sber_data():
         # Берем последние значения
         last_row = df.iloc[-1]
         
-        logger.info(f"MOEX результат: ADX={last_row['adx']:.2f}, DI+={last_row['di_plus']:.2f}, DI-={last_row['di_minus']:.2f}")
+        logger.info(f"MOEX результат (часовой H1): ADX={last_row['adx']:.2f}, DI+={last_row['di_plus']:.2f}, DI-={last_row['di_minus']:.2f}")
+        logger.info("📊 Для сравнения с TradingView:")
+        logger.info(f"   🤖 Наш ADX: {last_row['adx']:.2f}")
+        logger.info(f"   📈 TradingView ADX: ваше значение для сравнения")
+        logger.info(f"   ⚠️  Если разница >20 пунктов - проблема в настройках!")
         
         return {
             'current_price': last_row['close'],
