@@ -86,11 +86,35 @@ async def get_sber_data():
             # Расчет технических индикаторов
             df['ema20'] = ta.ema(df['close'], length=20)
             
-            # ADX с RMA (так как RMA был ближе всего)
-            adx_data = ta.adx(df['high'], df['low'], df['close'], length=14, mamode='rma')
-            df['adx'] = adx_data['ADX_14']
-            df['di_plus'] = adx_data['DMP_14'] 
-            df['di_minus'] = adx_data['DMN_14']
+            # ADX с разными настройками - тестируем варианты
+            logger.info("=== 🔧 ТЕСТИРУЕМ РАЗНЫЕ НАСТРОЙКИ ADX ===")
+            
+            # Стандартный RMA (уже знаем результат)
+            adx_std = ta.adx(df['high'], df['low'], df['close'], length=14, mamode='rma')
+            
+            # Вариант 1: Другой период
+            adx_per10 = ta.adx(df['high'], df['low'], df['close'], length=10, mamode='rma')
+            adx_per18 = ta.adx(df['high'], df['low'], df['close'], length=18, mamode='rma')
+            
+            # Вариант 2: Другой lensig
+            adx_sig21 = ta.adx(df['high'], df['low'], df['close'], length=14, lensig=21, mamode='rma')
+            
+            # Вариант 3: Другой scalar  
+            adx_sc1 = ta.adx(df['high'], df['low'], df['close'], length=14, scalar=1, mamode='rma')
+            
+            # Логируем все варианты
+            logger.info(f"📊 Цель (график): ADX=25.47, DI+=29.84, DI-=15.18")
+            logger.info(f"1️⃣ Стандарт (14): ADX={adx_std['ADX_14'].iloc[-1]:.2f}, DI+={adx_std['DMP_14'].iloc[-1]:.2f}, DI-={adx_std['DMN_14'].iloc[-1]:.2f}")
+            logger.info(f"2️⃣ Период 10: ADX={adx_per10['ADX_10'].iloc[-1]:.2f}, DI+={adx_per10['DMP_10'].iloc[-1]:.2f}, DI-={adx_per10['DMN_10'].iloc[-1]:.2f}")
+            logger.info(f"3️⃣ Период 18: ADX={adx_per18['ADX_18'].iloc[-1]:.2f}, DI+={adx_per18['DMP_18'].iloc[-1]:.2f}, DI-={adx_per18['DMN_18'].iloc[-1]:.2f}")
+            logger.info(f"4️⃣ lensig=21: ADX={adx_sig21['ADX_14'].iloc[-1]:.2f}, DI+={adx_sig21['DMP_14'].iloc[-1]:.2f}, DI-={adx_sig21['DMN_14'].iloc[-1]:.2f}")
+            logger.info(f"5️⃣ scalar=1: ADX={adx_sc1['ADX_14'].iloc[-1]:.2f}, DI+={adx_sc1['DMP_14'].iloc[-1]:.2f}, DI-={adx_sc1['DMN_14'].iloc[-1]:.2f}")
+            logger.info("=== Какой ближе к цели? ===")
+            
+            # Используем стандартный пока
+            df['adx'] = adx_std['ADX_14']
+            df['di_plus'] = adx_std['DMP_14'] 
+            df['di_minus'] = adx_std['DMN_14']
             
             # Берем последние значения
             last_row = df.iloc[-1]
