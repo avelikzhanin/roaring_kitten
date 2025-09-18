@@ -83,9 +83,6 @@ async def get_sber_data():
                 logger.error(f"Insufficient data: {len(df)} candles")
                 return None
             
-            # Расчет технических индикаторов
-            df['ema20'] = ta.ema(df['close'], length=20)
-            
             # Расчет технических индикаторов (стандартные настройки)
             df['ema20'] = ta.ema(df['close'], length=20)
             adx_data = ta.adx(df['high'], df['low'], df['close'], length=14, mamode='rma')
