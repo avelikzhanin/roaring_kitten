@@ -73,21 +73,42 @@ async def get_sber_data():
             
             logger.info(f"Используем {len(df)} свечей для расчета индикаторов")
             
-            # Расчет технических индикаторов с настройками
+            # Расчет технических индикаторов - ТЕСТИРУЕМ 4 ВАРИАНТА ADX
             # EMA20
             df['ema20'] = ta.ema(df['close'], length=20)
             
-            # ADX с настраиваемым периодом - попробуйте разные значения
-            adx_period = 14  # Вернул стандартный период
-            adx_data = ta.adx(df['high'], df['low'], df['close'], length=adx_period)
-            df['adx'] = adx_data[f'ADX_{adx_period}']
-            df['di_plus'] = adx_data[f'DMP_{adx_period}'] 
-            df['di_minus'] = adx_data[f'DMN_{adx_period}']
+            # ADX с 4 разными методами сглаживания
+            adx_period = 14
+            
+            # Вариант 1: RMA (Relative MA) - классический Wilder's ADX
+            adx_rma = ta.adx(df['high'], df['low'], df['close'], length=adx_period, mamode='rma')
+            
+            # Вариант 2: EMA (Exponential MA) - используется в MT4, TradingView
+            adx_ema = ta.adx(df['high'], df['low'], df['close'], length=adx_period, mamode='ema')
+            
+            # Вариант 3: SMA (Simple MA) - простые платформы
+            adx_sma = ta.adx(df['high'], df['low'], df['close'], length=adx_period, mamode='sma')
+            
+            # Вариант 4: WMA (Weighted MA) - специализированные платформы
+            adx_wma = ta.adx(df['high'], df['low'], df['close'], length=adx_period, mamode='wma')
+            
+            # Используем RMA как основной (можно поменять)
+            df['adx'] = adx_rma[f'ADX_{adx_period}']
+            df['di_plus'] = adx_rma[f'DMP_{adx_period}'] 
+            df['di_minus'] = adx_rma[f'DMN_{adx_period}']
             
             # Берем последние значения
             last_row = df.iloc[-1]
             
-            logger.info(f"Результаты: ADX={last_row['adx']:.2f}, DI+={last_row['di_plus']:.2f}, DI-={last_row['di_minus']:.2f}")
+            # Логируем ВСЕ 4 варианта для сравнения с графиком
+            logger.info("=== 🔍 СРАВНЕНИЕ 4-Х МЕТОДОВ ADX ===")
+            logger.info(f"📊 График показывает: ADX=25.47, DI+=29.84, DI-=15.18")
+            logger.info(f"1️⃣ RMA (Wilder): ADX={adx_rma[f'ADX_{adx_period}'].iloc[-1]:.2f}, DI+={adx_rma[f'DMP_{adx_period}'].iloc[-1]:.2f}, DI-={adx_rma[f'DMN_{adx_period}'].iloc[-1]:.2f}")
+            logger.info(f"2️⃣ EMA (MT4/TV): ADX={adx_ema[f'ADX_{adx_period}'].iloc[-1]:.2f}, DI+={adx_ema[f'DMP_{adx_period}'].iloc[-1]:.2f}, DI-={adx_ema[f'DMN_{adx_period}'].iloc[-1]:.2f}")
+            logger.info(f"3️⃣ SMA (простой): ADX={adx_sma[f'ADX_{adx_period}'].iloc[-1]:.2f}, DI+={adx_sma[f'DMP_{adx_period}'].iloc[-1]:.2f}, DI-={adx_sma[f'DMN_{adx_period}'].iloc[-1]:.2f}")
+            logger.info(f"4️⃣ WMA (взвешен): ADX={adx_wma[f'ADX_{adx_period}'].iloc[-1]:.2f}, DI+={adx_wma[f'DMP_{adx_period}'].iloc[-1]:.2f}, DI-={adx_wma[f'DMN_{adx_period}'].iloc[-1]:.2f}")
+            logger.info(f"🎯 Используем RMA: ADX={last_row['adx']:.2f}, DI+={last_row['di_plus']:.2f}, DI-={last_row['di_minus']:.2f}")
+            logger.info("=== Какой ближе к графику? ===")
             
             return {
                 'current_price': last_row['close'],
