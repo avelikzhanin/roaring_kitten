@@ -96,6 +96,9 @@ async def get_sber_data():
         df['ema20'] = ta.ema(df['close'], length=20)
         adx_data = ta.adx(df['high'], df['low'], df['close'], length=14, mamode='rma')
         
+        # Сохраняем исходное значение ADX для сравнения
+        original_adx = adx_data['ADX_14'].iloc[-1]
+        
         # Применяем коррекцию ADX (вычитаем 10 для соответствия графику)
         df['adx'] = adx_data['ADX_14'] - 10
         df['di_plus'] = adx_data['DMP_14'] 
@@ -104,7 +107,12 @@ async def get_sber_data():
         # Берем последние значения
         last_row = df.iloc[-1]
         
-        logger.info(f"MOEX результат: ADX={last_row['adx']:.2f}, DI+={last_row['di_plus']:.2f}, DI-={last_row['di_minus']:.2f}")
+        # Показываем оба значения для сравнения
+        logger.info(f"📊 ADX сравнение:")
+        logger.info(f"   Исходный (pandas-ta): {original_adx:.2f}")
+        logger.info(f"   С коррекцией (-10): {last_row['adx']:.2f}")
+        logger.info(f"📈 DI+: {last_row['di_plus']:.2f}, DI-: {last_row['di_minus']:.2f}")
+        logger.info(f"💰 Цена: {last_row['close']:.2f} ₽")
         
         return {
             'current_price': last_row['close'],
