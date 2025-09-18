@@ -3,3 +3,4 @@ tinkoff-investments>=0.2.0b100
 pandas-ta>=0.3.14b
 pandas>=2.0.0
 python-dotenv>=1.0.0
+pytz>=2023.3
