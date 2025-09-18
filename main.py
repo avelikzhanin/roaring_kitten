@@ -92,7 +92,7 @@ async def get_sber_data():
         # Преобразуем в DataFrame
         df = pd.DataFrame(candles_data)
         
-        # Расчет технических индикаторов (стандартные настройки pandas-ta)
+        # Расчет технических индикаторов (стандартные настройки)
         df['ema20'] = ta.ema(df['close'], length=20)
         adx_data = ta.adx(df['high'], df['low'], df['close'], length=14, mamode='rma')
         df['adx'] = adx_data['ADX_14']
