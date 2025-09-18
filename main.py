@@ -1,15 +1,14 @@
 import os
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 import logging
 
 import pandas as pd
 import pandas_ta as ta
+import requests
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
-from tinkoff.invest import Client, CandleInterval
-from tinkoff.invest.utils import quotation_to_decimal, now
 
 # Загружаем переменные окружения
 load_dotenv()
@@ -23,84 +22,98 @@ logger = logging.getLogger(__name__)
 
 # Переменные окружения
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
-TINKOFF_TOKEN = os.getenv('TINKOFF_TOKEN')
-SBER_FIGI = 'BBG004730N88'  # FIGI для Сбербанка
 
-if not TELEGRAM_TOKEN or not TINKOFF_TOKEN:
-    raise ValueError("Missing required environment variables")
+if not TELEGRAM_TOKEN:
+    raise ValueError("Missing TELEGRAM_TOKEN environment variable")
 
 
 async def get_sber_data():
-    """Получение данных SBER и расчет технических индикаторов"""
+    """Получение данных SBER через MOEX API и расчет технических индикаторов"""
     try:
-        with Client(TINKOFF_TOKEN) as client:
-            # Получаем данные за 7 дней
-            to_date = now()
-            from_date = to_date - timedelta(days=7)
-            
-            # Получаем часовые свечи
-            candles_data = []
-            for candle in client.get_all_candles(
-                figi=SBER_FIGI,
-                from_=from_date,
-                interval=CandleInterval.CANDLE_INTERVAL_HOUR
-            ):
-                candles_data.append({
-                    'high': float(quotation_to_decimal(candle.high)),
-                    'low': float(quotation_to_decimal(candle.low)),
-                    'close': float(quotation_to_decimal(candle.close)),
-                    'volume': candle.volume,
-                    'time': candle.time
-                })
-            
-            # Ограничиваем до последних 50 свечей
-            if len(candles_data) > 50:
-                candles_data = candles_data[-50:]
-            
-            logger.info(f"Получено {len(candles_data)} часовых свечей")
-            
-            # Показываем время первой и последней свечи в МСК (UTC+3)
-            if candles_data:
-                first_time = candles_data[0]['time']
-                last_time = candles_data[-1]['time']
-                
-                # Простая конвертация UTC -> UTC+3 (МСК)
-                first_time_msk = first_time + timedelta(hours=3) if first_time.tzinfo else first_time
-                last_time_msk = last_time + timedelta(hours=3) if last_time.tzinfo else last_time
-                
-                logger.info(f"Диапазон времени (МСК): {first_time_msk} → {last_time_msk}")
-                logger.info(f"Цена: {candles_data[-1]['close']:.2f} ₽")
-            
-            if not candles_data:
-                logger.error("No candles data received")
-                return None
-            
-            # Преобразуем в DataFrame
-            df = pd.DataFrame(candles_data)
-            df = df.sort_values('time').reset_index(drop=True)
-            
-            if df.empty or len(df) < 30:
-                logger.error(f"Insufficient data: {len(df)} candles")
-                return None
-            
-            # Расчет технических индикаторов (стандартные настройки)
-            df['ema20'] = ta.ema(df['close'], length=20)
-            adx_data = ta.adx(df['high'], df['low'], df['close'], length=14, mamode='rma')
-            df['adx'] = adx_data['ADX_14']
-            df['di_plus'] = adx_data['DMP_14'] 
-            df['di_minus'] = adx_data['DMN_14']
-            
-            # Берем последние значения
-            last_row = df.iloc[-1]
-            
-            return {
-                'current_price': last_row['close'],
-                'ema20': last_row['ema20'],
-                'adx': last_row['adx'],
-                'di_plus': last_row['di_plus'],
-                'di_minus': last_row['di_minus']
-            }
-            
+        # Получаем данные за последние 7 дней
+        to_date = datetime.now()
+        from_date = to_date - timedelta(days=7)
+        
+        # MOEX API для получения часовых свечей SBER
+        url = "https://iss.moex.com/iss/engines/stock/markets/shares/securities/SBER/candles.json"
+        params = {
+            'from': from_date.strftime('%Y-%m-%d'),
+            'till': to_date.strftime('%Y-%m-%d'),
+            'interval': '60'  # 60 минут = часовые свечи
+        }
+        
+        logger.info(f"Запрашиваем данные MOEX API с {from_date.strftime('%Y-%m-%d')} по {to_date.strftime('%Y-%m-%d')}")
+        
+        # Делаем запрос к MOEX API
+        response = requests.get(url, params=params, timeout=10)
+        response.raise_for_status()
+        
+        data = response.json()
+        
+        # Извлекаем данные свечей
+        if 'candles' not in data or not data['candles']['data']:
+            logger.error("No candle data received from MOEX API")
+            return None
+        
+        columns = data['candles']['columns']
+        candles_raw = data['candles']['data']
+        
+        # Преобразуем в удобный формат для pandas
+        candles_data = []
+        for candle in candles_raw:
+            # columns: ["open", "close", "high", "low", "value", "volume", "begin", "end"]
+            candles_data.append({
+                'open': float(candle[0]),
+                'close': float(candle[1]),
+                'high': float(candle[2]),
+                'low': float(candle[3]),
+                'volume': int(candle[5]),
+                'time': candle[6]  # время начала свечи
+            })
+        
+        # Ограничиваем до последних 50 свечей
+        if len(candles_data) > 50:
+            candles_data = candles_data[-50:]
+        
+        logger.info(f"Получено {len(candles_data)} часовых свечей с MOEX")
+        
+        # Показываем временной диапазон
+        if candles_data:
+            first_time = candles_data[0]['time']
+            last_time = candles_data[-1]['time']
+            logger.info(f"Диапазон времени (МСК): {first_time} → {last_time}")
+            logger.info(f"Цена: {candles_data[-1]['close']:.2f} ₽")
+        
+        if len(candles_data) < 30:
+            logger.error(f"Insufficient data: {len(candles_data)} candles")
+            return None
+        
+        # Преобразуем в DataFrame
+        df = pd.DataFrame(candles_data)
+        
+        # Расчет технических индикаторов (стандартные настройки)
+        df['ema20'] = ta.ema(df['close'], length=20)
+        adx_data = ta.adx(df['high'], df['low'], df['close'], length=14, mamode='rma')
+        df['adx'] = adx_data['ADX_14']
+        df['di_plus'] = adx_data['DMP_14'] 
+        df['di_minus'] = adx_data['DMN_14']
+        
+        # Берем последние значения
+        last_row = df.iloc[-1]
+        
+        logger.info(f"MOEX результат: ADX={last_row['adx']:.2f}, DI+={last_row['di_plus']:.2f}, DI-={last_row['di_minus']:.2f}")
+        
+        return {
+            'current_price': last_row['close'],
+            'ema20': last_row['ema20'],
+            'adx': last_row['adx'],
+            'di_plus': last_row['di_plus'],
+            'di_minus': last_row['di_minus']
+        }
+        
+    except requests.exceptions.RequestException as e:
+        logger.error(f"MOEX API request error: {e}")
+        return None
     except Exception as e:
         logger.error(f"Error fetching SBER data: {e}")
         return None
@@ -118,7 +131,9 @@ def format_sber_message(data):
 📈 <b>Технические индикаторы:</b>
 • <b>ADX:</b> {data['adx']:.2f} ({adx_strength})
 • <b>DI+:</b> {data['di_plus']:.2f}
-• <b>DI-:</b> {data['di_minus']:.2f}"""
+• <b>DI-:</b> {data['di_minus']:.2f}
+
+<i>📊 Данные получены с MOEX API</i>"""
     
     return message
 
@@ -130,20 +145,20 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 📊 <b>Доступные команды:</b>
 /sber - Получить актуальные данные по Сбербанку
 
-<i>Бот предоставляет информацию о цене, EMA20, ADX, DI+ и DI-</i>"""
+<i>Данные получаются напрямую с Московской биржи через MOEX API</i>"""
     
     await update.message.reply_text(welcome_message, parse_mode='HTML')
 
 
 async def sber_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик команды /sber"""
-    loading_message = await update.message.reply_text('⏳ Получаю данные по SBER...')
+    loading_message = await update.message.reply_text('⏳ Получаю данные с MOEX...')
     
     try:
         sber_data = await get_sber_data()
         
         if not sber_data:
-            await loading_message.edit_text('❌ Не удалось получить данные по SBER. Попробуйте позже.')
+            await loading_message.edit_text('❌ Не удалось получить данные с MOEX API. Попробуйте позже.')
             return
         
         # Проверяем на NaN значения
@@ -176,7 +191,7 @@ def main():
     
     application.add_error_handler(error_handler)
     
-    logger.info("🤖 SBER Telegram Bot started...")
+    logger.info("🤖 SBER Telegram Bot started with MOEX API...")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
