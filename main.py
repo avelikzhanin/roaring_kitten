@@ -27,6 +27,79 @@ if not TELEGRAM_TOKEN:
     raise ValueError("Missing TELEGRAM_TOKEN environment variable")
 
 
+def calculate_adx_tradingview_style(df, period=14):
+    """
+    Расчет ADX точно по формуле TradingView:
+    ADX = (Prior ADX × 13) + Current DX) / 14
+    """
+    high = df['high'].values
+    low = df['low'].values
+    close = df['close'].values
+    
+    # Расчет True Range
+    tr = []
+    dm_plus = []
+    dm_minus = []
+    
+    for i in range(1, len(high)):
+        # True Range
+        tr1 = high[i] - low[i]
+        tr2 = abs(high[i] - close[i-1])
+        tr3 = abs(low[i] - close[i-1])
+        tr.append(max(tr1, tr2, tr3))
+        
+        # Directional Movement (как в TradingView)
+        dm_p = max(high[i] - high[i-1], 0) if high[i] - high[i-1] > low[i-1] - low[i] else 0
+        dm_m = max(low[i-1] - low[i], 0) if low[i-1] - low[i] > high[i] - high[i-1] else 0
+        
+        dm_plus.append(dm_p)
+        dm_minus.append(dm_m)
+    
+    # Сглаживание Wilder's для ATR, DM+, DM-
+    def wilders_smoothing(data, period):
+        smoothed = []
+        sma = sum(data[:period]) / period
+        smoothed.append(sma)
+        
+        for i in range(period, len(data)):
+            smoothed_val = (smoothed[-1] * (period - 1) + data[i]) / period
+            smoothed.append(smoothed_val)
+        return smoothed
+    
+    # Сглаженные значения
+    atr = wilders_smoothing(tr, period)
+    smoothed_dm_plus = wilders_smoothing(dm_plus, period)
+    smoothed_dm_minus = wilders_smoothing(dm_minus, period)
+    
+    # DI+ и DI-
+    di_plus = [(smoothed_dm_plus[i] / atr[i]) * 100 for i in range(len(atr))]
+    di_minus = [(smoothed_dm_minus[i] / atr[i]) * 100 for i in range(len(atr))]
+    
+    # DX
+    dx = [abs(di_plus[i] - di_minus[i]) / (di_plus[i] + di_minus[i]) * 100 
+          if (di_plus[i] + di_minus[i]) > 0 else 0 for i in range(len(di_plus))]
+    
+    # ADX по формуле TradingView: ADX = (Prior ADX × 13) + Current DX) / 14
+    adx = []
+    if dx:
+        # Первое значение ADX = среднее первых 14 DX
+        first_adx = sum(dx[:period]) / period if len(dx) >= period else sum(dx) / len(dx)
+        adx.append(first_adx)
+        
+        # Остальные значения по формуле TradingView
+        for i in range(1, len(dx) - period + 1):
+            current_dx = dx[period - 1 + i]
+            prior_adx = adx[-1]
+            new_adx = (prior_adx * 13 + current_dx) / 14  # ← Формула TradingView!
+            adx.append(new_adx)
+    
+    return {
+        'adx': adx[-1] if adx else 0,
+        'di_plus': di_plus[-1] if di_plus else 0,
+        'di_minus': di_minus[-1] if di_minus else 0
+    }
+
+
 async def get_sber_data():
     """Получение данных SBER через MOEX API и расчет технических индикаторов"""
     try:
@@ -96,28 +169,32 @@ async def get_sber_data():
         # Преобразуем в DataFrame
         df = pd.DataFrame(candles_data)
         
-        # Расчет технических индикаторов (стандартные настройки pandas-ta)
+        # Расчет EMA20
         df['ema20'] = ta.ema(df['close'], length=20)
-        adx_data = ta.adx(df['high'], df['low'], df['close'], length=14, mamode='rma')
-        df['adx'] = adx_data['ADX_14']
-        df['di_plus'] = adx_data['DMP_14'] 
-        df['di_minus'] = adx_data['DMN_14']
+        
+        # ADX по стандартной формуле pandas-ta
+        adx_data_standard = ta.adx(df['high'], df['low'], df['close'], length=14, mamode='rma')
+        
+        # ADX по формуле TradingView
+        adx_tradingview = calculate_adx_tradingview_style(df, period=14)
         
         # Берем последние значения
         last_row = df.iloc[-1]
         
-        logger.info(f"MOEX результат (часовой H1): ADX={last_row['adx']:.2f}, DI+={last_row['di_plus']:.2f}, DI-={last_row['di_minus']:.2f}")
-        logger.info("📊 Для сравнения с TradingView:")
-        logger.info(f"   🤖 Наш ADX: {last_row['adx']:.2f}")
-        logger.info(f"   📈 TradingView ADX: ваше значение для сравнения")
-        logger.info(f"   ⚠️  Если разница >20 пунктов - проблема в настройках!")
+        # Сравниваем результаты
+        logger.info("📊 СРАВНЕНИЕ ФОРМУЛ ADX:")
+        logger.info(f"   🔧 pandas-ta (стандарт): ADX={adx_data_standard['ADX_14'].iloc[-1]:.2f}")
+        logger.info(f"   📈 TradingView формула: ADX={adx_tradingview['adx']:.2f}")
+        logger.info(f"   🎯 DI+ TradingView: {adx_tradingview['di_plus']:.2f}")
+        logger.info(f"   🎯 DI- TradingView: {adx_tradingview['di_minus']:.2f}")
+        logger.info("=== Используем TradingView формулу ===")
         
         return {
             'current_price': last_row['close'],
             'ema20': last_row['ema20'],
-            'adx': last_row['adx'],
-            'di_plus': last_row['di_plus'],
-            'di_minus': last_row['di_minus']
+            'adx': adx_tradingview['adx'],
+            'di_plus': adx_tradingview['di_plus'],
+            'di_minus': adx_tradingview['di_minus']
         }
         
     except httpx.HTTPError as e:
