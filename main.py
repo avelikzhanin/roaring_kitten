@@ -5,7 +5,6 @@ import logging
 
 import pandas as pd
 import pandas_ta as ta
-import pytz
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
@@ -35,11 +34,11 @@ async def get_sber_data():
     """Получение данных SBER и расчет технических индикаторов"""
     try:
         with Client(TINKOFF_TOKEN) as client:
-            # Берем данные за 7 дней (с запасом для получения 50+ часовых свечей)
+            # Получаем данные за 7 дней
             to_date = now()
-            from_date = to_date - timedelta(days=7)  # Уменьшил с 60 дней до 7
+            from_date = to_date - timedelta(days=7)
             
-            # Получаем свечи
+            # Получаем часовые свечи
             candles_data = []
             for candle in client.get_all_candles(
                 figi=SBER_FIGI,
@@ -56,37 +55,21 @@ async def get_sber_data():
             
             # Ограничиваем до последних 50 свечей
             if len(candles_data) > 50:
-                candles_data = candles_data[-50:]  # Берем последние 50
+                candles_data = candles_data[-50:]
             
-            logger.info(f"Получено {len(candles_data)} часовых свечей для анализа")
+            logger.info(f"Получено {len(candles_data)} часовых свечей")
             
-            # ДИАГНОСТИКА: проверяем данные и временные зоны
+            # Показываем время первой и последней свечи в МСК (UTC+3)
             if candles_data:
-                first_candle = candles_data[0]
-                last_candle = candles_data[-1]
+                first_time = candles_data[0]['time']
+                last_time = candles_data[-1]['time']
                 
-                # Конвертируем время в UTC+3 (МСК) для отображения
-                utc_tz = pytz.UTC
-                msk_tz = pytz.timezone('Europe/Moscow')  # UTC+3
+                # Простая конвертация UTC -> UTC+3 (МСК)
+                first_time_msk = first_time + timedelta(hours=3) if first_time.tzinfo else first_time
+                last_time_msk = last_time + timedelta(hours=3) if last_time.tzinfo else last_time
                 
-                first_time_utc = first_candle['time']
-                last_time_utc = last_candle['time']
-                first_time_msk = first_time_utc.astimezone(msk_tz) if first_time_utc.tzinfo else first_time_utc
-                last_time_msk = last_time_utc.astimezone(msk_tz) if last_time_utc.tzinfo else last_time_utc
-                
-                logger.info(f"🕐 Первая свеча UTC: {first_time_utc} → МСК: {first_time_msk}")
-                logger.info(f"🕐 Последняя свеча UTC: {last_time_utc} → МСК: {last_time_msk}")
-                logger.info(f"💰 Диапазон цен: {min(c['close'] for c in candles_data):.2f} - {max(c['close'] for c in candles_data):.2f}")
-                logger.info(f"📊 Последняя цена: {last_candle['close']:.2f} ₽")
-                
-                # Проверим, попадает ли последняя свеча в торговое время
-                last_hour_msk = last_time_msk.hour if hasattr(last_time_msk, 'hour') else 0
-                if 10 <= last_hour_msk <= 18:
-                    logger.info("✅ Последняя свеча в основной торговой сессии (10:00-18:45 МСК)")
-                elif 19 <= last_hour_msk <= 23:
-                    logger.info("🌙 Последняя свеча в вечерней сессии (19:05-23:50 МСК)")
-                else:
-                    logger.warning(f"⚠️ Последняя свеча вне торгового времени: {last_hour_msk}:00 МСК")
+                logger.info(f"Диапазон времени (МСК): {first_time_msk} → {last_time_msk}")
+                logger.info(f"Цена: {candles_data[-1]['close']:.2f} ₽")
             
             if not candles_data:
                 logger.error("No candles data received")
@@ -96,67 +79,21 @@ async def get_sber_data():
             df = pd.DataFrame(candles_data)
             df = df.sort_values('time').reset_index(drop=True)
             
-            # ДИАГНОСТИКА: проверяем DataFrame
-            logger.info(f"📋 DataFrame: {len(df)} строк")
-            logger.info(f"🕐 Временной диапазон: {df['time'].min()} → {df['time'].max()}")
-            logger.info(f"💰 Текущая цена (последняя): {df['close'].iloc[-1]:.2f} ₽")
-            logger.info(f"📈 High: {df['high'].iloc[-1]:.2f}, Low: {df['low'].iloc[-1]:.2f}")
-            
-            if df.empty or len(df) < 30:  # Минимум 30 свечей (было 50)
-                logger.error(f"Insufficient data for calculations: {len(df)} candles")
+            if df.empty or len(df) < 30:
+                logger.error(f"Insufficient data: {len(df)} candles")
                 return None
             
-            logger.info(f"Используем {len(df)} свечей для расчета индикаторов")
-            
-            # Расчет технических индикаторов - ТЕСТИРУЕМ 4 ВАРИАНТА ADX
-            # EMA20
+            # Расчет технических индикаторов
             df['ema20'] = ta.ema(df['close'], length=20)
             
-            # ADX с 4 разными методами сглаживания
-            adx_period = 14
-            
-            # Вариант 1: RMA (Relative MA) - классический Wilder's ADX
-            adx_rma = ta.adx(df['high'], df['low'], df['close'], length=adx_period, mamode='rma')
-            
-            # Вариант 2: EMA (Exponential MA) - используется в MT4, TradingView
-            adx_ema = ta.adx(df['high'], df['low'], df['close'], length=adx_period, mamode='ema')
-            
-            # Вариант 3: SMA (Simple MA) - простые платформы
-            adx_sma = ta.adx(df['high'], df['low'], df['close'], length=adx_period, mamode='sma')
-            
-            # Вариант 4: WMA (Weighted MA) - специализированные платформы
-            adx_wma = ta.adx(df['high'], df['low'], df['close'], length=adx_period, mamode='wma')
-            
-            # Используем RMA как основной (можно поменять)
-            df['adx'] = adx_rma[f'ADX_{adx_period}']
-            df['di_plus'] = adx_rma[f'DMP_{adx_period}'] 
-            df['di_minus'] = adx_rma[f'DMN_{adx_period}']
+            # ADX с RMA (так как RMA был ближе всего)
+            adx_data = ta.adx(df['high'], df['low'], df['close'], length=14, mamode='rma')
+            df['adx'] = adx_data['ADX_14']
+            df['di_plus'] = adx_data['DMP_14'] 
+            df['di_minus'] = adx_data['DMN_14']
             
             # Берем последние значения
             last_row = df.iloc[-1]
-            
-            # Логируем ВСЕ 4 варианта для сравнения с графиком  
-            logger.info("=== 🔍 ДИАГНОСТИКА ADX ===")
-            logger.info(f"⚙️ Используем: ЧАСОВЫЕ свечи, период ADX = {adx_period}")
-            logger.info(f"📊 Ваш график показывает: ADX=25.47, DI+=29.84, DI-=15.18")
-            logger.info(f"1️⃣ RMA (Wilder): ADX={adx_rma[f'ADX_{adx_period}'].iloc[-1]:.2f}, DI+={adx_rma[f'DMP_{adx_period}'].iloc[-1]:.2f}, DI-={adx_rma[f'DMN_{adx_period}'].iloc[-1]:.2f}")
-            logger.info(f"2️⃣ EMA (MT4/TV): ADX={adx_ema[f'ADX_{adx_period}'].iloc[-1]:.2f}, DI+={adx_ema[f'DMP_{adx_period}'].iloc[-1]:.2f}, DI-={adx_ema[f'DMN_{adx_period}'].iloc[-1]:.2f}")
-            logger.info(f"3️⃣ SMA (простой): ADX={adx_sma[f'ADX_{adx_period}'].iloc[-1]:.2f}, DI+={adx_sma[f'DMP_{adx_period}'].iloc[-1]:.2f}, DI-={adx_sma[f'DMN_{adx_period}'].iloc[-1]:.2f}")
-            logger.info(f"4️⃣ WMA (взвешен): ADX={adx_wma[f'ADX_{adx_period}'].iloc[-1]:.2f}, DI+={adx_wma[f'DMP_{adx_period}'].iloc[-1]:.2f}, DI-={adx_wma[f'DMN_{adx_period}'].iloc[-1]:.2f}")
-            
-            # Проверяем, есть ли NaN значения
-            if pd.isna(last_row['adx']) or pd.isna(last_row['di_plus']) or pd.isna(last_row['di_minus']):
-                logger.warning("⚠️ ВНИМАНИЕ: Найдены NaN значения в ADX расчетах!")
-                
-            logger.info(f"🎯 ИТОГО используем RMA: ADX={last_row['adx']:.2f}, DI+={last_row['di_plus']:.2f}, DI-={last_row['di_minus']:.2f}")
-            
-            # Вычисляем отклонение от графика
-            target_adx, target_di_plus, target_di_minus = 25.47, 29.84, 15.18
-            diff_adx = abs(last_row['adx'] - target_adx)
-            diff_di_plus = abs(last_row['di_plus'] - target_di_plus) 
-            diff_di_minus = abs(last_row['di_minus'] - target_di_minus)
-            logger.info(f"📏 Отклонение от графика: ADX±{diff_adx:.2f}, DI+±{diff_di_plus:.2f}, DI-±{diff_di_minus:.2f}")
-            logger.info("=== Анализ завершен ===")
             
             return {
                 'current_price': last_row['close'],
@@ -202,11 +139,9 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def sber_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик команды /sber"""
-    # Отправляем сообщение о загрузке
     loading_message = await update.message.reply_text('⏳ Получаю данные по SBER...')
     
     try:
-        # Получаем данные
         sber_data = await get_sber_data()
         
         if not sber_data:
@@ -221,7 +156,6 @@ async def sber_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await loading_message.edit_text('❌ Недостаточно данных для расчета индикаторов. Попробуйте позже.')
             return
         
-        # Форматируем и отправляем результат
         message = format_sber_message(sber_data)
         await loading_message.edit_text(message, parse_mode='HTML')
         
@@ -237,17 +171,13 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     """Основная функция запуска бота"""
-    # Создаем приложение
     application = Application.builder().token(TELEGRAM_TOKEN).build()
     
-    # Добавляем обработчики команд
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("sber", sber_command))
     
-    # Добавляем обработчик ошибок
     application.add_error_handler(error_handler)
     
-    # Запускаем бота
     logger.info("🤖 SBER Telegram Bot started...")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
