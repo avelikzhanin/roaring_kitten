@@ -34,16 +34,16 @@ async def get_sber_data():
     """Получение данных SBER и расчет технических индикаторов"""
     try:
         with Client(TINKOFF_TOKEN) as client:
-            # Получаем данные за последние 30 дней (используем timezone-aware datetime)
-            to_date = now()  # Текущее время с timezone
-            from_date = to_date - timedelta(days=30)
+            # Берем данные за 7 дней (с запасом для получения 50+ часовых свечей)
+            to_date = now()
+            from_date = to_date - timedelta(days=7)  # Уменьшил с 60 дней до 7
             
-            # Получаем свечи (меняем на часовой таймфрейм)
+            # Получаем свечи
             candles_data = []
             for candle in client.get_all_candles(
                 figi=SBER_FIGI,
                 from_=from_date,
-                interval=CandleInterval.CANDLE_INTERVAL_HOUR  # Часовые вместо дневных
+                interval=CandleInterval.CANDLE_INTERVAL_HOUR
             ):
                 candles_data.append({
                     'high': float(quotation_to_decimal(candle.high)),
@@ -53,6 +53,12 @@ async def get_sber_data():
                     'time': candle.time
                 })
             
+            # Ограничиваем до последних 50 свечей
+            if len(candles_data) > 50:
+                candles_data = candles_data[-50:]  # Берем последние 50
+            
+            logger.info(f"Получено {len(candles_data)} часовых свечей для анализа")  # Логируем количество
+            
             if not candles_data:
                 logger.error("No candles data received")
                 return None
@@ -61,16 +67,18 @@ async def get_sber_data():
             df = pd.DataFrame(candles_data)
             df = df.sort_values('time').reset_index(drop=True)
             
-            if df.empty or len(df) < 20:
-                logger.error("Insufficient data for calculations")
+            if df.empty or len(df) < 30:  # Минимум 30 свечей (было 50)
+                logger.error(f"Insufficient data for calculations: {len(df)} candles")
                 return None
+            
+            logger.info(f"Используем {len(df)} свечей для расчета индикаторов")
             
             # Расчет технических индикаторов с настройками
             # EMA20
             df['ema20'] = ta.ema(df['close'], length=20)
             
             # ADX с настраиваемым периодом - попробуйте разные значения
-            adx_period = 13  # Попробуйте 7, 10, 14, 21, 28
+            adx_period = 14  # Вернул стандартный период
             adx_data = ta.adx(df['high'], df['low'], df['close'], length=adx_period)
             df['adx'] = adx_data[f'ADX_{adx_period}']
             df['di_plus'] = adx_data[f'DMP_{adx_period}'] 
@@ -78,6 +86,8 @@ async def get_sber_data():
             
             # Берем последние значения
             last_row = df.iloc[-1]
+            
+            logger.info(f"Результаты: ADX={last_row['adx']:.2f}, DI+={last_row['di_plus']:.2f}, DI-={last_row['di_minus']:.2f}")
             
             return {
                 'current_price': last_row['close'],
