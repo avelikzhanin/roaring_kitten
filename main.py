@@ -5,6 +5,7 @@ import logging
 
 import pandas as pd
 import pandas_ta as ta
+import pytz
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
@@ -57,7 +58,35 @@ async def get_sber_data():
             if len(candles_data) > 50:
                 candles_data = candles_data[-50:]  # Берем последние 50
             
-            logger.info(f"Получено {len(candles_data)} часовых свечей для анализа")  # Логируем количество
+            logger.info(f"Получено {len(candles_data)} часовых свечей для анализа")
+            
+            # ДИАГНОСТИКА: проверяем данные и временные зоны
+            if candles_data:
+                first_candle = candles_data[0]
+                last_candle = candles_data[-1]
+                
+                # Конвертируем время в UTC+3 (МСК) для отображения
+                utc_tz = pytz.UTC
+                msk_tz = pytz.timezone('Europe/Moscow')  # UTC+3
+                
+                first_time_utc = first_candle['time']
+                last_time_utc = last_candle['time']
+                first_time_msk = first_time_utc.astimezone(msk_tz) if first_time_utc.tzinfo else first_time_utc
+                last_time_msk = last_time_utc.astimezone(msk_tz) if last_time_utc.tzinfo else last_time_utc
+                
+                logger.info(f"🕐 Первая свеча UTC: {first_time_utc} → МСК: {first_time_msk}")
+                logger.info(f"🕐 Последняя свеча UTC: {last_time_utc} → МСК: {last_time_msk}")
+                logger.info(f"💰 Диапазон цен: {min(c['close'] for c in candles_data):.2f} - {max(c['close'] for c in candles_data):.2f}")
+                logger.info(f"📊 Последняя цена: {last_candle['close']:.2f} ₽")
+                
+                # Проверим, попадает ли последняя свеча в торговое время
+                last_hour_msk = last_time_msk.hour if hasattr(last_time_msk, 'hour') else 0
+                if 10 <= last_hour_msk <= 18:
+                    logger.info("✅ Последняя свеча в основной торговой сессии (10:00-18:45 МСК)")
+                elif 19 <= last_hour_msk <= 23:
+                    logger.info("🌙 Последняя свеча в вечерней сессии (19:05-23:50 МСК)")
+                else:
+                    logger.warning(f"⚠️ Последняя свеча вне торгового времени: {last_hour_msk}:00 МСК")
             
             if not candles_data:
                 logger.error("No candles data received")
@@ -66,6 +95,12 @@ async def get_sber_data():
             # Преобразуем в DataFrame
             df = pd.DataFrame(candles_data)
             df = df.sort_values('time').reset_index(drop=True)
+            
+            # ДИАГНОСТИКА: проверяем DataFrame
+            logger.info(f"📋 DataFrame: {len(df)} строк")
+            logger.info(f"🕐 Временной диапазон: {df['time'].min()} → {df['time'].max()}")
+            logger.info(f"💰 Текущая цена (последняя): {df['close'].iloc[-1]:.2f} ₽")
+            logger.info(f"📈 High: {df['high'].iloc[-1]:.2f}, Low: {df['low'].iloc[-1]:.2f}")
             
             if df.empty or len(df) < 30:  # Минимум 30 свечей (было 50)
                 logger.error(f"Insufficient data for calculations: {len(df)} candles")
@@ -78,7 +113,7 @@ async def get_sber_data():
             df['ema20'] = ta.ema(df['close'], length=20)
             
             # ADX с 4 разными методами сглаживания
-            adx_period = 13
+            adx_period = 14
             
             # Вариант 1: RMA (Relative MA) - классический Wilder's ADX
             adx_rma = ta.adx(df['high'], df['low'], df['close'], length=adx_period, mamode='rma')
@@ -100,15 +135,28 @@ async def get_sber_data():
             # Берем последние значения
             last_row = df.iloc[-1]
             
-            # Логируем ВСЕ 4 варианта для сравнения с графиком
-            logger.info("=== 🔍 СРАВНЕНИЕ 4-Х МЕТОДОВ ADX ===")
-            logger.info(f"📊 График показывает: ADX=25.47, DI+=29.84, DI-=15.18")
+            # Логируем ВСЕ 4 варианта для сравнения с графиком  
+            logger.info("=== 🔍 ДИАГНОСТИКА ADX ===")
+            logger.info(f"⚙️ Используем: ЧАСОВЫЕ свечи, период ADX = {adx_period}")
+            logger.info(f"📊 Ваш график показывает: ADX=25.47, DI+=29.84, DI-=15.18")
             logger.info(f"1️⃣ RMA (Wilder): ADX={adx_rma[f'ADX_{adx_period}'].iloc[-1]:.2f}, DI+={adx_rma[f'DMP_{adx_period}'].iloc[-1]:.2f}, DI-={adx_rma[f'DMN_{adx_period}'].iloc[-1]:.2f}")
             logger.info(f"2️⃣ EMA (MT4/TV): ADX={adx_ema[f'ADX_{adx_period}'].iloc[-1]:.2f}, DI+={adx_ema[f'DMP_{adx_period}'].iloc[-1]:.2f}, DI-={adx_ema[f'DMN_{adx_period}'].iloc[-1]:.2f}")
             logger.info(f"3️⃣ SMA (простой): ADX={adx_sma[f'ADX_{adx_period}'].iloc[-1]:.2f}, DI+={adx_sma[f'DMP_{adx_period}'].iloc[-1]:.2f}, DI-={adx_sma[f'DMN_{adx_period}'].iloc[-1]:.2f}")
             logger.info(f"4️⃣ WMA (взвешен): ADX={adx_wma[f'ADX_{adx_period}'].iloc[-1]:.2f}, DI+={adx_wma[f'DMP_{adx_period}'].iloc[-1]:.2f}, DI-={adx_wma[f'DMN_{adx_period}'].iloc[-1]:.2f}")
-            logger.info(f"🎯 Используем RMA: ADX={last_row['adx']:.2f}, DI+={last_row['di_plus']:.2f}, DI-={last_row['di_minus']:.2f}")
-            logger.info("=== Какой ближе к графику? ===")
+            
+            # Проверяем, есть ли NaN значения
+            if pd.isna(last_row['adx']) or pd.isna(last_row['di_plus']) or pd.isna(last_row['di_minus']):
+                logger.warning("⚠️ ВНИМАНИЕ: Найдены NaN значения в ADX расчетах!")
+                
+            logger.info(f"🎯 ИТОГО используем RMA: ADX={last_row['adx']:.2f}, DI+={last_row['di_plus']:.2f}, DI-={last_row['di_minus']:.2f}")
+            
+            # Вычисляем отклонение от графика
+            target_adx, target_di_plus, target_di_minus = 25.47, 29.84, 15.18
+            diff_adx = abs(last_row['adx'] - target_adx)
+            diff_di_plus = abs(last_row['di_plus'] - target_di_plus) 
+            diff_di_minus = abs(last_row['di_minus'] - target_di_minus)
+            logger.info(f"📏 Отклонение от графика: ADX±{diff_adx:.2f}, DI+±{diff_di_plus:.2f}, DI-±{diff_di_minus:.2f}")
+            logger.info("=== Анализ завершен ===")
             
             return {
                 'current_price': last_row['close'],
