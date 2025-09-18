@@ -27,10 +27,10 @@ if not TELEGRAM_TOKEN:
     raise ValueError("Missing TELEGRAM_TOKEN environment variable")
 
 
-def calculate_adx_tradingview_style(df, period=14):
+def calculate_adx_tradingview_exact(df, period=14):
     """
-    Расчет ADX точно по формуле TradingView:
-    ADX = (Prior ADX × 13) + Current DX) / 14
+    Точная копия Pine Script кода TradingView:
+    ADX = sma(DX, len) - простая скользящая средняя!
     """
     high = df['high'].values
     low = df['low'].values
@@ -42,59 +42,79 @@ def calculate_adx_tradingview_style(df, period=14):
     dm_minus = []
     
     for i in range(1, len(high)):
-        # True Range
+        # True Range (точно как в Pine Script)
         tr1 = high[i] - low[i]
         tr2 = abs(high[i] - close[i-1])
         tr3 = abs(low[i] - close[i-1])
         tr.append(max(tr1, tr2, tr3))
         
-        # Directional Movement (как в TradingView)
-        dm_p = max(high[i] - high[i-1], 0) if high[i] - high[i-1] > low[i-1] - low[i] else 0
-        dm_m = max(low[i-1] - low[i], 0) if low[i-1] - low[i] > high[i] - high[i-1] else 0
+        # Directional Movement (точно как в Pine Script)
+        up_move = high[i] - high[i-1]
+        down_move = low[i-1] - low[i]
+        
+        # DirectionalMovementPlus = high-nz(high[1]) > nz(low[1])-low ? max(high-nz(high[1]), 0): 0
+        dm_p = max(up_move, 0) if up_move > down_move else 0
+        # DirectionalMovementMinus = nz(low[1])-low > high-nz(high[1]) ? max(nz(low[1])-low, 0): 0  
+        dm_m = max(down_move, 0) if down_move > up_move else 0
         
         dm_plus.append(dm_p)
         dm_minus.append(dm_m)
     
-    # Сглаживание Wilder's для ATR, DM+, DM-
-    def wilders_smoothing(data, period):
-        smoothed = []
-        sma = sum(data[:period]) / period
-        smoothed.append(sma)
+    # Wilder's Smoothing (точно как в Pine Script)
+    # SmoothedTrueRange := nz(SmoothedTrueRange[1]) - (nz(SmoothedTrueRange[1])/len) + TrueRange
+    def wilders_smoothing_exact(data, period):
+        if not data:
+            return []
         
-        for i in range(period, len(data)):
-            smoothed_val = (smoothed[-1] * (period - 1) + data[i]) / period
-            smoothed.append(smoothed_val)
+        smoothed = []
+        # Первое значение - простая средняя
+        first_smooth = sum(data[:period]) / period if len(data) >= period else sum(data) / len(data)
+        smoothed.append(first_smooth)
+        
+        # Остальные по формуле: new = previous - (previous/period) + current
+        start_idx = period if len(data) >= period else len(data)
+        for i in range(start_idx, len(data)):
+            prev_smooth = smoothed[-1]
+            new_smooth = prev_smooth - (prev_smooth / period) + data[i]
+            smoothed.append(new_smooth)
+        
         return smoothed
     
     # Сглаженные значения
-    atr = wilders_smoothing(tr, period)
-    smoothed_dm_plus = wilders_smoothing(dm_plus, period)
-    smoothed_dm_minus = wilders_smoothing(dm_minus, period)
+    str_values = wilders_smoothing_exact(tr, period)
+    sdm_plus = wilders_smoothing_exact(dm_plus, period)
+    sdm_minus = wilders_smoothing_exact(dm_minus, period)
     
-    # DI+ и DI-
-    di_plus = [(smoothed_dm_plus[i] / atr[i]) * 100 for i in range(len(atr))]
-    di_minus = [(smoothed_dm_minus[i] / atr[i]) * 100 for i in range(len(atr))]
+    if not str_values or not sdm_plus or not sdm_minus:
+        return {'adx': 0, 'di_plus': 0, 'di_minus': 0}
     
-    # DX
-    dx = [abs(di_plus[i] - di_minus[i]) / (di_plus[i] + di_minus[i]) * 100 
-          if (di_plus[i] + di_minus[i]) > 0 else 0 for i in range(len(di_plus))]
+    # DI+ и DI- (точно как в Pine Script)
+    # DIPlus = SmoothedDirectionalMovementPlus / SmoothedTrueRange * 100
+    # DIMinus = SmoothedDirectionalMovementMinus / SmoothedTrueRange * 100
+    di_plus = [(sdm_plus[i] / str_values[i]) * 100 if str_values[i] > 0 else 0 
+               for i in range(min(len(str_values), len(sdm_plus)))]
+    di_minus = [(sdm_minus[i] / str_values[i]) * 100 if str_values[i] > 0 else 0
+                for i in range(min(len(str_values), len(sdm_minus)))]
     
-    # ADX по формуле TradingView: ADX = (Prior ADX × 13) + Current DX) / 14
-    adx = []
-    if dx:
-        # Первое значение ADX = среднее первых 14 DX
-        first_adx = sum(dx[:period]) / period if len(dx) >= period else sum(dx) / len(dx)
-        adx.append(first_adx)
-        
-        # Остальные значения по формуле TradingView
-        for i in range(1, len(dx) - period + 1):
-            current_dx = dx[period - 1 + i]
-            prior_adx = adx[-1]
-            new_adx = (prior_adx * 13 + current_dx) / 14  # ← Формула TradingView!
-            adx.append(new_adx)
+    # DX (точно как в Pine Script)  
+    # DX = abs(DIPlus-DIMinus) / (DIPlus+DIMinus)*100
+    dx = []
+    for i in range(min(len(di_plus), len(di_minus))):
+        if (di_plus[i] + di_minus[i]) > 0:
+            dx_val = abs(di_plus[i] - di_minus[i]) / (di_plus[i] + di_minus[i]) * 100
+            dx.append(dx_val)
+        else:
+            dx.append(0)
+    
+    # ADX - ПРОСТАЯ СКОЛЬЗЯЩАЯ СРЕДНЯЯ (как в Pine Script!)
+    # ADX = sma(DX, len)
+    if len(dx) >= period:
+        adx = sum(dx[-period:]) / period  # Простая SMA за последние 14 периодов
+    else:
+        adx = sum(dx) / len(dx) if dx else 0
     
     return {
-        'adx': adx[-1] if adx else 0,
+        'adx': adx,
         'di_plus': di_plus[-1] if di_plus else 0,
         'di_minus': di_minus[-1] if di_minus else 0
     }
@@ -175,26 +195,27 @@ async def get_sber_data():
         # ADX по стандартной формуле pandas-ta
         adx_data_standard = ta.adx(df['high'], df['low'], df['close'], length=14, mamode='rma')
         
-        # ADX по формуле TradingView
-        adx_tradingview = calculate_adx_tradingview_style(df, period=14)
+        # ADX по точной формуле Pine Script
+        adx_tradingview = calculate_adx_tradingview_exact(df, period=14)
         
         # Берем последние значения
         last_row = df.iloc[-1]
         
-        # Сравниваем результаты
+        # Сравниваем результаты в логах
         logger.info("📊 СРАВНЕНИЕ ФОРМУЛ ADX:")
-        logger.info(f"   🔧 pandas-ta (стандарт): ADX={adx_data_standard['ADX_14'].iloc[-1]:.2f}")
-        logger.info(f"   📈 TradingView формула: ADX={adx_tradingview['adx']:.2f}")
-        logger.info(f"   🎯 DI+ TradingView: {adx_tradingview['di_plus']:.2f}")
-        logger.info(f"   🎯 DI- TradingView: {adx_tradingview['di_minus']:.2f}")
-        logger.info("=== Используем TradingView формулу ===")
+        logger.info(f"   🔧 pandas-ta: ADX={adx_data_standard['ADX_14'].iloc[-1]:.2f}, DI+={adx_data_standard['DMP_14'].iloc[-1]:.2f}, DI-={adx_data_standard['DMN_14'].iloc[-1]:.2f}")
+        logger.info(f"   📈 Pine Script: ADX={adx_tradingview['adx']:.2f}, DI+={adx_tradingview['di_plus']:.2f}, DI-={adx_tradingview['di_minus']:.2f}")
         
         return {
             'current_price': last_row['close'],
             'ema20': last_row['ema20'],
-            'adx': adx_tradingview['adx'],
-            'di_plus': adx_tradingview['di_plus'],
-            'di_minus': adx_tradingview['di_minus']
+            # Возвращаем оба варианта
+            'adx_standard': adx_data_standard['ADX_14'].iloc[-1],
+            'di_plus_standard': adx_data_standard['DMP_14'].iloc[-1],
+            'di_minus_standard': adx_data_standard['DMN_14'].iloc[-1],
+            'adx_pinescript': adx_tradingview['adx'],
+            'di_plus_pinescript': adx_tradingview['di_plus'],
+            'di_minus_pinescript': adx_tradingview['di_minus']
         }
         
     except httpx.HTTPError as e:
@@ -206,18 +227,28 @@ async def get_sber_data():
 
 
 def format_sber_message(data):
-    """Форматирование сообщения с данными SBER"""
-    adx_strength = "Сильный тренд" if data['adx'] > 25 else "Слабый тренд"
+    """Форматирование сообщения с данными SBER - показываем оба варианта ADX"""
+    
+    # Определяем силу тренда для обоих вариантов
+    adx_standard_strength = "Сильный тренд" if data['adx_standard'] > 25 else "Слабый тренд"
+    adx_pine_strength = "Сильный тренд" if data['adx_pinescript'] > 25 else "Слабый тренд"
     
     message = f"""🏦 <b>SBER - Сбербанк</b>
 
 💰 <b>Цена:</b> {data['current_price']:.2f} ₽
 📊 <b>EMA20:</b> {data['ema20']:.2f} ₽
 
-📈 <b>Технические индикаторы:</b>
-• <b>ADX:</b> {data['adx']:.2f} ({adx_strength})
-• <b>DI+:</b> {data['di_plus']:.2f}
-• <b>DI-:</b> {data['di_minus']:.2f}"""
+📈 <b>ADX — метод pandas-ta:</b>
+• <b>ADX:</b> {data['adx_standard']:.2f} ({adx_standard_strength})
+• <b>DI+:</b> {data['di_plus_standard']:.2f}
+• <b>DI-:</b> {data['di_minus_standard']:.2f}
+
+📊 <b>ADX — Pine Script (TradingView):</b>
+• <b>ADX:</b> {data['adx_pinescript']:.2f} ({adx_pine_strength})
+• <b>DI+:</b> {data['di_plus_pinescript']:.2f}
+• <b>DI-:</b> {data['di_minus_pinescript']:.2f}
+
+<i>Сравните с вашим графиком и выберите лучший!</i>"""
     
     return message
 
@@ -245,11 +276,11 @@ async def sber_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await loading_message.edit_text('❌ Не удалось получить данные с MOEX API. Попробуйте позже.')
             return
         
-        # Проверяем на NaN значения
+        # Проверяем на NaN значения (для обоих вариантов)
         if (pd.isna(sber_data['ema20']) or 
-            pd.isna(sber_data['adx']) or 
-            pd.isna(sber_data['di_plus']) or 
-            pd.isna(sber_data['di_minus'])):
+            pd.isna(sber_data['adx_standard']) or pd.isna(sber_data['adx_pinescript']) or
+            pd.isna(sber_data['di_plus_standard']) or pd.isna(sber_data['di_plus_pinescript']) or
+            pd.isna(sber_data['di_minus_standard']) or pd.isna(sber_data['di_minus_pinescript'])):
             await loading_message.edit_text('❌ Недостаточно данных для расчета индикаторов. Попробуйте позже.')
             return
         
