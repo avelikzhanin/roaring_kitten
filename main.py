@@ -78,7 +78,7 @@ async def get_sber_data():
             df['ema20'] = ta.ema(df['close'], length=20)
             
             # ADX с настраиваемым периодом - попробуйте разные значения
-            adx_period = 16  # Вернул стандартный период
+            adx_period = 14  # Вернул стандартный период
             adx_data = ta.adx(df['high'], df['low'], df['close'], length=adx_period)
             df['adx'] = adx_data[f'ADX_{adx_period}']
             df['di_plus'] = adx_data[f'DMP_{adx_period}'] 
