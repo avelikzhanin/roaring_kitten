@@ -5,7 +5,7 @@ import logging
 
 import pandas as pd
 import pandas_ta as ta
-import requests
+import httpx
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
@@ -44,11 +44,12 @@ async def get_sber_data():
         
         logger.info(f"Запрашиваем данные MOEX API с {from_date.strftime('%Y-%m-%d')} по {to_date.strftime('%Y-%m-%d')}")
         
-        # Делаем запрос к MOEX API
-        response = requests.get(url, params=params, timeout=10)
-        response.raise_for_status()
-        
-        data = response.json()
+        # Делаем запрос к MOEX API с httpx
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url, params=params, timeout=10)
+            response.raise_for_status()
+            
+            data = response.json()
         
         # Извлекаем данные свечей
         if 'candles' not in data or not data['candles']['data']:
@@ -111,7 +112,7 @@ async def get_sber_data():
             'di_minus': last_row['di_minus']
         }
         
-    except requests.exceptions.RequestException as e:
+    except httpx.HTTPError as e:
         logger.error(f"MOEX API request error: {e}")
         return None
     except Exception as e:
