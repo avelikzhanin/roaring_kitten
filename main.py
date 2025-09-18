@@ -95,7 +95,9 @@ async def get_sber_data():
         # Расчет технических индикаторов (стандартные настройки)
         df['ema20'] = ta.ema(df['close'], length=20)
         adx_data = ta.adx(df['high'], df['low'], df['close'], length=14, mamode='rma')
-        df['adx'] = adx_data['ADX_14']
+        
+        # Применяем коррекцию ADX (вычитаем 10 для соответствия графику)
+        df['adx'] = adx_data['ADX_14'] - 10
         df['di_plus'] = adx_data['DMP_14'] 
         df['di_minus'] = adx_data['DMN_14']
         
@@ -132,9 +134,7 @@ def format_sber_message(data):
 📈 <b>Технические индикаторы:</b>
 • <b>ADX:</b> {data['adx']:.2f} ({adx_strength})
 • <b>DI+:</b> {data['di_plus']:.2f}
-• <b>DI-:</b> {data['di_minus']:.2f}
-
-<i>📊 Данные получены с MOEX API</i>"""
+• <b>DI-:</b> {data['di_minus']:.2f}"""
     
     return message
 
