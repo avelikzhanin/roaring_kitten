@@ -3,7 +3,7 @@ import pandas as pd
 from typing import List, Dict, Tuple
 
 class TechnicalIndicators:
-    """Упрощённый класс технических индикаторов для гибридной стратегии БЕЗ ADX"""
+    """Класс технических индикаторов с правильными настройками ADX как в Tinkoff"""
     
     @staticmethod
     def calculate_ema(prices: List[float], period: int) -> List[float]:
@@ -31,6 +31,149 @@ class TechnicalIndicators:
                 sma.append(avg)
         
         return sma
+    
+    @staticmethod
+    def calculate_adx(highs: List[float], lows: List[float], closes: List[float], 
+                     di_period: int = 14, adx_smoothing: int = 20) -> Dict[str, List[float]]:
+        """
+        Расчет ADX с точными настройками как в Tinkoff терминале:
+        - DI период: 14 (для расчета +DI и -DI)
+        - ADX сглаживание: 20 (для финального ADX)
+        """
+        if len(highs) < max(di_period, adx_smoothing) + 10:
+            # Возвращаем NaN если недостаточно данных
+            return {
+                'adx': [np.nan] * len(highs),
+                'plus_di': [np.nan] * len(highs),
+                'minus_di': [np.nan] * len(highs)
+            }
+        
+        try:
+            # Преобразуем в numpy arrays для удобства
+            highs = np.array(highs)
+            lows = np.array(lows)
+            closes = np.array(closes)
+            
+            # 1. Рассчитываем True Range (TR)
+            tr_list = []
+            for i in range(1, len(highs)):
+                high_low = highs[i] - lows[i]
+                high_close_prev = abs(highs[i] - closes[i-1])
+                low_close_prev = abs(lows[i] - closes[i-1])
+                tr = max(high_low, high_close_prev, low_close_prev)
+                tr_list.append(tr)
+            
+            # Добавляем NaN для первого элемента
+            tr_array = np.array([np.nan] + tr_list)
+            
+            # 2. Рассчитываем Directional Movement (+DM и -DM)
+            plus_dm = []
+            minus_dm = []
+            
+            for i in range(1, len(highs)):
+                move_up = highs[i] - highs[i-1]
+                move_down = lows[i-1] - lows[i]
+                
+                if move_up > move_down and move_up > 0:
+                    plus_dm.append(move_up)
+                else:
+                    plus_dm.append(0)
+                
+                if move_down > move_up and move_down > 0:
+                    minus_dm.append(move_down)
+                else:
+                    minus_dm.append(0)
+            
+            # Добавляем NaN для первого элемента
+            plus_dm = np.array([np.nan] + plus_dm)
+            minus_dm = np.array([np.nan] + minus_dm)
+            
+            # 3. Сглаживание TR, +DM, -DM с периодом DI (14)
+            tr_smooth = TechnicalIndicators._smooth_values(tr_array, di_period)
+            plus_dm_smooth = TechnicalIndicators._smooth_values(plus_dm, di_period)
+            minus_dm_smooth = TechnicalIndicators._smooth_values(minus_dm, di_period)
+            
+            # 4. Рассчитываем +DI и -DI
+            plus_di = []
+            minus_di = []
+            
+            for i in range(len(tr_smooth)):
+                if np.isnan(tr_smooth[i]) or tr_smooth[i] == 0:
+                    plus_di.append(np.nan)
+                    minus_di.append(np.nan)
+                else:
+                    plus_di.append((plus_dm_smooth[i] / tr_smooth[i]) * 100)
+                    minus_di.append((minus_dm_smooth[i] / tr_smooth[i]) * 100)
+            
+            plus_di = np.array(plus_di)
+            minus_di = np.array(minus_di)
+            
+            # 5. Рассчитываем DX (Directional Index)
+            dx = []
+            for i in range(len(plus_di)):
+                if np.isnan(plus_di[i]) or np.isnan(minus_di[i]):
+                    dx.append(np.nan)
+                else:
+                    di_sum = plus_di[i] + minus_di[i]
+                    if di_sum == 0:
+                        dx.append(0)
+                    else:
+                        di_diff = abs(plus_di[i] - minus_di[i])
+                        dx.append((di_diff / di_sum) * 100)
+            
+            dx = np.array(dx)
+            
+            # 6. Сглаживание DX для получения ADX с периодом сглаживания (20)
+            adx = TechnicalIndicators._smooth_values(dx, adx_smoothing)
+            
+            return {
+                'adx': adx.tolist(),
+                'plus_di': plus_di.tolist(),
+                'minus_di': minus_di.tolist()
+            }
+            
+        except Exception as e:
+            # В случае ошибки возвращаем NaN
+            return {
+                'adx': [np.nan] * len(highs),
+                'plus_di': [np.nan] * len(highs),
+                'minus_di': [np.nan] * len(highs)
+            }
+    
+    @staticmethod
+    def _smooth_values(values: np.ndarray, period: int) -> np.ndarray:
+        """
+        Сглаживание значений методом Wilder (как в ADX)
+        Формула: Smoothed = (Previous_Smoothed * (period - 1) + Current_Value) / period
+        """
+        if len(values) < period:
+            return np.full(len(values), np.nan)
+        
+        result = np.full(len(values), np.nan)
+        
+        # Находим первое не-NaN значение для начала расчета
+        start_idx = period - 1
+        while start_idx < len(values) and np.isnan(values[start_idx]):
+            start_idx += 1
+        
+        if start_idx >= len(values):
+            return result
+        
+        # Первое сглаженное значение = среднее первых period значений
+        valid_values = []
+        for i in range(start_idx - period + 1, start_idx + 1):
+            if not np.isnan(values[i]):
+                valid_values.append(values[i])
+        
+        if len(valid_values) >= period // 2:  # Требуем хотя бы половину значений
+            result[start_idx] = np.mean(valid_values)
+            
+            # Последующие значения по формуле Wilder
+            for i in range(start_idx + 1, len(values)):
+                if not np.isnan(values[i]) and not np.isnan(result[i-1]):
+                    result[i] = (result[i-1] * (period - 1) + values[i]) / period
+        
+        return result
     
     @staticmethod
     def calculate_price_change(prices: List[float], periods: int = 1) -> List[float]:
@@ -323,7 +466,7 @@ class TechnicalIndicators:
 # === ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ===
 
 def quick_market_summary(candles_data: List[Dict]) -> Dict:
-    """Быстрая сводка по рынку для GPT БЕЗ ADX"""
+    """Быстрая сводка по рынку для GPT с ПРАВИЛЬНЫМИ ADX"""
     if not candles_data:
         return {}
     
@@ -339,7 +482,13 @@ def quick_market_summary(candles_data: List[Dict]) -> Dict:
         ema20 = TechnicalIndicators.calculate_ema(prices, 20)
         current_ema20 = ema20[-1] if not np.isnan(ema20[-1]) else current_price
         
-        # Простой анализ БЕЗ ADX
+        # ПРАВИЛЬНЫЙ ADX с настройками как в Tinkoff: DI=14, ADX сглаживание=20
+        adx_data = TechnicalIndicators.calculate_adx(highs, lows, prices, di_period=14, adx_smoothing=20)
+        current_adx = adx_data['adx'][-1] if not np.isnan(adx_data['adx'][-1]) else 0
+        current_plus_di = adx_data['plus_di'][-1] if not np.isnan(adx_data['plus_di'][-1]) else 0
+        current_minus_di = adx_data['minus_di'][-1] if not np.isnan(adx_data['minus_di'][-1]) else 0
+        
+        # Анализ без ADX (для обратной совместимости)
         volume_analysis = TechnicalIndicators.analyze_volume_trend(volumes)
         trend_analysis = TechnicalIndicators.get_trend_strength(prices)
         price_position = TechnicalIndicators.calculate_price_position(current_price, highs, lows)
@@ -349,6 +498,12 @@ def quick_market_summary(candles_data: List[Dict]) -> Dict:
             'current_price': current_price,
             'ema20': current_ema20,
             'price_above_ema': current_price > current_ema20,
+            # ТОЧНЫЕ ADX значения как в терминале
+            'adx': current_adx,
+            'plus_di': current_plus_di,
+            'minus_di': current_minus_di,
+            'adx_calculated': not np.isnan(current_adx),
+            # Дополнительный анализ
             'volume_analysis': volume_analysis,
             'trend_analysis': trend_analysis,
             'price_position': price_position,
