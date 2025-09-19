@@ -93,8 +93,44 @@ class SignalProcessor:
         
         return 'closed'
     
+    def get_market_status_text(self) -> Dict[str, str]:
+        """Получение статуса рынка с эмодзи и описанием"""
+        is_open = self.is_market_open()
+        session = self.get_current_session()
+        time_quality = self.get_time_quality()
+        
+        if is_open:
+            if time_quality == 'premium':
+                return {
+                    'emoji': '🟢',
+                    'status': 'ОТКРЫТ',
+                    'description': f'Премиум время ({session})',
+                    'data_freshness': 'Данные актуальны'
+                }
+            elif time_quality in ['normal', 'evening']:
+                return {
+                    'emoji': '🟢',
+                    'status': 'ОТКРЫТ', 
+                    'description': f'Торговая сессия ({session})',
+                    'data_freshness': 'Данные актуальны'
+                }
+            else:
+                return {
+                    'emoji': '🟠',
+                    'status': 'ОТКРЫТ',
+                    'description': f'Выходная сессия ({session})',
+                    'data_freshness': 'Данные актуальны'
+                }
+        else:
+            return {
+                'emoji': '🔴',
+                'status': 'ЗАКРЫТ',
+                'description': f'Внеторговое время ({session})',
+                'data_freshness': 'Данные могут быть не самыми свежими'
+            }
+    
     async def analyze_market(self, symbol: str) -> Optional[TradingSignal]:
-        """Комплексный анализ рынка: базовый фильтр + GPT анализ всех факторов"""
+        """Комплексный анализ рынка: базовый фильтр + GPT анализ всех факторов (работает в любое время)"""
         try:
             logger.info(f"🔍 КОМПЛЕКСНЫЙ АНАЛИЗ {symbol} - все факторы через GPT")
             
@@ -120,7 +156,7 @@ class SignalProcessor:
                 logger.error(f"Пустой DataFrame для {symbol}")
                 return None
             
-            # ЭТАП 1: БАЗОВЫЙ ФИЛЬТР (быстрая предварительная проверка)
+            # ЭТАП 1: БАЗОВЫЙ ФИЛЬТР (теперь БЕЗ проверки торгового времени)
             if not await self._check_basic_filter(df, symbol):
                 logger.info(f"⏳ Базовый фильтр не пройден для {symbol}")
                 return None
@@ -175,15 +211,9 @@ class SignalProcessor:
             return None
     
     async def _check_basic_filter(self, df: pd.DataFrame, symbol: str) -> bool:
-        """Базовый фильтр: торговое время + цена > EMA20"""
+        """Базовый фильтр: ТОЛЬКО цена > EMA20 (убрана проверка торгового времени)"""
         try:
-            # 1. Проверяем торговое время
-            if not self.is_market_open():
-                session = self.get_current_session()
-                logger.info(f"📅 Рынок закрыт для {symbol} (сессия: {session})")
-                return False
-            
-            # 2. Рассчитываем EMA20
+            # Рассчитываем EMA20
             closes = df['close'].tolist()
             ema20 = TechnicalIndicators.calculate_ema(closes, 20)
             
@@ -194,18 +224,18 @@ class SignalProcessor:
                 logger.warning(f"EMA20 не рассчитана для {symbol}")
                 return False
             
-            # 3. Проверяем: цена > EMA20
+            # Проверяем: цена > EMA20
             price_above_ema = current_price > current_ema20
             
-            # Логирование
-            session = self.get_current_session()
-            time_quality = self.get_time_quality()
+            # Получаем информацию о статусе рынка
+            market_status = self.get_market_status_text()
             
+            # Логирование
             logger.info(f"🔍 БАЗОВЫЙ ФИЛЬТР {symbol}:")
             logger.info(f"   💰 Цена: {current_price:.2f} ₽")
             logger.info(f"   📈 EMA20: {current_ema20:.2f} ₽")
             logger.info(f"   📊 Цена > EMA20: {'✅' if price_above_ema else '❌'}")
-            logger.info(f"   ⏰ Сессия: {session} ({time_quality})")
+            logger.info(f"   {market_status['emoji']} Рынок: {market_status['status']} ({market_status['description']})")
             
             return price_above_ema
             
@@ -270,9 +300,10 @@ class SignalProcessor:
                 # Детальное движение цены
                 'price_movement': price_movement,
                 
-                # Контекст времени
+                # Контекст времени (теперь без ограничений)
                 'trading_session': self.get_current_session(),
                 'time_quality': self.get_time_quality(),
+                'market_status': self.get_market_status_text(),
                 
                 # Флаг что базовый фильтр пройден
                 'conditions_met': True
@@ -447,7 +478,8 @@ class SignalProcessor:
                 'volume_analysis': market_data.get('volume_analysis', {}),
                 'price_levels': market_data.get('price_levels', {}),
                 'trading_session': market_data.get('trading_session', 'unknown'),
-                'time_quality': market_data.get('time_quality', 'unknown')
+                'time_quality': market_data.get('time_quality', 'unknown'),
+                'market_status': market_data.get('market_status', {})
             }
             
             # Добавляем движение цены
@@ -475,14 +507,12 @@ class SignalProcessor:
             return None
     
     async def get_detailed_market_status(self, symbol: str) -> str:
-        """Получение детального статуса с комплексным анализом"""
+        """Получение детального статуса с комплексным анализом (работает в любое время)"""
         try:
             logger.info(f"🔄 Получаем комплексный статус для {symbol}...")
             
-            # Проверяем торговое время
-            if not self.is_market_open():
-                session = self.get_current_session()
-                return f"⏰ <b>Рынок закрыт</b>\n\nТекущая сессия: {session}\n\nПопробуйте в торговое время."
+            # Получаем статус рынка
+            market_status = self.get_market_status_text()
             
             # Получаем информацию о тикере
             ticker_info = await self.db.get_ticker_info(symbol)
@@ -495,7 +525,13 @@ class SignalProcessor:
             )
             
             if len(candles) < 20:
-                return f"❌ <b>Недостаточно данных для анализа {symbol}</b>\n\nПопробуйте позже."
+                return f"""❌ <b>Недостаточно данных для анализа {symbol}</b>
+
+{market_status['emoji']} <b>Статус рынка:</b> {market_status['status']}
+📊 {market_status['description']}
+💾 {market_status['data_freshness']}
+
+Попробуйте позже."""
             
             df = self.tinkoff_provider.candles_to_dataframe(candles)
             if df.empty:
@@ -512,15 +548,29 @@ class SignalProcessor:
             current_ema20 = market_data['ema20']
             price_above_ema = current_price > current_ema20
             
-            session = self.get_current_session()
-            time_quality = self.get_time_quality()
+            # Получаем время последней свечи
+            last_candle_time = df.iloc[-1]['timestamp']
+            moscow_time = last_candle_time.astimezone(self.moscow_tz)
+            data_age = (datetime.now(self.moscow_tz) - moscow_time).total_seconds() / 3600
+            
+            data_freshness = ""
+            if data_age < 1:
+                data_freshness = "✅ Данные свежие"
+            elif data_age < 3:
+                data_freshness = f"⚠️ Данные {data_age:.1f}ч назад"
+            else:
+                data_freshness = f"🔴 Данные {data_age:.1f}ч назад"
             
             message = f"""📊 <b>КОМПЛЕКСНЫЙ АНАЛИЗ {symbol}</b>
+
+{market_status['emoji']} <b>Статус рынка:</b> {market_status['status']}
+📊 {market_status['description']}
+🕐 <b>Последние данные:</b> {moscow_time.strftime('%d.%m %H:%M')} МСК
+💾 {data_freshness}
 
 💰 <b>Цена:</b> {current_price:.2f} ₽
 📈 <b>EMA20:</b> {current_ema20:.2f} ₽ {'✅' if price_above_ema else '❌'}
 
-⏰ <b>Сессия:</b> {session} ({time_quality})
 🔍 <b>Базовый фильтр:</b> {'✅ Пройден' if basic_filter_passed else '❌ Не пройден'}"""
             
             # Добавляем комплексный GPT анализ
@@ -543,6 +593,10 @@ class SignalProcessor:
                 else:
                     message += "\n\n⏳ <b>Ожидаем улучшения условий...</b>"
             
+            # Добавляем предупреждение если рынок закрыт
+            if not self.is_market_open():
+                message += f"\n\n⚠️ <b>Внимание:</b> {market_status['data_freshness']}"
+            
             return message
                 
         except asyncio.TimeoutError:
@@ -553,7 +607,7 @@ class SignalProcessor:
             return f"❌ <b>Ошибка получения данных для анализа {symbol}</b>"
     
     async def check_peak_trend(self, symbol: str) -> Optional[float]:
-        """Проверка пика тренда через комплексный GPT анализ"""
+        """Проверка пика тренда через комплексный GPT анализ (работает в любое время)"""
         try:
             # Получаем данные
             ticker_info = await self.db.get_ticker_info(symbol)
@@ -589,7 +643,8 @@ class SignalProcessor:
                         # Все данные для комплексного анализа
                         'volume_analysis': market_data.get('volume_analysis', {}),
                         'price_levels': market_data.get('price_levels', {}),
-                        'trading_session': market_data.get('trading_session', 'unknown')
+                        'trading_session': market_data.get('trading_session', 'unknown'),
+                        'market_status': market_data.get('market_status', {})
                     }
                     
                     # Добавляем движение цены
