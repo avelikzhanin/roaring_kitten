@@ -1,6 +1,9 @@
 import numpy as np
 import pandas as pd
+import logging
 from typing import List, Dict, Tuple
+
+logger = logging.getLogger(__name__)
 
 class TechnicalIndicators:
     """Класс технических индикаторов с правильными настройками ADX как в Tinkoff"""
