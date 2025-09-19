@@ -158,11 +158,19 @@ class SignalProcessor:
                 return None
             
             # ЭТАП 1: ТОЧНЫЙ РАСЧЕТ ИНДИКАТОРОВ
+            logger.info(f"📊 Рассчитываем точные индикаторы для {symbol}...")
             market_summary = quick_market_summary(df.to_dict('records'))
             
             if 'error' in market_summary:
                 logger.error(f"Ошибка расчета индикаторов для {symbol}: {market_summary['error']}")
                 return None
+            
+            # Отладочная информация ADX
+            if 'adx_debug' in market_summary:
+                debug = market_summary['adx_debug']
+                logger.info(f"🔍 ADX отладка {symbol}: данных={debug['data_length']}, ADX массив={debug['adx_array_length']}")
+                logger.info(f"🔍 Сырые значения: ADX={debug['raw_adx']}, +DI={debug['raw_plus_di']}, -DI={debug['raw_minus_di']}")
+                logger.info(f"🔍 Итоговые: ADX={market_summary['adx']:.1f}, рассчитан={market_summary['adx_calculated']}")
             
             # ЭТАП 2: БАЗОВЫЙ ФИЛЬТР с точными ADX
             if not await self._check_basic_filter_with_adx(market_summary, symbol):
@@ -551,10 +559,23 @@ class SignalProcessor:
                 return f"❌ <b>Ошибка получения данных {symbol}</b>"
             
             # Рассчитываем точные индикаторы
+            logger.info(f"📊 Рассчитываем индикаторы для {symbol}...")
             market_summary = quick_market_summary(df.to_dict('records'))
             
             if 'error' in market_summary:
+                logger.error(f"Ошибка расчета индикаторов для {symbol}: {market_summary['error']}")
                 return f"❌ <b>Ошибка расчета индикаторов {symbol}</b>"
+            
+            # Выводим отладочную информацию ADX
+            if 'adx_debug' in market_summary:
+                debug = market_summary['adx_debug']
+                logger.info(f"🔍 ADX отладка для {symbol}:")
+                logger.info(f"   Длина данных: {debug['data_length']}")
+                logger.info(f"   Длина ADX массива: {debug['adx_array_length']}")
+                logger.info(f"   Сырой ADX: {debug['raw_adx']}")
+                logger.info(f"   Последние 5 ADX: {debug['last_5_adx']}")
+                logger.info(f"   ADX рассчитан: {market_summary['adx_calculated']}")
+                logger.info(f"   Итоговый ADX: {market_summary['adx']}")
             
             # Получаем время последней свечи
             last_candle_time = df.iloc[-1]['timestamp']
