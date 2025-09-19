@@ -40,8 +40,11 @@ class TechnicalIndicators:
         - DI период: 14 (для расчета +DI и -DI)
         - ADX сглаживание: 20 (для финального ADX)
         """
-        if len(highs) < max(di_period, adx_smoothing) + 10:
-            # Возвращаем NaN если недостаточно данных
+        logger.info(f"🔄 Начинаем расчет ADX: данных={len(highs)}, DI период={di_period}, ADX сглаживание={adx_smoothing}")
+        
+        min_required = max(di_period, adx_smoothing) + 5  # Уменьшили требование
+        if len(highs) < min_required:
+            logger.warning(f"❌ Недостаточно данных для ADX: {len(highs)} < {min_required}")
             return {
                 'adx': [np.nan] * len(highs),
                 'plus_di': [np.nan] * len(highs),
@@ -124,7 +127,21 @@ class TechnicalIndicators:
             dx = np.array(dx)
             
             # 6. Сглаживание DX для получения ADX с периодом сглаживания (20)
+            logger.info(f"📊 Сглаживаем DX для ADX (период {adx_smoothing})...")
             adx = TechnicalIndicators._smooth_values(dx, adx_smoothing)
+            
+            # Детальное логирование результатов
+            valid_adx_count = sum(1 for x in adx if not np.isnan(x))
+            logger.info(f"✅ ADX рассчитан: валидных значений {valid_adx_count}/{len(adx)}")
+            
+            if valid_adx_count > 0:
+                last_adx = adx[-1] if not np.isnan(adx[-1]) else None
+                last_plus_di = plus_di[-1] if not np.isnan(plus_di[-1]) else None
+                last_minus_di = minus_di[-1] if not np.isnan(minus_di[-1]) else None
+                
+                logger.info(f"📊 Последние значения: ADX={last_adx:.1f if last_adx else 'NaN'}, +DI={last_plus_di:.1f if last_plus_di else 'NaN'}, -DI={last_minus_di:.1f if last_minus_di else 'NaN'}")
+            else:
+                logger.warning("⚠️ Все значения ADX = NaN!")
             
             return {
                 'adx': adx.tolist(),
@@ -146,7 +163,10 @@ class TechnicalIndicators:
         Сглаживание значений методом Wilder (как в ADX)
         Формула: Smoothed = (Previous_Smoothed * (period - 1) + Current_Value) / period
         """
+        logger.info(f"🔄 Сглаживание: период={period}, значений={len(values)}")
+        
         if len(values) < period:
+            logger.warning(f"❌ Недостаточно данных для сглаживания: {len(values)} < {period}")
             return np.full(len(values), np.nan)
         
         result = np.full(len(values), np.nan)
@@ -157,21 +177,31 @@ class TechnicalIndicators:
             start_idx += 1
         
         if start_idx >= len(values):
+            logger.warning(f"❌ Не найдено валидных значений для сглаживания")
             return result
+        
+        logger.info(f"📊 Начинаем сглаживание с индекса {start_idx}")
         
         # Первое сглаженное значение = среднее первых period значений
         valid_values = []
-        for i in range(start_idx - period + 1, start_idx + 1):
+        for i in range(max(0, start_idx - period + 1), start_idx + 1):
             if not np.isnan(values[i]):
                 valid_values.append(values[i])
         
         if len(valid_values) >= period // 2:  # Требуем хотя бы половину значений
             result[start_idx] = np.mean(valid_values)
+            logger.info(f"📊 Первое сглаженное значение: {result[start_idx]:.2f} (из {len(valid_values)} значений)")
             
             # Последующие значения по формуле Wilder
+            successful_calcs = 0
             for i in range(start_idx + 1, len(values)):
                 if not np.isnan(values[i]) and not np.isnan(result[i-1]):
                     result[i] = (result[i-1] * (period - 1) + values[i]) / period
+                    successful_calcs += 1
+            
+            logger.info(f"✅ Успешно рассчитано {successful_calcs} сглаженных значений")
+        else:
+            logger.warning(f"❌ Недостаточно валидных значений: {len(valid_values)} < {period//2}")
         
         return result
     
@@ -483,10 +513,32 @@ def quick_market_summary(candles_data: List[Dict]) -> Dict:
         current_ema20 = ema20[-1] if not np.isnan(ema20[-1]) else current_price
         
         # ПРАВИЛЬНЫЙ ADX с настройками как в Tinkoff: DI=14, ADX сглаживание=20
+        logger.info("📊 Рассчитываем ADX с настройками Tinkoff (DI=14, сглаживание=20)...")
         adx_data = TechnicalIndicators.calculate_adx(highs, lows, prices, di_period=14, adx_smoothing=20)
-        current_adx = adx_data['adx'][-1] if not np.isnan(adx_data['adx'][-1]) else 0
-        current_plus_di = adx_data['plus_di'][-1] if not np.isnan(adx_data['plus_di'][-1]) else 0
-        current_minus_di = adx_data['minus_di'][-1] if not np.isnan(adx_data['minus_di'][-1]) else 0
+        
+        # Получаем последние значения с детальной проверкой
+        current_adx = adx_data['adx'][-1] if len(adx_data['adx']) > 0 else np.nan
+        current_plus_di = adx_data['plus_di'][-1] if len(adx_data['plus_di']) > 0 else np.nan
+        current_minus_di = adx_data['minus_di'][-1] if len(adx_data['minus_di']) > 0 else np.nan
+        
+        # Логируем результаты ADX
+        if np.isnan(current_adx):
+            logger.warning("⚠️ ADX = NaN! Проблема с расчетом.")
+        else:
+            logger.info(f"✅ ADX успешно рассчитан: {current_adx:.1f}")
+            
+        if np.isnan(current_plus_di):
+            logger.warning("⚠️ +DI = NaN! Проблема с расчетом.")
+        else:
+            logger.info(f"✅ +DI: {current_plus_di:.1f}")
+            
+        if np.isnan(current_minus_di):
+            logger.warning("⚠️ -DI = NaN! Проблема с расчетом.")
+        else:
+            logger.info(f"✅ -DI: {current_minus_di:.1f}")
+        
+        # НЕ заменяем NaN на 0 - пусть будет NaN для диагностики
+        adx_calculated = not (np.isnan(current_adx) or np.isnan(current_plus_di) or np.isnan(current_minus_di))
         
         # Анализ без ADX (для обратной совместимости)
         volume_analysis = TechnicalIndicators.analyze_volume_trend(volumes)
@@ -498,11 +550,19 @@ def quick_market_summary(candles_data: List[Dict]) -> Dict:
             'current_price': current_price,
             'ema20': current_ema20,
             'price_above_ema': current_price > current_ema20,
-            # ТОЧНЫЕ ADX значения как в терминале
-            'adx': current_adx,
-            'plus_di': current_plus_di,
-            'minus_di': current_minus_di,
-            'adx_calculated': not np.isnan(current_adx),
+            # ADX значения (могут быть NaN если не рассчитались)
+            'adx': current_adx if not np.isnan(current_adx) else 0.0,
+            'plus_di': current_plus_di if not np.isnan(current_plus_di) else 0.0,
+            'minus_di': current_minus_di if not np.isnan(current_minus_di) else 0.0,
+            'adx_calculated': adx_calculated,
+            'adx_debug': {
+                'raw_adx': current_adx,
+                'raw_plus_di': current_plus_di,
+                'raw_minus_di': current_minus_di,
+                'data_length': len(prices),
+                'adx_array_length': len(adx_data['adx']),
+                'last_5_adx': adx_data['adx'][-5:] if len(adx_data['adx']) >= 5 else adx_data['adx']
+            },
             # Дополнительный анализ
             'volume_analysis': volume_analysis,
             'trend_analysis': trend_analysis,
