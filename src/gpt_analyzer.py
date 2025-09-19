@@ -271,10 +271,13 @@ class GPTMarketAnalyzer:
             range_size = levels.get("range_size_pct", 0)
             position_pct = levels.get("position_in_range_pct", 50)
             
+            resistance_text = f"{resistance:.2f}₽ ({((resistance/current_price-1)*100):+.1f}%)" if resistance else "не определено"
+            support_text = f"{support:.2f}₽ ({((support/current_price-1)*100):+.1f}%)" if support else "не определено"
+            
             levels_info = f"""
 📊 ПРОФЕССИОНАЛЬНЫЕ УРОВНИ:
-• Ближайшее сопротивление: {resistance:.2f}₽ ({((resistance/current_price-1)*100):+.1f}%)" if resistance else "не определено"}
-• Ближайшая поддержка: {support:.2f}₽ ({((support/current_price-1)*100):+.1f}%)" if support else "не определено"}
+• Ближайшее сопротивление: {resistance_text}
+• Ближайшая поддержка: {support_text}
 • Диапазон сессии: {recent_low:.2f} - {recent_high:.2f}₽ (размер: {range_size:.1f}%)
 • Позиция в диапазоне: {position_pct:.1f}% (0%=дно, 100%=вершина)"""
 
