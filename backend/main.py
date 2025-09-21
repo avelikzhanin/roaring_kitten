@@ -44,17 +44,53 @@ async def startup():
     """Инициализация при запуске"""
     global strategy_manager
     
-    # Создаем базу данных
-    create_database()
-    
-    # Инициализируем менеджер стратегий
-    strategy_manager = StrategyManager()
-    
-    # Запускаем фоновую задачу обновления данных
-    asyncio.create_task(market_data_updater())
-    
-    print("🚀 Financial Potential Strategy API запущен!")
-    print(f"📊 Отслеживаемые символы: {', '.join(symbols)}")
+    try:
+        # Создаем базу данных
+        create_database()
+        print("✅ База данных создана")
+        
+        # Инициализируем виртуальный счет и настройки
+        db = get_db_session()
+        try:
+            # Проверяем виртуальный счет
+            from models import VirtualAccount
+            account = db.query(VirtualAccount).first()
+            if not account:
+                account = VirtualAccount(
+                    initial_balance=100000.0,
+                    current_balance=100000.0,
+                    max_balance=100000.0
+                )
+                db.add(account)
+                print("💳 Создан виртуальный счет")
+            
+            # Создаем настройки стратегий
+            for symbol in symbols:
+                settings = db.query(StrategySettings).filter(StrategySettings.symbol == symbol).first()
+                if not settings:
+                    settings = StrategySettings(symbol=symbol)
+                    db.add(settings)
+                    print(f"⚙️ Созданы настройки для {symbol}")
+            
+            db.commit()
+            print("✅ Настройки инициализированы")
+            
+        finally:
+            db.close()
+        
+        # Инициализируем менеджер стратегий
+        strategy_manager = StrategyManager()
+        print("✅ Менеджер стратегий готов")
+        
+        # Запускаем фоновую задачу обновления данных
+        asyncio.create_task(market_data_updater())
+        
+        print("🚀 Financial Potential Strategy API запущен!")
+        print(f"📊 Отслеживаемые символы: {', '.join(symbols)}")
+        
+    except Exception as e:
+        print(f"❌ Ошибка инициализации: {e}")
+        # Продолжаем работу, но без полной функциональности
 
 async def market_data_updater():
     """Фоновая задача для обновления рыночных данных"""
