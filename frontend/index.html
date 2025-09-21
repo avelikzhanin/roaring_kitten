@@ -500,34 +500,94 @@
                 const stats = await apiCall('/account/statistics');
                 const container = document.getElementById('account-stats');
                 
-                container.innerHTML = `
-                    <div class="stat-item">
-                        <div class="stat-value">${stats.account.current_balance.toLocaleString('ru-RU')} ₽</div>
-                        <div class="stat-label">Текущий баланс</div>
-                    </div>
-                    <div class="stat-item">
-                        <div class="stat-value ${stats.account.total_return >= 0 ? 'profit' : 'loss'}">
-                            ${stats.account.total_return.toFixed(2)}%
+                if (stats.summary) {
+                    // Отображаем статистику по каждому символу отдельно
+                    let html = '';
+                    
+                    // Сводная информация
+                    html += `
+                        <div class="stat-item" style="grid-column: 1 / -1; background: linear-gradient(45deg, #667eea, #764ba2); color: white; font-weight: bold;">
+                            <div class="stat-value">${stats.summary.total_balance.toLocaleString('ru-RU')} ₽</div>
+                            <div class="stat-label">Общий баланс всех счетов</div>
                         </div>
-                        <div class="stat-label">Доходность</div>
-                    </div>
-                    <div class="stat-item">
-                        <div class="stat-value">${stats.account.current_drawdown.toFixed(2)}%</div>
-                        <div class="stat-label">Просадка</div>
-                    </div>
-                    <div class="stat-item">
-                        <div class="stat-value">${stats.trading.total_trades}</div>
-                        <div class="stat-label">Всего сделок</div>
-                    </div>
-                    <div class="stat-item">
-                        <div class="stat-value">${stats.trading.win_rate.toFixed(1)}%</div>
-                        <div class="stat-label">Процент прибыльных</div>
-                    </div>
-                    <div class="stat-item">
-                        <div class="stat-value">${stats.trading.open_positions}</div>
-                        <div class="stat-label">Открытых позиций</div>
-                    </div>
-                `;
+                        <div class="stat-item" style="grid-column: 1 / -1; background: #f8f9fa;">
+                            <div class="stat-value ${stats.summary.total_return >= 0 ? 'profit' : 'loss'}">
+                                ${stats.summary.total_return.toFixed(2)}%
+                            </div>
+                            <div class="stat-label">Общая доходность портфеля</div>
+                        </div>
+                    `;
+                    
+                    // Статистика по каждому символу
+                    for (const [symbol, symbolStats] of Object.entries(stats.accounts)) {
+                        const account = symbolStats.account;
+                        const trading = symbolStats.trading;
+                        
+                        html += `
+                            <div style="grid-column: 1 / -1; margin: 15px 0 10px 0; font-weight: bold; color: #374151; border-bottom: 2px solid #e5e7eb; padding-bottom: 5px;">
+                                ${symbol} - Отдельный счет
+                            </div>
+                            <div class="stat-item">
+                                <div class="stat-value">${account.current_balance.toLocaleString('ru-RU')} ₽</div>
+                                <div class="stat-label">Баланс ${symbol}</div>
+                            </div>
+                            <div class="stat-item">
+                                <div class="stat-value ${account.total_return >= 0 ? 'profit' : 'loss'}">
+                                    ${account.total_return.toFixed(2)}%
+                                </div>
+                                <div class="stat-label">Доходность ${symbol}</div>
+                            </div>
+                            <div class="stat-item">
+                                <div class="stat-value">${account.current_drawdown.toFixed(2)}%</div>
+                                <div class="stat-label">Просадка ${symbol}</div>
+                            </div>
+                            <div class="stat-item">
+                                <div class="stat-value">${trading.total_trades}</div>
+                                <div class="stat-label">Сделок ${symbol}</div>
+                            </div>
+                            <div class="stat-item">
+                                <div class="stat-value">${trading.win_rate.toFixed(1)}%</div>
+                                <div class="stat-label">Прибыльных ${symbol}</div>
+                            </div>
+                            <div class="stat-item">
+                                <div class="stat-value">${trading.open_positions}</div>
+                                <div class="stat-label">Открытых ${symbol}</div>
+                            </div>
+                        `;
+                    }
+                    
+                    container.innerHTML = html;
+                } else {
+                    // Fallback для старого формата
+                    container.innerHTML = `
+                        <div class="stat-item">
+                            <div class="stat-value">${stats.account.current_balance.toLocaleString('ru-RU')} ₽</div>
+                            <div class="stat-label">Текущий баланс</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value ${stats.account.total_return >= 0 ? 'profit' : 'loss'}">
+                                ${stats.account.total_return.toFixed(2)}%
+                            </div>
+                            <div class="stat-label">Доходность</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value">${stats.account.current_drawdown.toFixed(2)}%</div>
+                            <div class="stat-label">Просадка</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value">${stats.trading.total_trades}</div>
+                            <div class="stat-label">Всего сделок</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value">${stats.trading.win_rate.toFixed(1)}%</div>
+                            <div class="stat-label">Процент прибыльных</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value">${stats.trading.open_positions}</div>
+                            <div class="stat-label">Открытых позиций</div>
+                        </div>
+                    `;
+                }
             } catch (error) {
                 document.getElementById('account-stats').innerHTML = 
                     '<div class="loading">Ошибка загрузки статистики</div>';
@@ -820,14 +880,26 @@
             }
         }
 
-        async function resetAccount() {
-            if (confirm('Вы уверены, что хотите сбросить виртуальный счет? Все сделки будут закрыты.')) {
+        async function resetAllAccounts() {
+            if (confirm('Вы уверены, что хотите сбросить ВСЕ виртуальные счета? Все сделки будут закрыты.')) {
                 try {
                     await apiCall('/account/reset', { method: 'POST' });
-                    showNotification('Счет сброшен успешно!', 'success');
+                    showNotification('Все счета сброшены успешно!', 'success');
                     await loadDashboard();
                 } catch (error) {
-                    showNotification('Ошибка сброса счета', 'error');
+                    showNotification('Ошибка сброса счетов', 'error');
+                }
+            }
+        }
+
+        async function resetSymbolAccount(symbol) {
+            if (confirm(`Вы уверены, что хотите сбросить счет для ${symbol}? Все сделки по этому инструменту будут закрыты.`)) {
+                try {
+                    await apiCall(`/account/${symbol}/reset`, { method: 'POST' });
+                    showNotification(`Счет ${symbol} сброшен успешно!`, 'success');
+                    await loadDashboard();
+                } catch (error) {
+                    showNotification(`Ошибка сброса счета ${symbol}`, 'error');
                 }
             }
         }
