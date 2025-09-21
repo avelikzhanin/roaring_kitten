@@ -770,33 +770,55 @@
         // Save settings
         async function saveSettings() {
             try {
+                // Собираем все данные из формы
                 const formData = {
                     symbol: currentSymbol,
                     atr_period: parseInt(document.getElementById('atr_period').value),
                     rsi_period: parseInt(document.getElementById('rsi_period').value),
                     ema_period: parseInt(document.getElementById('ema_period').value),
+                    threshold_level: currentSettings.threshold_level || 0.4,
+                    level_radius_factor: currentSettings.level_radius_factor || 4.5,
+                    min_potential_strength: currentSettings.min_potential_strength || 0.6,
                     risk_percent: parseFloat(document.getElementById('risk_percent').value),
+                    dynamic_lot: currentSettings.dynamic_lot !== undefined ? currentSettings.dynamic_lot : true,
                     base_lot: parseFloat(document.getElementById('base_lot').value),
+                    min_lot: currentSettings.min_lot || 0.01,
+                    max_drawdown_percent: parseFloat(document.getElementById('max_drawdown_percent').value),
+                    reduce_risk_on_drawdown: currentSettings.reduce_risk_on_drawdown !== undefined ? currentSettings.reduce_risk_on_drawdown : true,
+                    drawdown_risk_reduction: currentSettings.drawdown_risk_reduction || 0.5,
                     stop_loss_atr: parseFloat(document.getElementById('stop_loss_atr').value),
                     take_profit_atr: parseFloat(document.getElementById('take_profit_atr').value),
+                    enable_ladder: currentSettings.enable_ladder !== undefined ? currentSettings.enable_ladder : false,
+                    ladder_count: currentSettings.ladder_count || 2,
+                    ladder_step_atr: currentSettings.ladder_step_atr || 0.4,
                     buy_rsi_threshold: parseFloat(document.getElementById('buy_rsi_threshold').value),
                     sell_rsi_threshold: parseFloat(document.getElementById('sell_rsi_threshold').value),
-                    mode: document.getElementById('mode').value,
-                    max_drawdown_percent: parseFloat(document.getElementById('max_drawdown_percent').value),
+                    buy_threshold_multiplier: currentSettings.buy_threshold_multiplier || 1.0,
+                    sell_threshold_multiplier: currentSettings.sell_threshold_multiplier || 1.3,
                     use_volatility_filter: document.getElementById('use_volatility_filter').value === 'true',
-                    // Добавляем остальные поля с текущими значениями
-                    ...currentSettings
+                    max_atr_multiplier: currentSettings.max_atr_multiplier || 2.2,
+                    use_volume_filter: currentSettings.use_volume_filter !== undefined ? currentSettings.use_volume_filter : true,
+                    min_volume_ratio: currentSettings.min_volume_ratio || 1.2,
+                    mode: document.getElementById('mode').value
                 };
                 
-                await apiCall(`/settings/${currentSymbol}`, {
+                console.log('Отправляем настройки для', currentSymbol, ':', formData);
+                
+                const response = await apiCall(`/settings/${currentSymbol}`, {
                     method: 'POST',
                     body: JSON.stringify(formData)
                 });
                 
-                showNotification('Настройки сохранены успешно!', 'success');
+                console.log('Ответ сервера:', response);
+                
+                showNotification(`Настройки для ${currentSymbol} сохранены успешно!`, 'success');
+                
+                // Обновляем currentSettings
+                currentSettings = response;
                 
             } catch (error) {
-                showNotification('Ошибка сохранения настроек', 'error');
+                console.error('Ошибка сохранения настроек:', error);
+                showNotification(`Ошибка сохранения настроек для ${currentSymbol}`, 'error');
             }
         }
 
