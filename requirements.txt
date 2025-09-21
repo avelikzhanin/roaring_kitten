@@ -4,7 +4,6 @@ requests==2.31.0
 pandas==2.1.4
 numpy==1.25.2
 sqlalchemy==2.0.23
-sqlite3
 aiofiles==23.2.1
 python-multipart==0.0.6
 pydantic==2.5.2
