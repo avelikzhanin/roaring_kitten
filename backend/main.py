@@ -7,6 +7,7 @@ from typing import List, Dict, Optional
 from datetime import datetime, timedelta
 import json
 import uvicorn
+from contextlib import asynccontextmanager
 
 from models import (
     create_database, get_db_session, StrategySettings, VirtualAccount,
@@ -17,33 +18,18 @@ from moex_api import get_moex_data, MOEXClient
 from strategy import FinancialPotentialStrategy
 from virtual_trading import VirtualTradingEngine, StrategyManager
 
-# Создание приложения
-app = FastAPI(
-    title="Financial Potential Strategy API",
-    description="API для тестирования стратегии Financial Potential на данных MOEX",
-    version="2.0.0"
-)
-
-# CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
 # Глобальные переменные
 symbols = ["SBER", "GAZP", "LKOH", "VTBR"]
 strategy_manager = None
 latest_market_data = {}
 is_trading_active = False
 
-@app.on_event("startup")
-async def startup():
-    """Инициализация при запуске"""
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Управление жизненным циклом приложения"""
     global strategy_manager
     
+    # Startup
     try:
         # Создаем базу данных
         create_database()
@@ -53,7 +39,6 @@ async def startup():
         db = get_db_session()
         try:
             # Проверяем виртуальный счет
-            from models import VirtualAccount
             account = db.query(VirtualAccount).first()
             if not account:
                 account = VirtualAccount(
@@ -91,6 +76,28 @@ async def startup():
     except Exception as e:
         print(f"❌ Ошибка инициализации: {e}")
         # Продолжаем работу, но без полной функциональности
+    
+    yield
+    
+    # Shutdown
+    print("👋 Завершение работы Financial Potential Strategy API")
+
+# Создание приложения с lifespan
+app = FastAPI(
+    title="Financial Potential Strategy API",
+    description="API для тестирования стратегии Financial Potential на данных MOEX",
+    version="2.0.0",
+    lifespan=lifespan
+)
+
+# CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 async def market_data_updater():
     """Фоновая задача для обновления рыночных данных"""
