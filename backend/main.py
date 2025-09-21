@@ -32,8 +32,9 @@ async def lifespan(app: FastAPI):
     # Startup
     try:
         # Создаем базу данных
+        print("🔗 Подключение к базе данных...")
         create_database()
-        print("✅ База данных создана")
+        print("✅ База данных готова")
         
         # Инициализируем виртуальный счет и настройки
         db = get_db_session()
@@ -48,18 +49,28 @@ async def lifespan(app: FastAPI):
                 )
                 db.add(account)
                 print("💳 Создан виртуальный счет")
+            else:
+                print(f"💳 Виртуальный счет найден: {account.current_balance:,.0f} ₽")
             
             # Создаем настройки стратегий
+            settings_created = 0
             for symbol in symbols:
                 settings = db.query(StrategySettings).filter(StrategySettings.symbol == symbol).first()
                 if not settings:
                     settings = StrategySettings(symbol=symbol)
                     db.add(settings)
+                    settings_created += 1
                     print(f"⚙️ Созданы настройки для {symbol}")
+            
+            if settings_created == 0:
+                print("⚙️ Настройки стратегий уже существуют")
             
             db.commit()
             print("✅ Настройки инициализированы")
             
+        except Exception as db_error:
+            print(f"❌ Ошибка работы с БД: {db_error}")
+            db.rollback()
         finally:
             db.close()
         
@@ -74,7 +85,8 @@ async def lifespan(app: FastAPI):
         print(f"📊 Отслеживаемые символы: {', '.join(symbols)}")
         
     except Exception as e:
-        print(f"❌ Ошибка инициализации: {e}")
+        print(f"❌ Критическая ошибка инициализации: {e}")
+        print("⚠️ Система запущена в ограниченном режиме")
         # Продолжаем работу, но без полной функциональности
     
     yield
