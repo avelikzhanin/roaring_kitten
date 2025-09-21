@@ -471,13 +471,23 @@
                 const status = await apiCall('/trading/status');
                 const indicator = document.getElementById('trading-indicator');
                 const statusText = document.getElementById('trading-status');
+                const startButton = document.querySelector('.btn-success');
+                const stopButton = document.querySelector('.btn-danger');
                 
                 if (status.active) {
                     indicator.className = 'status-indicator status-active';
                     statusText.textContent = 'Торговля активна';
+                    startButton.disabled = true;
+                    startButton.style.opacity = '0.5';
+                    stopButton.disabled = false;
+                    stopButton.style.opacity = '1';
                 } else {
                     indicator.className = 'status-indicator status-inactive';
                     statusText.textContent = 'Торговля остановлена';
+                    startButton.disabled = false;
+                    startButton.style.opacity = '1';
+                    stopButton.disabled = true;
+                    stopButton.style.opacity = '0.5';
                 }
             } catch (error) {
                 console.error('Status load error:', error);
@@ -766,23 +776,47 @@
         }
 
         // Trading controls
+        let tradingOperationInProgress = false;
+
         async function startTrading() {
+            if (tradingOperationInProgress) return;
+            
+            const button = document.querySelector('.btn-success');
             try {
+                tradingOperationInProgress = true;
+                button.disabled = true;
+                button.textContent = '⏳ Запуск...';
+                
                 await apiCall('/trading/start', { method: 'POST' });
                 showNotification('Торговля запущена!', 'success');
                 await loadTradingStatus();
             } catch (error) {
                 showNotification('Ошибка запуска торговли', 'error');
+            } finally {
+                tradingOperationInProgress = false;
+                button.disabled = false;
+                button.textContent = '▶️ Запустить торговлю';
             }
         }
 
         async function stopTrading() {
+            if (tradingOperationInProgress) return;
+            
+            const button = document.querySelector('.btn-danger');
             try {
+                tradingOperationInProgress = true;
+                button.disabled = true;
+                button.textContent = '⏳ Остановка...';
+                
                 await apiCall('/trading/stop', { method: 'POST' });
                 showNotification('Торговля остановлена!', 'success');
                 await loadTradingStatus();
             } catch (error) {
                 showNotification('Ошибка остановки торговли', 'error');
+            } finally {
+                tradingOperationInProgress = false;
+                button.disabled = false;
+                button.textContent = '⏹️ Остановить торговлю';
             }
         }
 
