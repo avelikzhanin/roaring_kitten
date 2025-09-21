@@ -303,8 +303,52 @@ def create_database():
         print("🗄️ Используется SQLite (локально)")
         engine = create_engine("sqlite:///fp_strategy.db")
     
+    # Выполняем миграцию перед созданием таблиц
+    if database_url:
+        migrate_database(engine)
+    
     Base.metadata.create_all(engine)
     return engine
+
+def migrate_database(engine):
+    """Выполнение миграций для PostgreSQL"""
+    print("🔄 Проверка необходимости миграций...")
+    
+    try:
+        # Проверяем, есть ли колонка symbol в virtual_account
+        with engine.connect() as conn:
+            result = conn.execute("""
+                SELECT column_name 
+                FROM information_schema.columns 
+                WHERE table_name = 'virtual_account' 
+                AND column_name = 'symbol'
+            """)
+            
+            if not result.fetchone():
+                print("🔧 Добавление колонки symbol в virtual_account...")
+                
+                # Добавляем колонку symbol
+                conn.execute("ALTER TABLE virtual_account ADD COLUMN symbol VARCHAR(10)")
+                
+                # Если есть существующие записи без symbol, удаляем их (они некорректны)
+                conn.execute("DELETE FROM virtual_account WHERE symbol IS NULL")
+                
+                # Делаем колонку NOT NULL
+                conn.execute("ALTER TABLE virtual_account ALTER COLUMN symbol SET NOT NULL")
+                
+                # Добавляем уникальный constraint
+                conn.execute("ALTER TABLE virtual_account ADD CONSTRAINT virtual_account_symbol_key UNIQUE (symbol)")
+                
+                # Фиксируем изменения
+                conn.commit()
+                print("✅ Миграция завершена успешно")
+            else:
+                print("ℹ️ Колонка symbol уже существует, миграции не требуются")
+                
+    except Exception as e:
+        print(f"⚠️ Ошибка при выполнении миграции: {e}")
+        print("ℹ️ Это нормально при первом запуске - таблицы будут созданы заново")
+        # При первом запуске таблица может не существовать, это нормально
 
 def get_db_session():
     """Получение сессии базы данных"""
