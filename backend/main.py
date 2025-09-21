@@ -310,30 +310,62 @@ async def update_strategy_settings(symbol: str, settings_request: StrategySettin
     if symbol not in symbols:
         raise HTTPException(status_code=404, detail="Symbol not found")
     
+    print(f"🔧 Обновление настроек для {symbol}")
+    print(f"📥 Получены данные: {settings_request.dict()}")
+    
     db = get_db_session()
     try:
         settings = db.query(StrategySettings).filter(StrategySettings.symbol == symbol).first()
         
         if not settings:
+            print(f"➕ Создание новых настроек для {symbol}")
             settings = StrategySettings(symbol=symbol)
             db.add(settings)
+        else:
+            print(f"✏️ Обновление существующих настроек для {symbol}")
         
         # Обновляем настройки
-        for field, value in settings_request.dict().items():
-            if field != 'symbol':
+        update_data = settings_request.dict()
+        updated_fields = []
+        
+        for field, value in update_data.items():
+            if field != 'symbol' and hasattr(settings, field):
+                old_value = getattr(settings, field)
                 setattr(settings, field, value)
+                if old_value != value:
+                    updated_fields.append(f"{field}: {old_value} → {value}")
+        
+        if updated_fields:
+            print(f"🔄 Обновленные поля: {', '.join(updated_fields)}")
+        else:
+            print("ℹ️ Нет изменений в настройках")
         
         settings.updated_at = datetime.utcnow()
-        db.commit()
+        
+        try:
+            db.commit()
+            print(f"✅ Настройки для {symbol} сохранены в БД")
+        except Exception as commit_error:
+            print(f"❌ Ошибка сохранения в БД: {commit_error}")
+            db.rollback()
+            raise HTTPException(status_code=500, detail=f"Database error: {commit_error}")
+        
         db.refresh(settings)
         
         # Обновляем стратегию в менеджере
         global strategy_manager
         if strategy_manager:
             strategy_manager.strategies[symbol] = FinancialPotentialStrategy(settings)
+            print(f"🔄 Стратегия для {symbol} обновлена в менеджере")
         
         return settings
         
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Ошибка обновления настроек: {e}")
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error updating settings: {e}")
     finally:
         db.close()
 
@@ -361,14 +393,84 @@ async def stop_trading():
     
     return {"status": "Trading stopped", "active": is_trading_active}
 
-@app.get("/api/trading/status")
-async def get_trading_status():
-    """Получение статуса торговли"""
-    return {
-        "active": is_trading_active,
-        "symbols": symbols,
-        "last_update": datetime.now().isoformat()
-    }
+@app.get("/api/debug/settings/{symbol}")
+async def debug_settings(symbol: str):
+    """Отладочный endpoint для проверки настроек"""
+    if symbol not in symbols:
+        raise HTTPException(status_code=404, detail="Symbol not found")
+    
+    db = get_db_session()
+    try:
+        settings = db.query(StrategySettings).filter(StrategySettings.symbol == symbol).first()
+        
+        if not settings:
+            return {
+                "symbol": symbol,
+                "found": False,
+                "message": "Настройки не найдены в БД"
+            }
+        
+        # Возвращаем все поля настроек
+        result = {
+            "symbol": symbol,
+            "found": True,
+            "settings": {
+                "id": settings.id,
+                "symbol": settings.symbol,
+                "created_at": settings.created_at.isoformat() if settings.created_at else None,
+                "updated_at": settings.updated_at.isoformat() if settings.updated_at else None,
+            }
+        }
+        
+        # Добавляем все поля настроек
+        for column in settings.__table__.columns:
+            if column.name not in ['id', 'symbol', 'created_at', 'updated_at']:
+                result["settings"][column.name] = getattr(settings, column.name)
+        
+        return result
+        
+    finally:
+        db.close()
+
+@app.post("/api/debug/test-save/{symbol}")
+async def test_save_settings(symbol: str):
+    """Тестовое сохранение настроек"""
+    if symbol not in symbols:
+        raise HTTPException(status_code=404, detail="Symbol not found")
+    
+    db = get_db_session()
+    try:
+        settings = db.query(StrategySettings).filter(StrategySettings.symbol == symbol).first()
+        
+        if not settings:
+            settings = StrategySettings(symbol=symbol)
+            db.add(settings)
+            print(f"🆕 Создаем новые настройки для {symbol}")
+        
+        # Тестовое изменение
+        old_risk = settings.risk_percent
+        settings.risk_percent = 0.99  # Тестовое значение
+        settings.updated_at = datetime.utcnow()
+        
+        try:
+            db.commit()
+            print(f"✅ Тест: риск изменен с {old_risk} на {settings.risk_percent}")
+            return {
+                "success": True,
+                "message": f"Тестовое сохранение успешно",
+                "old_value": old_risk,
+                "new_value": settings.risk_percent
+            }
+        except Exception as e:
+            db.rollback()
+            print(f"❌ Ошибка тестового сохранения: {e}")
+            return {
+                "success": False,
+                "error": str(e)
+            }
+        
+    finally:
+        db.close()
 
 @app.get("/api/signals/{symbol}")
 async def get_current_signal(symbol: str):
