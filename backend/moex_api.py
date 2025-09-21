@@ -158,22 +158,41 @@ class MOEXClient:
         return results
 
 # Функции для синхронного использования
+async def get_moex_data_async(symbols: List[str]) -> dict:
+    """Асинхронная функция для получения данных MOEX"""
+    async with MOEXClient() as client:
+        return await client.get_market_data(symbols)
+
 def get_moex_data(symbols: List[str]) -> dict:
     """Синхронная функция для получения данных MOEX"""
-    async def _get_data():
-        async with MOEXClient() as client:
-            return await client.get_market_data(symbols)
-    
-    return asyncio.run(_get_data())
+    try:
+        # Пытаемся получить текущий event loop
+        loop = asyncio.get_running_loop()
+        # Если event loop уже запущен, создаем task
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            future = executor.submit(asyncio.run, get_moex_data_async(symbols))
+            return future.result()
+    except RuntimeError:
+        # Если нет running event loop, используем asyncio.run
+        return asyncio.run(get_moex_data_async(symbols))
+
+async def get_moex_candles_async(symbol: str, period: str = "60", days: int = 30) -> pd.DataFrame:
+    """Асинхронная функция для получения свечей"""
+    async with MOEXClient() as client:
+        start_date = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+        return await client.get_candles(symbol, period, start_date)
 
 def get_moex_candles(symbol: str, period: str = "60", days: int = 30) -> pd.DataFrame:
     """Синхронная функция для получения свечей"""
-    async def _get_candles():
-        async with MOEXClient() as client:
-            start_date = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
-            return await client.get_candles(symbol, period, start_date)
-    
-    return asyncio.run(_get_candles())
+    try:
+        loop = asyncio.get_running_loop()
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            future = executor.submit(asyncio.run, get_moex_candles_async(symbol, period, days))
+            return future.result()
+    except RuntimeError:
+        return asyncio.run(get_moex_candles_async(symbol, period, days))
 
 # Тестирование
 if __name__ == "__main__":
