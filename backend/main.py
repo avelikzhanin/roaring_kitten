@@ -99,6 +99,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Статические файлы
+import os
+from pathlib import Path
+
+# Определяем путь к frontend
+frontend_dir = Path(__file__).parent.parent / "frontend"
+if frontend_dir.exists():
+    app.mount("/static", StaticFiles(directory=str(frontend_dir)), name="static")
+
 async def market_data_updater():
     """Фоновая задача для обновления рыночных данных"""
     global latest_market_data, is_trading_active
@@ -142,7 +151,17 @@ async def market_data_updater():
 
 @app.get("/", response_class=HTMLResponse)
 async def root():
-    """Главная страница"""
+    """Главная страница - веб-интерфейс"""
+    frontend_path = Path(__file__).parent.parent / "frontend" / "index.html"
+    
+    if frontend_path.exists():
+        try:
+            with open(frontend_path, "r", encoding="utf-8") as f:
+                return f.read()
+        except Exception as e:
+            print(f"Ошибка чтения frontend/index.html: {e}")
+    
+    # Fallback если файл не найден
     return """
     <html>
         <head>
@@ -152,6 +171,7 @@ async def root():
                 .header { background: #2196F3; color: white; padding: 20px; border-radius: 10px; }
                 .status { margin: 20px 0; }
                 .endpoint { background: #f5f5f5; padding: 10px; margin: 10px 0; border-radius: 5px; }
+                .error { color: #ff6b6b; margin: 20px 0; padding: 15px; background: #ffe6e6; border-radius: 8px; }
             </style>
         </head>
         <body>
@@ -160,11 +180,16 @@ async def root():
                 <p>Тестирование торговой стратегии на реальных данных MOEX</p>
             </div>
             
+            <div class="error">
+                <h3>⚠️ Веб-интерфейс временно недоступен</h3>
+                <p>Файл frontend/index.html не найден. Используйте API endpoints:</p>
+            </div>
+            
             <div class="status">
                 <h2>📊 Статус системы</h2>
                 <p><strong>Отслеживаемые инструменты:</strong> SBER, GAZP, LKOH, VTBR</p>
                 <p><strong>Документация API:</strong> <a href="/docs">/docs</a></p>
-                <p><strong>Реактивная документация:</strong> <a href="/redoc">/redoc</a></p>
+                <p><strong>Интерактивная документация:</strong> <a href="/redoc">/redoc</a></p>
             </div>
             
             <div class="endpoints">
@@ -175,6 +200,11 @@ async def root():
                 <div class="endpoint">POST /api/settings/{symbol} - Настройка стратегии для символа</div>
                 <div class="endpoint">POST /api/trading/start - Запуск автоматической торговли</div>
                 <div class="endpoint">POST /api/trading/stop - Остановка торговли</div>
+            </div>
+            
+            <div style="margin-top: 30px; padding: 15px; background: #e3f2fd; border-radius: 8px;">
+                <h3>🛠️ Для разработчиков</h3>
+                <p>Убедитесь, что файл <code>frontend/index.html</code> находится в правильной директории проекта.</p>
             </div>
         </body>
     </html>
