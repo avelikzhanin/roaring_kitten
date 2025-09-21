@@ -1,0 +1,851 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Financial Potential Strategy Dashboard</title>
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #333;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .header {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 15px;
+            padding: 30px;
+            margin-bottom: 30px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            background: linear-gradient(45deg, #667eea, #764ba2);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 10px;
+        }
+
+        .status-bar {
+            display: flex;
+            gap: 20px;
+            align-items: center;
+            margin-top: 20px;
+        }
+
+        .status-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 15px;
+            background: #f0f4f8;
+            border-radius: 20px;
+            font-weight: 500;
+        }
+
+        .status-indicator {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        .status-active { background-color: #10b981; }
+        .status-inactive { background-color: #ef4444; }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .dashboard {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+            margin-bottom: 30px;
+        }
+
+        .card {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 15px;
+            padding: 25px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .card h3 {
+            margin-bottom: 20px;
+            color: #374151;
+            font-size: 1.3em;
+            font-weight: 600;
+        }
+
+        .controls {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .btn-primary {
+            background: linear-gradient(45deg, #667eea, #764ba2);
+            color: white;
+        }
+
+        .btn-success {
+            background: linear-gradient(45deg, #10b981, #059669);
+            color: white;
+        }
+
+        .btn-danger {
+            background: linear-gradient(45deg, #ef4444, #dc2626);
+            color: white;
+        }
+
+        .btn-secondary {
+            background: #6b7280;
+            color: white;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+        }
+
+        .stat-item {
+            text-align: center;
+            padding: 15px;
+            background: #f9fafb;
+            border-radius: 10px;
+        }
+
+        .stat-value {
+            font-size: 1.8em;
+            font-weight: bold;
+            color: #374151;
+        }
+
+        .stat-label {
+            font-size: 0.9em;
+            color: #6b7280;
+            margin-top: 5px;
+        }
+
+        .market-data {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+        }
+
+        .symbol-card {
+            background: #f9fafb;
+            border-radius: 10px;
+            padding: 15px;
+            text-align: center;
+        }
+
+        .symbol-name {
+            font-weight: bold;
+            font-size: 1.1em;
+            margin-bottom: 10px;
+        }
+
+        .symbol-price {
+            font-size: 1.5em;
+            color: #374151;
+            margin-bottom: 10px;
+        }
+
+        .signal-indicator {
+            padding: 5px 10px;
+            border-radius: 15px;
+            font-size: 0.8em;
+            font-weight: bold;
+        }
+
+        .signal-buy { background: #dcfce7; color: #166534; }
+        .signal-sell { background: #fee2e2; color: #991b1b; }
+        .signal-none { background: #f3f4f6; color: #6b7280; }
+
+        .trades-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 15px;
+        }
+
+        .trades-table th,
+        .trades-table td {
+            padding: 10px;
+            text-align: left;
+            border-bottom: 1px solid #e5e7eb;
+        }
+
+        .trades-table th {
+            background: #f9fafb;
+            font-weight: 600;
+        }
+
+        .profit { color: #10b981; }
+        .loss { color: #ef4444; }
+
+        .full-width {
+            grid-column: 1 / -1;
+        }
+
+        .chart-container {
+            height: 400px;
+            margin-top: 20px;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #6b7280;
+        }
+
+        .settings-form {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 15px;
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .form-group label {
+            margin-bottom: 5px;
+            font-weight: 500;
+            color: #374151;
+        }
+
+        .form-group input,
+        .form-group select {
+            padding: 8px 12px;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+
+        .form-group input:focus,
+        .form-group select:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .logs-container {
+            max-height: 300px;
+            overflow-y: auto;
+            background: #f9fafb;
+            border-radius: 8px;
+            padding: 15px;
+        }
+
+        .log-item {
+            padding: 8px 0;
+            border-bottom: 1px solid #e5e7eb;
+            font-family: monospace;
+            font-size: 0.9em;
+        }
+
+        .log-timestamp {
+            color: #6b7280;
+        }
+
+        .log-event {
+            font-weight: bold;
+            margin: 0 10px;
+        }
+
+        .log-signal { color: #059669; }
+        .log-trade { color: #2563eb; }
+        .log-error { color: #dc2626; }
+
+        @media (max-width: 768px) {
+            .dashboard {
+                grid-template-columns: 1fr;
+            }
+            
+            .controls {
+                flex-direction: column;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <h1>💰 Financial Potential Strategy</h1>
+            <p>Тестирование торговой стратегии на реальных данных MOEX</p>
+            
+            <div class="status-bar">
+                <div class="status-item">
+                    <div class="status-indicator" id="trading-indicator"></div>
+                    <span id="trading-status">Загрузка...</span>
+                </div>
+                <div class="status-item">
+                    <span>📊 Символы: SBER, GAZP, LKOH, VTBR</span>
+                </div>
+                <div class="status-item">
+                    <span id="last-update">Последнее обновление: --:--</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Controls -->
+        <div class="card">
+            <h3>🎮 Управление торговлей</h3>
+            <div class="controls">
+                <button class="btn btn-success" onclick="startTrading()">
+                    ▶️ Запустить торговлю
+                </button>
+                <button class="btn btn-danger" onclick="stopTrading()">
+                    ⏹️ Остановить торговлю
+                </button>
+                <button class="btn btn-secondary" onclick="resetAccount()">
+                    🔄 Сбросить счет
+                </button>
+                <button class="btn btn-primary" onclick="refreshData()">
+                    🔃 Обновить данные
+                </button>
+            </div>
+        </div>
+
+        <!-- Dashboard -->
+        <div class="dashboard">
+            <!-- Account Statistics -->
+            <div class="card">
+                <h3>💳 Статистика счета</h3>
+                <div class="stats-grid" id="account-stats">
+                    <div class="loading">Загрузка...</div>
+                </div>
+            </div>
+
+            <!-- Market Data -->
+            <div class="card">
+                <h3>📈 Рыночные данные</h3>
+                <div class="market-data" id="market-data">
+                    <div class="loading">Загрузка...</div>
+                </div>
+            </div>
+
+            <!-- Recent Trades -->
+            <div class="card full-width">
+                <h3>📋 Последние сделки</h3>
+                <div id="trades-container">
+                    <div class="loading">Загрузка...</div>
+                </div>
+            </div>
+
+            <!-- Strategy Settings -->
+            <div class="card full-width">
+                <h3>⚙️ Настройки стратегии</h3>
+                <div>
+                    <label for="symbol-select">Выберите символ:</label>
+                    <select id="symbol-select" onchange="loadSettings()">
+                        <option value="SBER">SBER</option>
+                        <option value="GAZP">GAZP</option>
+                        <option value="LKOH">LKOH</option>
+                        <option value="VTBR">VTBR</option>
+                    </select>
+                </div>
+                
+                <div id="settings-form" class="settings-form">
+                    <div class="loading">Загрузка настроек...</div>
+                </div>
+                
+                <div style="margin-top: 20px;">
+                    <button class="btn btn-primary" onclick="saveSettings()">
+                        💾 Сохранить настройки
+                    </button>
+                </div>
+            </div>
+
+            <!-- Logs -->
+            <div class="card full-width">
+                <h3>📜 Логи событий</h3>
+                <div class="logs-container" id="logs-container">
+                    <div class="loading">Загрузка логов...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // API Configuration
+        const API_BASE = window.location.origin.includes('localhost') ? 'http://localhost:8000' : '';
+        
+        // Global state
+        let currentSymbol = 'SBER';
+        let currentSettings = {};
+        
+        // Initialize dashboard
+        document.addEventListener('DOMContentLoaded', function() {
+            loadDashboard();
+            setInterval(loadDashboard, 30000); // Обновляем каждые 30 секунд
+        });
+
+        // API calls
+        async function apiCall(endpoint, options = {}) {
+            try {
+                const response = await fetch(`${API_BASE}/api${endpoint}`, {
+                    headers: {
+                        'Content-Type': 'application/json',
+                        ...options.headers
+                    },
+                    ...options
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                return await response.json();
+            } catch (error) {
+                console.error('API Error:', error);
+                showNotification(`Ошибка API: ${error.message}`, 'error');
+                throw error;
+            }
+        }
+
+        // Load dashboard data
+        async function loadDashboard() {
+            try {
+                await Promise.all([
+                    loadTradingStatus(),
+                    loadAccountStats(),
+                    loadMarketData(),
+                    loadTrades(),
+                    loadLogs()
+                ]);
+                
+                document.getElementById('last-update').textContent = 
+                    `Последнее обновление: ${new Date().toLocaleTimeString()}`;
+                    
+            } catch (error) {
+                console.error('Dashboard load error:', error);
+            }
+        }
+
+        // Trading status
+        async function loadTradingStatus() {
+            try {
+                const status = await apiCall('/trading/status');
+                const indicator = document.getElementById('trading-indicator');
+                const statusText = document.getElementById('trading-status');
+                
+                if (status.active) {
+                    indicator.className = 'status-indicator status-active';
+                    statusText.textContent = 'Торговля активна';
+                } else {
+                    indicator.className = 'status-indicator status-inactive';
+                    statusText.textContent = 'Торговля остановлена';
+                }
+            } catch (error) {
+                console.error('Status load error:', error);
+            }
+        }
+
+        // Account statistics
+        async function loadAccountStats() {
+            try {
+                const stats = await apiCall('/account/statistics');
+                const container = document.getElementById('account-stats');
+                
+                container.innerHTML = `
+                    <div class="stat-item">
+                        <div class="stat-value">${stats.account.current_balance.toLocaleString('ru-RU')} ₽</div>
+                        <div class="stat-label">Текущий баланс</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value ${stats.account.total_return >= 0 ? 'profit' : 'loss'}">
+                            ${stats.account.total_return.toFixed(2)}%
+                        </div>
+                        <div class="stat-label">Доходность</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value">${stats.account.current_drawdown.toFixed(2)}%</div>
+                        <div class="stat-label">Просадка</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value">${stats.trading.total_trades}</div>
+                        <div class="stat-label">Всего сделок</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value">${stats.trading.win_rate.toFixed(1)}%</div>
+                        <div class="stat-label">Процент прибыльных</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value">${stats.trading.open_positions}</div>
+                        <div class="stat-label">Открытых позиций</div>
+                    </div>
+                `;
+            } catch (error) {
+                document.getElementById('account-stats').innerHTML = 
+                    '<div class="loading">Ошибка загрузки статистики</div>';
+            }
+        }
+
+        // Market data
+        async function loadMarketData() {
+            try {
+                const marketData = await apiCall('/market-data');
+                const container = document.getElementById('market-data');
+                
+                let html = '';
+                for (const [symbol, data] of Object.entries(marketData)) {
+                    // Получаем текущий сигнал для символа
+                    let signalClass = 'signal-none';
+                    let signalText = 'Нет сигнала';
+                    
+                    try {
+                        const signal = await apiCall(`/signals/${symbol}`);
+                        if (signal.direction === 'BUY') {
+                            signalClass = 'signal-buy';
+                            signalText = `BUY (${(signal.confidence * 100).toFixed(0)}%)`;
+                        } else if (signal.direction === 'SELL') {
+                            signalClass = 'signal-sell';
+                            signalText = `SELL (${(signal.confidence * 100).toFixed(0)}%)`;
+                        }
+                    } catch (e) {
+                        // Игнорируем ошибки получения сигнала
+                    }
+                    
+                    html += `
+                        <div class="symbol-card">
+                            <div class="symbol-name">${symbol}</div>
+                            <div class="symbol-price">
+                                ${data.current_price ? data.current_price.toFixed(2) + ' ₽' : 'N/A'}
+                            </div>
+                            <div class="signal-indicator ${signalClass}">
+                                ${signalText}
+                            </div>
+                        </div>
+                    `;
+                }
+                
+                container.innerHTML = html;
+            } catch (error) {
+                document.getElementById('market-data').innerHTML = 
+                    '<div class="loading">Ошибка загрузки рыночных данных</div>';
+            }
+        }
+
+        // Trades history
+        async function loadTrades() {
+            try {
+                const trades = await apiCall('/trades/history?limit=10');
+                const container = document.getElementById('trades-container');
+                
+                if (trades.length === 0) {
+                    container.innerHTML = '<div class="loading">Сделок пока нет</div>';
+                    return;
+                }
+                
+                let html = `
+                    <table class="trades-table">
+                        <thead>
+                            <tr>
+                                <th>Время</th>
+                                <th>Символ</th>
+                                <th>Направление</th>
+                                <th>Цена входа</th>
+                                <th>Цена выхода</th>
+                                <th>Статус</th>
+                                <th>P&L</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                `;
+                
+                trades.forEach(trade => {
+                    const createdAt = new Date(trade.created_at).toLocaleString('ru-RU');
+                    const profitClass = trade.profit_loss > 0 ? 'profit' : trade.profit_loss < 0 ? 'loss' : '';
+                    
+                    html += `
+                        <tr>
+                            <td>${createdAt}</td>
+                            <td>${trade.symbol}</td>
+                            <td>${trade.direction}</td>
+                            <td>${trade.entry_price.toFixed(4)}</td>
+                            <td>${trade.exit_price ? trade.exit_price.toFixed(4) : '-'}</td>
+                            <td>${trade.status}</td>
+                            <td class="${profitClass}">
+                                ${trade.profit_loss ? trade.profit_loss.toFixed(2) + ' ₽' : '-'}
+                            </td>
+                        </tr>
+                    `;
+                });
+                
+                html += '</tbody></table>';
+                container.innerHTML = html;
+                
+            } catch (error) {
+                document.getElementById('trades-container').innerHTML = 
+                    '<div class="loading">Ошибка загрузки сделок</div>';
+            }
+        }
+
+        // Load strategy settings
+        async function loadSettings() {
+            const symbol = document.getElementById('symbol-select').value;
+            currentSymbol = symbol;
+            
+            try {
+                const settings = await apiCall(`/settings/${symbol}`);
+                currentSettings = settings;
+                
+                const form = document.getElementById('settings-form');
+                form.innerHTML = `
+                    <div class="form-group">
+                        <label>ATR период</label>
+                        <input type="number" id="atr_period" value="${settings.atr_period}" min="1" max="100">
+                    </div>
+                    <div class="form-group">
+                        <label>RSI период</label>
+                        <input type="number" id="rsi_period" value="${settings.rsi_period}" min="1" max="100">
+                    </div>
+                    <div class="form-group">
+                        <label>EMA период</label>
+                        <input type="number" id="ema_period" value="${settings.ema_period}" min="1" max="200">
+                    </div>
+                    <div class="form-group">
+                        <label>Риск на сделку (%)</label>
+                        <input type="number" id="risk_percent" value="${settings.risk_percent}" min="0.1" max="10" step="0.1">
+                    </div>
+                    <div class="form-group">
+                        <label>Базовый лот</label>
+                        <input type="number" id="base_lot" value="${settings.base_lot}" min="0.01" max="10" step="0.01">
+                    </div>
+                    <div class="form-group">
+                        <label>Stop Loss (ATR)</label>
+                        <input type="number" id="stop_loss_atr" value="${settings.stop_loss_atr}" min="0.5" max="10" step="0.1">
+                    </div>
+                    <div class="form-group">
+                        <label>Take Profit (ATR)</label>
+                        <input type="number" id="take_profit_atr" value="${settings.take_profit_atr}" min="0.5" max="20" step="0.1">
+                    </div>
+                    <div class="form-group">
+                        <label>Порог RSI для покупки</label>
+                        <input type="number" id="buy_rsi_threshold" value="${settings.buy_rsi_threshold}" min="10" max="90">
+                    </div>
+                    <div class="form-group">
+                        <label>Порог RSI для продажи</label>
+                        <input type="number" id="sell_rsi_threshold" value="${settings.sell_rsi_threshold}" min="10" max="90">
+                    </div>
+                    <div class="form-group">
+                        <label>Режим торговли</label>
+                        <select id="mode">
+                            <option value="LIMIT" ${settings.mode === 'LIMIT' ? 'selected' : ''}>Лимитные ордера</option>
+                            <option value="BREAKOUT" ${settings.mode === 'BREAKOUT' ? 'selected' : ''}>Пробойные ордера</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Макс. просадка (%)</label>
+                        <input type="number" id="max_drawdown_percent" value="${settings.max_drawdown_percent}" min="5" max="50">
+                    </div>
+                    <div class="form-group">
+                        <label>Фильтр волатильности</label>
+                        <select id="use_volatility_filter">
+                            <option value="true" ${settings.use_volatility_filter ? 'selected' : ''}>Включен</option>
+                            <option value="false" ${!settings.use_volatility_filter ? 'selected' : ''}>Выключен</option>
+                        </select>
+                    </div>
+                `;
+                
+            } catch (error) {
+                document.getElementById('settings-form').innerHTML = 
+                    '<div class="loading">Ошибка загрузки настроек</div>';
+            }
+        }
+
+        // Save settings
+        async function saveSettings() {
+            try {
+                const formData = {
+                    symbol: currentSymbol,
+                    atr_period: parseInt(document.getElementById('atr_period').value),
+                    rsi_period: parseInt(document.getElementById('rsi_period').value),
+                    ema_period: parseInt(document.getElementById('ema_period').value),
+                    risk_percent: parseFloat(document.getElementById('risk_percent').value),
+                    base_lot: parseFloat(document.getElementById('base_lot').value),
+                    stop_loss_atr: parseFloat(document.getElementById('stop_loss_atr').value),
+                    take_profit_atr: parseFloat(document.getElementById('take_profit_atr').value),
+                    buy_rsi_threshold: parseFloat(document.getElementById('buy_rsi_threshold').value),
+                    sell_rsi_threshold: parseFloat(document.getElementById('sell_rsi_threshold').value),
+                    mode: document.getElementById('mode').value,
+                    max_drawdown_percent: parseFloat(document.getElementById('max_drawdown_percent').value),
+                    use_volatility_filter: document.getElementById('use_volatility_filter').value === 'true',
+                    // Добавляем остальные поля с текущими значениями
+                    ...currentSettings
+                };
+                
+                await apiCall(`/settings/${currentSymbol}`, {
+                    method: 'POST',
+                    body: JSON.stringify(formData)
+                });
+                
+                showNotification('Настройки сохранены успешно!', 'success');
+                
+            } catch (error) {
+                showNotification('Ошибка сохранения настроек', 'error');
+            }
+        }
+
+        // Load logs
+        async function loadLogs() {
+            try {
+                const logs = await apiCall('/logs?limit=20');
+                const container = document.getElementById('logs-container');
+                
+                if (logs.length === 0) {
+                    container.innerHTML = '<div class="loading">Логов пока нет</div>';
+                    return;
+                }
+                
+                let html = '';
+                logs.forEach(log => {
+                    const timestamp = new Date(log.timestamp).toLocaleString('ru-RU');
+                    const eventClass = log.event_type.toLowerCase().includes('signal') ? 'log-signal' :
+                                     log.event_type.toLowerCase().includes('trade') ? 'log-trade' :
+                                     log.event_type.toLowerCase().includes('error') ? 'log-error' : '';
+                    
+                    html += `
+                        <div class="log-item">
+                            <span class="log-timestamp">${timestamp}</span>
+                            <span class="log-event ${eventClass}">[${log.event_type}]</span>
+                            <span>${log.symbol ? `${log.symbol}: ` : ''}${log.message}</span>
+                        </div>
+                    `;
+                });
+                
+                container.innerHTML = html;
+                
+            } catch (error) {
+                document.getElementById('logs-container').innerHTML = 
+                    '<div class="loading">Ошибка загрузки логов</div>';
+            }
+        }
+
+        // Trading controls
+        async function startTrading() {
+            try {
+                await apiCall('/trading/start', { method: 'POST' });
+                showNotification('Торговля запущена!', 'success');
+                await loadTradingStatus();
+            } catch (error) {
+                showNotification('Ошибка запуска торговли', 'error');
+            }
+        }
+
+        async function stopTrading() {
+            try {
+                await apiCall('/trading/stop', { method: 'POST' });
+                showNotification('Торговля остановлена!', 'success');
+                await loadTradingStatus();
+            } catch (error) {
+                showNotification('Ошибка остановки торговли', 'error');
+            }
+        }
+
+        async function resetAccount() {
+            if (confirm('Вы уверены, что хотите сбросить виртуальный счет? Все сделки будут закрыты.')) {
+                try {
+                    await apiCall('/account/reset', { method: 'POST' });
+                    showNotification('Счет сброшен успешно!', 'success');
+                    await loadDashboard();
+                } catch (error) {
+                    showNotification('Ошибка сброса счета', 'error');
+                }
+            }
+        }
+
+        async function refreshData() {
+            showNotification('Обновление данных...', 'info');
+            await loadDashboard();
+            showNotification('Данные обновлены!', 'success');
+        }
+
+        // Notifications
+        function showNotification(message, type = 'info') {
+            // Простая реализация уведомлений
+            const notification = document.createElement('div');
+            notification.style.cssText = `
+                position: fixed;
+                top: 20px;
+                right: 20px;
+                padding: 15px 20px;
+                border-radius: 8px;
+                color: white;
+                font-weight: bold;
+                z-index: 1000;
+                animation: slideIn 0.3s ease;
+                background: ${type === 'success' ? '#10b981' : type === 'error' ? '#ef4444' : '#3b82f6'};
+            `;
+            notification.textContent = message;
+            
+            document.body.appendChild(notification);
+            
+            setTimeout(() => {
+                notification.style.animation = 'slideOut 0.3s ease';
+                setTimeout(() => document.body.removeChild(notification), 300);
+            }, 3000);
+        }
+
+        // Initialize settings on page load
+        setTimeout(() => {
+            loadSettings();
+        }, 1000);
+    </script>
+
+    <style>
+        @keyframes slideIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+        
+        @keyframes slideOut {
+            from { transform: translateX(0); opacity: 1; }
+            to { transform: translateX(100%); opacity: 0; }
+        }
+    </style>
+</body>
+</html>
