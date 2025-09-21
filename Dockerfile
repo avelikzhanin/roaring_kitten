@@ -21,9 +21,6 @@ COPY . .
 # Создаем директории для данных
 RUN mkdir -p data logs
 
-# Инициализируем базу данных
-RUN cd backend && python -c "from models import create_database; create_database()"
-
 # Открываем порт
 EXPOSE 8000
 
