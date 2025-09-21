@@ -67,6 +67,7 @@ class VirtualAccount(Base):
     __tablename__ = "virtual_account"
     
     id = Column(Integer, primary_key=True)
+    symbol = Column(String(10), nullable=False, unique=True)  # Уникальный счет для каждого символа
     initial_balance = Column(Float, default=100000.0)
     current_balance = Column(Float, default=100000.0)
     max_balance = Column(Float, default=100000.0)
@@ -142,32 +143,51 @@ class MarketLevel(Base):
 # Pydantic модели для API
 class StrategySettingsRequest(BaseModel):
     symbol: str
+    # Индикаторы
     atr_period: int = 14
     rsi_period: int = 14
     ema_period: int = 20
+    
+    # Уровни и потенциалы
     threshold_level: float = 0.4
     level_radius_factor: float = 4.5
     min_potential_strength: float = 0.6
+    
+    # Управление рисками
     risk_percent: float = 0.7
     dynamic_lot: bool = True
     base_lot: float = 0.03
     min_lot: float = 0.01
+    
+    # Защита от просадки
     max_drawdown_percent: float = 25.0
     reduce_risk_on_drawdown: bool = True
     drawdown_risk_reduction: float = 0.5
+    
+    # Защита от волатильности
+    use_volatility_filter: bool = True
+    max_atr_multiplier: float = 2.2
+    atr_period_for_avg: int = 50
+    
+    # SL/TP
     stop_loss_atr: float = 2.5
     take_profit_atr: float = 3.5
     enable_ladder: bool = False
     ladder_count: int = 2
     ladder_step_atr: float = 0.4
+    
+    # Сигналы
     buy_rsi_threshold: float = 40.0
     sell_rsi_threshold: float = 60.0
     buy_threshold_multiplier: float = 1.0
     sell_threshold_multiplier: float = 1.3
-    use_volatility_filter: bool = True
-    max_atr_multiplier: float = 2.2
+    
+    # Фильтры
     use_volume_filter: bool = True
     min_volume_ratio: float = 1.2
+    volume_period: int = 20
+    
+    # Режимы
     mode: str = "LIMIT"
 
 class StrategySettingsResponse(BaseModel):
@@ -228,6 +248,7 @@ class VirtualTradeResponse(BaseModel):
 
 class AccountResponse(BaseModel):
     id: int
+    symbol: str
     initial_balance: float
     current_balance: float
     max_balance: float
@@ -235,6 +256,12 @@ class AccountResponse(BaseModel):
     trading_blocked: bool
     created_at: datetime
     updated_at: datetime
+
+class AccountsStatisticsResponse(BaseModel):
+    accounts: Dict[str, AccountResponse]
+    trading_statistics: Dict[str, Dict]
+    total_balance: float
+    total_return: float
 
 class MarketDataResponse(BaseModel):
     symbol: str
