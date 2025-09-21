@@ -39,18 +39,25 @@ async def lifespan(app: FastAPI):
         # Инициализируем виртуальный счет и настройки
         db = get_db_session()
         try:
-            # Проверяем виртуальный счет
-            account = db.query(VirtualAccount).first()
-            if not account:
-                account = VirtualAccount(
-                    initial_balance=100000.0,
-                    current_balance=100000.0,
-                    max_balance=100000.0
-                )
-                db.add(account)
-                print("💳 Создан виртуальный счет")
-            else:
-                print(f"💳 Виртуальный счет найден: {account.current_balance:,.0f} ₽")
+            # Создаем виртуальные счета для каждого символа
+            accounts_created = 0
+            for symbol in symbols:
+                account = db.query(VirtualAccount).filter(VirtualAccount.symbol == symbol).first()
+                if not account:
+                    account = VirtualAccount(
+                        symbol=symbol,
+                        initial_balance=100000.0,
+                        current_balance=100000.0,
+                        max_balance=100000.0
+                    )
+                    db.add(account)
+                    accounts_created += 1
+                    print(f"💳 Создан виртуальный счет для {symbol}")
+                else:
+                    print(f"💳 Счет {symbol}: {account.current_balance:,.0f} ₽")
+            
+            if accounts_created == 0:
+                print("💳 Виртуальные счета уже существуют")
             
             # Создаем настройки стратегий
             settings_created = 0
@@ -246,13 +253,33 @@ async def get_market_data():
     
     return result
 
-@app.get("/api/account/statistics", response_model=Dict)
+@app.get("/api/account/statistics")
 async def get_account_statistics():
-    """Получение статистики торгового счета"""
+    """Получение статистики всех торговых счетов"""
     if not strategy_manager:
         raise HTTPException(status_code=503, detail="Strategy manager not initialized")
     
     return strategy_manager.trading_engine.get_account_statistics()
+
+@app.get("/api/account/{symbol}/statistics")
+async def get_symbol_account_statistics(symbol: str):
+    """Получение статистики торгового счета для конкретного символа"""
+    if symbol not in symbols:
+        raise HTTPException(status_code=404, detail="Symbol not found")
+    
+    if not strategy_manager:
+        raise HTTPException(status_code=503, detail="Strategy manager not initialized")
+    
+    return strategy_manager.trading_engine.get_account_statistics(symbol)
+
+@app.post("/api/account/reset")
+async def reset_all_accounts():
+    """Сброс всех виртуальных счетов"""
+    if not strategy_manager:
+        raise HTTPException(status_code=503, detail="Strategy manager not initialized")
+    
+    strategy_manager.trading_engine.reset_account()
+    return {"status": "All accounts reset successfully"}
 
 @app.get("/api/trades/history")
 async def get_trade_history(symbol: Optional[str] = None, limit: int = 50):
@@ -342,15 +369,6 @@ async def get_trading_status():
         "symbols": symbols,
         "last_update": datetime.now().isoformat()
     }
-
-@app.post("/api/account/reset")
-async def reset_account():
-    """Сброс виртуального счета"""
-    if not strategy_manager:
-        raise HTTPException(status_code=503, detail="Strategy manager not initialized")
-    
-    strategy_manager.trading_engine.reset_account()
-    return {"status": "Account reset successfully"}
 
 @app.get("/api/signals/{symbol}")
 async def get_current_signal(symbol: str):
