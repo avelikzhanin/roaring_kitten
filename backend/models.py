@@ -263,13 +263,32 @@ class StrategySignal(BaseModel):
 # Создание базы данных
 def create_database():
     """Создание базы данных и таблиц"""
-    engine = create_engine("sqlite:///fp_strategy.db")
+    import os
+    
+    # Проверяем переменную окружения DATABASE_URL от Railway
+    database_url = os.getenv("DATABASE_URL")
+    if database_url:
+        # PostgreSQL на Railway
+        print("🐘 Используется PostgreSQL (Railway)")
+        engine = create_engine(database_url)
+    else:
+        # SQLite для локальной разработки
+        print("🗄️ Используется SQLite (локально)")
+        engine = create_engine("sqlite:///fp_strategy.db")
+    
     Base.metadata.create_all(engine)
     return engine
 
 def get_db_session():
     """Получение сессии базы данных"""
-    engine = create_engine("sqlite:///fp_strategy.db")
+    import os
+    
+    database_url = os.getenv("DATABASE_URL")
+    if database_url:
+        engine = create_engine(database_url)
+    else:
+        engine = create_engine("sqlite:///fp_strategy.db")
+        
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     return SessionLocal()
 
