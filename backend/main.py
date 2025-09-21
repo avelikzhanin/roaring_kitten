@@ -117,8 +117,9 @@ async def market_data_updater():
             if is_trading_active:
                 print("📡 Обновление рыночных данных...")
                 
-                # Получаем данные MOEX
-                market_data = get_moex_data(symbols)
+                # Получаем данные MOEX асинхронно
+                from moex_api import get_moex_data_async
+                market_data = await get_moex_data_async(symbols)
                 latest_market_data = market_data
                 
                 # Анализируем рынок и генерируем сигналы
@@ -216,8 +217,9 @@ async def get_market_data():
     global latest_market_data
     
     if not latest_market_data:
-        # Если данных нет, получаем их синхронно
-        latest_market_data = get_moex_data(symbols)
+        # Если данных нет, получаем их асинхронно
+        from moex_api import get_moex_data_async
+        latest_market_data = await get_moex_data_async(symbols)
     
     result = {}
     for symbol, data in latest_market_data.items():
@@ -419,8 +421,8 @@ async def get_candles(symbol: str, period: str = "60", days: int = 7):
         raise HTTPException(status_code=404, detail="Symbol not found")
     
     try:
-        from moex_api import get_moex_candles
-        df = get_moex_candles(symbol, period, days)
+        from moex_api import get_moex_candles_async
+        df = await get_moex_candles_async(symbol, period, days)
         
         if df.empty:
             return {"symbol": symbol, "candles": []}
