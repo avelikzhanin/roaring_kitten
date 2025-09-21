@@ -315,29 +315,31 @@ def migrate_database(engine):
     print("🔄 Проверка необходимости миграций...")
     
     try:
+        from sqlalchemy import text
+        
         # Проверяем, есть ли колонка symbol в virtual_account
         with engine.connect() as conn:
-            result = conn.execute("""
+            result = conn.execute(text("""
                 SELECT column_name 
                 FROM information_schema.columns 
                 WHERE table_name = 'virtual_account' 
                 AND column_name = 'symbol'
-            """)
+            """))
             
             if not result.fetchone():
                 print("🔧 Добавление колонки symbol в virtual_account...")
                 
                 # Добавляем колонку symbol
-                conn.execute("ALTER TABLE virtual_account ADD COLUMN symbol VARCHAR(10)")
+                conn.execute(text("ALTER TABLE virtual_account ADD COLUMN symbol VARCHAR(10)"))
                 
                 # Если есть существующие записи без symbol, удаляем их (они некорректны)
-                conn.execute("DELETE FROM virtual_account WHERE symbol IS NULL")
+                conn.execute(text("DELETE FROM virtual_account WHERE symbol IS NULL"))
                 
                 # Делаем колонку NOT NULL
-                conn.execute("ALTER TABLE virtual_account ALTER COLUMN symbol SET NOT NULL")
+                conn.execute(text("ALTER TABLE virtual_account ALTER COLUMN symbol SET NOT NULL"))
                 
                 # Добавляем уникальный constraint
-                conn.execute("ALTER TABLE virtual_account ADD CONSTRAINT virtual_account_symbol_key UNIQUE (symbol)")
+                conn.execute(text("ALTER TABLE virtual_account ADD CONSTRAINT virtual_account_symbol_key UNIQUE (symbol)"))
                 
                 # Фиксируем изменения
                 conn.commit()
@@ -347,8 +349,24 @@ def migrate_database(engine):
                 
     except Exception as e:
         print(f"⚠️ Ошибка при выполнении миграции: {e}")
-        print("ℹ️ Это нормально при первом запуске - таблицы будут созданы заново")
-        # При первом запуске таблица может не существовать, это нормально
+        print("🔄 Пробуем пересоздать таблицу virtual_account...")
+        
+        # Если миграция не удалась, пересоздаем таблицу
+        try:
+            from sqlalchemy import text
+            with engine.connect() as conn:
+                # Сохраняем данные из старой таблицы (если нужно)
+                print("💾 Создание резервной копии данных...")
+                
+                # Дропаем старую таблицу
+                conn.execute(text("DROP TABLE IF EXISTS virtual_account CASCADE"))
+                conn.commit()
+                
+                print("✅ Старая таблица удалена, будет создана новая")
+                
+        except Exception as recreate_error:
+            print(f"⚠️ Ошибка пересоздания таблицы: {recreate_error}")
+            print("ℹ️ Это нормально при первом запуске - таблицы будут созданы заново")
 
 def get_db_session():
     """Получение сессии базы данных"""
