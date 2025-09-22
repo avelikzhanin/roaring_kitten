@@ -134,36 +134,37 @@ async def market_data_updater():
     while True:
         try:
             if is_trading_active:
-                print("📡 Обновление рыночных данных...")
+                print("📡 Обновление рыночных данных (15-мин таймфрейм)...")
                 
-                # Получаем данные MOEX асинхронно
+                # Получаем данные MOEX асинхронно с 15-минутным таймфреймом
                 from moex_api import get_moex_data_async
-                market_data = await get_moex_data_async(symbols)
+                market_data = await get_moex_data_async(symbols, period="10")  # 10 минут - ближайший к 15
                 latest_market_data = market_data
                 
                 # Анализируем рынок и генерируем сигналы
-                signals = strategy_manager.analyze_market(market_data)
-                
-                if signals:
-                    print(f"🎯 Получены сигналы: {len(signals)}")
-                    for signal in signals:
-                        print(f"   {signal.symbol}: {signal.direction} (confidence: {signal.confidence:.2f})")
+                if strategy_manager:
+                    signals = strategy_manager.analyze_market(market_data)
                     
-                    # Обрабатываем сигналы
-                    results = strategy_manager.process_signals(signals)
-                    if results:
-                        print(f"💰 Размещено ордеров: {len(results)}")
-                
-                # Обновляем существующие сделки
-                update_results = strategy_manager.trading_engine.update_trades(market_data)
-                if update_results:
-                    print(f"🔄 Обновлены сделки: {len(update_results)}")
+                    if signals:
+                        print(f"🎯 Получены сигналы: {len(signals)}")
+                        for signal in signals:
+                            print(f"   {signal.symbol}: {signal.direction} (confidence: {signal.confidence:.2f})")
+                        
+                        # Обрабатываем сигналы
+                        results = strategy_manager.process_signals(signals)
+                        if results:
+                            print(f"💰 Размещено ордеров: {len(results)}")
+                    
+                    # Обновляем существующие сделки
+                    update_results = strategy_manager.trading_engine.update_trades(market_data)
+                    if update_results:
+                        print(f"🔄 Обновлены сделки: {len(update_results)}")
                 
         except Exception as e:
             print(f"❌ Ошибка обновления данных: {e}")
         
-        # Ждем 1 минуту перед следующим обновлением
-        await asyncio.sleep(60)
+        # Ждем 15 минут перед следующим обновлением (соответствует таймфрейму)
+        await asyncio.sleep(900)  # 15 минут = 900 секунд
 
 # =============================================================================
 # API ENDPOINTS
@@ -279,9 +280,9 @@ async def get_market_data():
     global latest_market_data
     
     if not latest_market_data:
-        # Если данных нет, получаем их асинхронно
+        # Если данных нет, получаем их асинхронно с 15-минутным таймфреймом
         from moex_api import get_moex_data_async
-        latest_market_data = await get_moex_data_async(symbols)
+        latest_market_data = await get_moex_data_async(symbols, period="10")  # 10 минут
     
     result = {}
     for symbol, data in latest_market_data.items():
@@ -448,9 +449,9 @@ async def get_current_signal(symbol: str):
     # Пытаемся получить свежие данные
     try:
         if symbol not in latest_market_data or not latest_market_data[symbol].get('current_price'):
-            print(f"🔄 Получение свежих данных для {symbol}...")
+            print(f"🔄 Получение свежих данных для {symbol} (15-мин таймфрейм)...")
             from moex_api import get_moex_data_async
-            fresh_data = await get_moex_data_async([symbol])
+            fresh_data = await get_moex_data_async([symbol], period="10")  # 10 минут
             if symbol in fresh_data:
                 latest_market_data[symbol] = fresh_data[symbol]
         
@@ -598,9 +599,9 @@ async def refresh_market_data():
     global latest_market_data
     
     try:
-        print("🔄 Принудительное обновление рыночных данных...")
+        print("🔄 Принудительное обновление рыночных данных (15-мин таймфрейм)...")
         from moex_api import get_moex_data_async
-        fresh_data = await get_moex_data_async(symbols)
+        fresh_data = await get_moex_data_async(symbols, period="10")  # 10 минут
         
         if fresh_data:
             latest_market_data = fresh_data
@@ -611,6 +612,7 @@ async def refresh_market_data():
                 "status": "success",
                 "updated_symbols": [],
                 "failed_symbols": [],
+                "timeframe": "15 minutes",
                 "timestamp": datetime.now().isoformat()
             }
             
