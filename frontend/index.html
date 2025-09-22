@@ -426,6 +426,8 @@
         // API calls
         async function apiCall(endpoint, options = {}) {
             try {
+                console.log(`🌐 API Call: ${endpoint}`, options);
+                
                 const response = await fetch(`${API_BASE}/api${endpoint}`, {
                     headers: {
                         'Content-Type': 'application/json',
@@ -434,13 +436,34 @@
                     ...options
                 });
                 
+                console.log(`📡 Response status: ${response.status} ${response.statusText}`);
+                
                 if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    const errorText = await response.text();
+                    console.error(`❌ API Error Response:`, errorText);
+                    
+                    let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+                    try {
+                        const errorJson = JSON.parse(errorText);
+                        if (errorJson.detail) {
+                            errorMessage += ` - ${errorJson.detail}`;
+                        }
+                    } catch (e) {
+                        // Не JSON ответ
+                        if (errorText) {
+                            errorMessage += ` - ${errorText.substring(0, 100)}`;
+                        }
+                    }
+                    
+                    throw new Error(errorMessage);
                 }
                 
-                return await response.json();
+                const result = await response.json();
+                console.log(`✅ API Success:`, result);
+                return result;
+                
             } catch (error) {
-                console.error('API Error:', error);
+                console.error('💥 API Call failed:', error);
                 showNotification(`Ошибка API: ${error.message}`, 'error');
                 throw error;
             }
