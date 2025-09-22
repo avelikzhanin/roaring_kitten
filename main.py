@@ -165,9 +165,9 @@ async def get_sber_data():
         # Получаем актуальную цену
         current_price = await get_current_sber_price()
         
-        # Получаем исторические данные за последние 7 дней для индикаторов
+        # Получаем исторические данные за последние 10 дней для лучшего "прогрева"
         to_date = datetime.now()
-        from_date = to_date - timedelta(days=7)
+        from_date = to_date - timedelta(days=10)
         
         # MOEX API для получения часовых свечей SBER (как TradingView)
         url = "https://iss.moex.com/iss/engines/stock/markets/shares/securities/SBER/candles.json"
@@ -246,8 +246,8 @@ async def get_sber_data():
         # Берем последние значения
         last_row = df.iloc[-1]
         
-        # Сравниваем результаты в логах
-        logger.info("📊 СРАВНЕНИЕ ДВУХ ФОРМУЛ ADX (вернули оригинальные настройки: 7 дней, 50 свечей, RMA):")
+        # Сравниваем результаты в логах  
+        logger.info("📊 СРАВНЕНИЕ ДВУХ ФОРМУЛ ADX (10 дней данных, до 60 свечей для лучшего прогрева):")
         logger.info(f"   🔧 pandas-ta (RMA): ADX={adx_data_standard['ADX_14'].iloc[-1]:.2f}, DI+={adx_data_standard['DMP_14'].iloc[-1]:.2f}, DI-={adx_data_standard['DMN_14'].iloc[-1]:.2f}")
         logger.info(f"   📈 Pine Script: ADX={adx_pinescript['adx']:.2f}, DI+={adx_pinescript['di_plus']:.2f}, DI-={adx_pinescript['di_minus']:.2f}")
         
