@@ -446,7 +446,11 @@
                 
                 if (!response.ok) {
                     const errorText = await response.text();
-                    console.error(`❌ API Error Response:`, JSON.parse(errorText));
+                    
+                    // Только логируем детали для серьезных ошибок (не 503)
+                    if (response.status !== 503) {
+                        console.error(`❌ API Error Response:`, JSON.parse(errorText));
+                    }
                     
                     let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
                     try {
@@ -467,8 +471,11 @@
                 return result;
                 
             } catch (error) {
-                console.error('💥 API Call failed:', error);
-                showNotification(`Ошибка API: ${error.message}`, 'error');
+                // Не показываем нотификации для ошибок сигналов (503)
+                if (!error.message.includes('503') && !endpoint.includes('/signals/')) {
+                    console.error('💥 API Call failed:', error);
+                    showNotification(`Ошибка API: ${error.message}`, 'error');
+                }
                 throw error;
             }
         }
@@ -621,19 +628,31 @@
                 for (const [symbol, data] of Object.entries(marketData)) {
                     // Получаем текущий сигнал для символа
                     let signalClass = 'signal-none';
-                    let signalText = 'Нет сигнала';
+                    let signalText = 'Нет данных';
                     
                     try {
                         const signal = await apiCall(`/api/signals/${symbol}`);
-                        if (signal.direction === 'BUY') {
+                        
+                        // Проверяем статус сигнала
+                        if (signal.status === 'no_price_data') {
+                            signalText = 'Нет цены';
+                        } else if (signal.status === 'insufficient_candles') {
+                            signalText = 'Мало данных';
+                        } else if (signal.status === 'error') {
+                            signalText = 'Ошибка';
+                        } else if (signal.direction === 'BUY' && signal.confidence > 0) {
                             signalClass = 'signal-buy';
                             signalText = `BUY (${(signal.confidence * 100).toFixed(0)}%)`;
-                        } else if (signal.direction === 'SELL') {
+                        } else if (signal.direction === 'SELL' && signal.confidence > 0) {
                             signalClass = 'signal-sell';
                             signalText = `SELL (${(signal.confidence * 100).toFixed(0)}%)`;
+                        } else {
+                            signalText = 'Нет сигнала';
                         }
                     } catch (e) {
-                        // Игнорируем ошибки получения сигнала
+                        // Только логируем серьезные ошибки
+                        console.warn(`Signal error for ${symbol}:`, e.message);
+                        signalText = 'Недоступно';
                     }
                     
                     html += `
@@ -901,13 +920,36 @@
 
         async function refreshData() {
             showNotification('Обновление данных...', 'info');
+            
+            // Сначала обновляем рыночные данные
+            try {
+                const refreshResult = await apiCall('/api/market-data/refresh', { method: 'POST' });
+                if (refreshResult.status === 'success') {
+                    showNotification(`Данные MOEX обновлены для ${refreshResult.updated_symbols.length} символов`, 'success');
+                } else {
+                    showNotification('Частичное обновление данных MOEX', 'warning');
+                }
+            } catch (error) {
+                console.warn('Ошибка обновления MOEX данных:', error);
+            }
+            
+            // Затем обновляем dashboard
             await loadDashboard();
-            showNotification('Данные обновлены!', 'success');
+            showNotification('Dashboard обновлен!', 'success');
         }
 
         // Notifications
         function showNotification(message, type = 'info') {
             const notification = document.createElement('div');
+            
+            let bgColor;
+            switch(type) {
+                case 'success': bgColor = '#10b981'; break;
+                case 'error': bgColor = '#ef4444'; break;
+                case 'warning': bgColor = '#f59e0b'; break;
+                default: bgColor = '#3b82f6';
+            }
+            
             notification.style.cssText = `
                 position: fixed;
                 top: 20px;
@@ -918,7 +960,9 @@
                 font-weight: bold;
                 z-index: 1000;
                 animation: slideIn 0.3s ease;
-                background: ${type === 'success' ? '#10b981' : type === 'error' ? '#ef4444' : '#3b82f6'};
+                background: ${bgColor};
+                max-width: 300px;
+                word-wrap: break-word;
             `;
             notification.textContent = message;
             
@@ -926,7 +970,11 @@
             
             setTimeout(() => {
                 notification.style.animation = 'slideOut 0.3s ease';
-                setTimeout(() => document.body.removeChild(notification), 300);
+                setTimeout(() => {
+                    if (document.body.contains(notification)) {
+                        document.body.removeChild(notification);
+                    }
+                }, 300);
             }, 3000);
         }
 
