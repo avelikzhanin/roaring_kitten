@@ -214,10 +214,10 @@ async def root():
             
             <div class="endpoints">
                 <h2>🔗 Основные эндпоинты</h2>
-                <div class="endpoint">GET /api/market-data - Текущие рыночные данные</div>
-                <div class="endpoint">GET /api/account/statistics - Статистика торгового счета</div>
-                <div class="endpoint">GET /api/trades/history - История сделок</div>
-                <div class="endpoint">POST /api/settings/{symbol} - Настройка стратегии для символа</div>
+                <div class="endpoint">GET /market-data - Текущие рыночные данные</div>
+                <div class="endpoint">GET /account/statistics - Статистика торгового счета</div>
+                <div class="endpoint">GET /trades/history - История сделок</div>
+                <div class="endpoint">POST /settings/{symbol} - Настройка стратегии для символа</div>
                 <div class="endpoint">POST /api/trading/start - Запуск автоматической торговли</div>
                 <div class="endpoint">POST /api/trading/stop - Остановка торговли</div>
             </div>
@@ -230,6 +230,49 @@ async def root():
     </html>
     """
 
+# Эндпоинты без префикса /api (для совместимости с frontend)
+@app.get("/market-data", response_model=Dict[str, MarketDataResponse])
+async def get_market_data_compat():
+    """Получение текущих рыночных данных (совместимость)"""
+    return await get_market_data()
+
+@app.get("/account/statistics")
+async def get_account_statistics_compat():
+    """Получение статистики всех торговых счетов (совместимость)"""
+    return await get_account_statistics()
+
+@app.get("/trades/history")
+async def get_trade_history_compat(symbol: Optional[str] = None, limit: int = 50):
+    """Получение истории сделок (совместимость)"""
+    return await get_trade_history(symbol, limit)
+
+@app.get("/logs")
+async def get_logs_compat(limit: int = 100):
+    """Получение логов событий (совместимость)"""
+    return await get_logs(limit)
+
+@app.get("/settings/{symbol}", response_model=StrategySettingsResponse)
+async def get_strategy_settings_compat(symbol: str):
+    """Получение настроек стратегии для символа (совместимость)"""
+    return await get_strategy_settings(symbol)
+
+@app.post("/settings/{symbol}", response_model=StrategySettingsResponse)
+async def update_strategy_settings_compat(symbol: str, settings_request: StrategySettingsRequest):
+    """Обновление настроек стратегии для символа (совместимость)"""
+    return await update_strategy_settings(symbol, settings_request)
+
+# НОВЫЙ ЭНДПОИНТ для статуса торговли
+@app.get("/api/trading/status")
+async def get_trading_status():
+    """Получение статуса торговли"""
+    global is_trading_active
+    return {
+        "active": is_trading_active,
+        "status": "ACTIVE" if is_trading_active else "STOPPED",
+        "timestamp": datetime.now().isoformat()
+    }
+
+# Основные API эндпоинты
 @app.get("/api/market-data", response_model=Dict[str, MarketDataResponse])
 async def get_market_data():
     """Получение текущих рыночных данных"""
@@ -392,85 +435,6 @@ async def stop_trading():
         strategy_manager.trading_engine.log_event("TRADING_STOPPED", "Автоматическая торговля остановлена")
     
     return {"status": "Trading stopped", "active": is_trading_active}
-
-@app.get("/api/debug/settings/{symbol}")
-async def debug_settings(symbol: str):
-    """Отладочный endpoint для проверки настроек"""
-    if symbol not in symbols:
-        raise HTTPException(status_code=404, detail="Symbol not found")
-    
-    db = get_db_session()
-    try:
-        settings = db.query(StrategySettings).filter(StrategySettings.symbol == symbol).first()
-        
-        if not settings:
-            return {
-                "symbol": symbol,
-                "found": False,
-                "message": "Настройки не найдены в БД"
-            }
-        
-        # Возвращаем все поля настроек
-        result = {
-            "symbol": symbol,
-            "found": True,
-            "settings": {
-                "id": settings.id,
-                "symbol": settings.symbol,
-                "created_at": settings.created_at.isoformat() if settings.created_at else None,
-                "updated_at": settings.updated_at.isoformat() if settings.updated_at else None,
-            }
-        }
-        
-        # Добавляем все поля настроек
-        for column in settings.__table__.columns:
-            if column.name not in ['id', 'symbol', 'created_at', 'updated_at']:
-                result["settings"][column.name] = getattr(settings, column.name)
-        
-        return result
-        
-    finally:
-        db.close()
-
-@app.post("/api/debug/test-save/{symbol}")
-async def test_save_settings(symbol: str):
-    """Тестовое сохранение настроек"""
-    if symbol not in symbols:
-        raise HTTPException(status_code=404, detail="Symbol not found")
-    
-    db = get_db_session()
-    try:
-        settings = db.query(StrategySettings).filter(StrategySettings.symbol == symbol).first()
-        
-        if not settings:
-            settings = StrategySettings(symbol=symbol)
-            db.add(settings)
-            print(f"🆕 Создаем новые настройки для {symbol}")
-        
-        # Тестовое изменение
-        old_risk = settings.risk_percent
-        settings.risk_percent = 0.99  # Тестовое значение
-        settings.updated_at = datetime.utcnow()
-        
-        try:
-            db.commit()
-            print(f"✅ Тест: риск изменен с {old_risk} на {settings.risk_percent}")
-            return {
-                "success": True,
-                "message": f"Тестовое сохранение успешно",
-                "old_value": old_risk,
-                "new_value": settings.risk_percent
-            }
-        except Exception as e:
-            db.rollback()
-            print(f"❌ Ошибка тестового сохранения: {e}")
-            return {
-                "success": False,
-                "error": str(e)
-            }
-        
-    finally:
-        db.close()
 
 @app.get("/api/signals/{symbol}")
 async def get_current_signal(symbol: str):
