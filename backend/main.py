@@ -24,6 +24,10 @@ strategy_manager = None
 latest_market_data = {}
 is_trading_active = False
 
+def get_smart_update_interval():
+    """Возвращает интервал обновления - всегда 5 минут"""
+    return 300  # 5 минут = 300 секунд
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Управление жизненным циклом приложения"""
@@ -90,6 +94,7 @@ async def lifespan(app: FastAPI):
         
         print("🚀 Financial Potential Strategy API запущен!")
         print(f"📊 Отслеживаемые символы: {', '.join(symbols)}")
+        print("⏱️ Таймфрейм: 10 минут (обновление: каждые 5 мин)")
         
     except Exception as e:
         print(f"❌ Критическая ошибка инициализации: {e}")
@@ -104,8 +109,8 @@ async def lifespan(app: FastAPI):
 # Создание приложения с lifespan
 app = FastAPI(
     title="Financial Potential Strategy API",
-    description="API для тестирования стратегии Financial Potential на данных MOEX",
-    version="2.0.0",
+    description="API для тестирования стратегии Financial Potential на данных MOEX (10-мин свечи)",
+    version="2.1.0",
     lifespan=lifespan
 )
 
@@ -128,17 +133,17 @@ if frontend_dir.exists():
     app.mount("/static", StaticFiles(directory=str(frontend_dir)), name="static")
 
 async def market_data_updater():
-    """Фоновая задача для обновления рыночных данных"""
+    """Фоновая задача для обновления рыночных данных с умным интервалом"""
     global latest_market_data, is_trading_active
     
     while True:
         try:
             if is_trading_active:
-                print("📡 Обновление рыночных данных (15-мин таймфрейм)...")
+                print(f"📡 Обновление данных (каждые 5 мин, 10-мин свечи за 2 дня)...")
                 
-                # Получаем данные MOEX асинхронно с 15-минутным таймфреймом
+                # Получаем данные MOEX асинхронно с 10-минутным таймфреймом
                 from moex_api import get_moex_data_async
-                market_data = await get_moex_data_async(symbols, period="10")  # 10 минут - ближайший к 15
+                market_data = await get_moex_data_async(symbols, period="10")  # 10 минут
                 latest_market_data = market_data
                 
                 # Анализируем рынок и генерируем сигналы
@@ -163,8 +168,8 @@ async def market_data_updater():
         except Exception as e:
             print(f"❌ Ошибка обновления данных: {e}")
         
-        # Ждем 15 минут перед следующим обновлением (соответствует таймфрейму)
-        await asyncio.sleep(900)  # 15 минут = 900 секунд
+        # Пауза 5 минут
+        await asyncio.sleep(300)  # 5 минут = 300 секунд
 
 # =============================================================================
 # API ENDPOINTS
@@ -197,8 +202,8 @@ async def root():
         </head>
         <body>
             <div class="header">
-                <h1>🚀 Financial Potential Strategy API v2.0</h1>
-                <p>Тестирование торговой стратегии на реальных данных MOEX</p>
+                <h1>🚀 Financial Potential Strategy API v2.1</h1>
+                <p>Тестирование торговой стратегии на реальных данных MOEX (10-мин свечи)</p>
             </div>
             
             <div class="error">
@@ -209,6 +214,8 @@ async def root():
             <div class="status">
                 <h2>📊 Статус системы</h2>
                 <p><strong>Отслеживаемые инструменты:</strong> SBER, GAZP, LKOH, VTBR</p>
+                <p><strong>Таймфрейм:</strong> 10 минут (обновление: 5-30 мин)</p>
+                <p><strong>История:</strong> 2 дня (оптимизированно)</p>
                 <p><strong>Документация API:</strong> <a href="/docs">/docs</a></p>
                 <p><strong>Интерактивная документация:</strong> <a href="/redoc">/redoc</a></p>
             </div>
@@ -270,6 +277,8 @@ async def get_trading_status():
     return {
         "active": is_trading_active,
         "status": "ACTIVE" if is_trading_active else "STOPPED",
+        "update_interval_seconds": 300,
+        "update_interval_minutes": 5,
         "timestamp": datetime.now().isoformat()
     }
 
@@ -280,7 +289,7 @@ async def get_market_data():
     global latest_market_data
     
     if not latest_market_data:
-        # Если данных нет, получаем их асинхронно с 15-минутным таймфреймом
+        # Если данных нет, получаем их асинхронно с 10-минутным таймфреймом
         from moex_api import get_moex_data_async
         latest_market_data = await get_moex_data_async(symbols, period="10")  # 10 минут
     
@@ -423,7 +432,11 @@ async def start_trading():
     if strategy_manager:
         strategy_manager.trading_engine.log_event("TRADING_STARTED", "Автоматическая торговля запущена")
     
-    return {"status": "Trading started", "active": is_trading_active}
+    return {
+        "status": "Trading started", 
+        "active": is_trading_active,
+        "update_interval_minutes": 5
+    }
 
 @app.post("/api/trading/stop")
 async def stop_trading():
@@ -449,7 +462,7 @@ async def get_current_signal(symbol: str):
     # Пытаемся получить свежие данные
     try:
         if symbol not in latest_market_data or not latest_market_data[symbol].get('current_price'):
-            print(f"🔄 Получение свежих данных для {symbol} (15-мин таймфрейм)...")
+            print(f"🔄 Получение свежих данных для {symbol} (10-мин таймфрейм)...")
             from moex_api import get_moex_data_async
             fresh_data = await get_moex_data_async([symbol], period="10")  # 10 минут
             if symbol in fresh_data:
@@ -599,7 +612,7 @@ async def refresh_market_data():
     global latest_market_data
     
     try:
-        print("🔄 Принудительное обновление рыночных данных (15-мин таймфрейм)...")
+        print("🔄 Принудительное обновление рыночных данных (10-мин таймфрейм за 2 дня)...")
         from moex_api import get_moex_data_async
         fresh_data = await get_moex_data_async(symbols, period="10")  # 10 минут
         
@@ -612,7 +625,8 @@ async def refresh_market_data():
                 "status": "success",
                 "updated_symbols": [],
                 "failed_symbols": [],
-                "timeframe": "15 minutes",
+                "timeframe": "10 minutes",
+                "history_days": 2,
                 "timestamp": datetime.now().isoformat()
             }
             
@@ -641,42 +655,12 @@ async def refresh_market_data():
             "message": str(e),
             "timestamp": datetime.now().isoformat()
         }
-    """Получение свечей для графика"""
-    if symbol not in symbols:
-        raise HTTPException(status_code=404, detail="Symbol not found")
-    
-    try:
-        from moex_api import get_moex_candles_async
-        df = await get_moex_candles_async(symbol, period, days)
-        
-        if df.empty:
-            return {"symbol": symbol, "candles": []}
-        
-        candles = []
-        for _, row in df.iterrows():
-            candles.append({
-                "datetime": row['datetime'].isoformat(),
-                "open": float(row['open']),
-                "high": float(row['high']),
-                "low": float(row['low']),
-                "close": float(row['close']),
-                "volume": int(row['volume'])
-            })
-        
-        return {
-            "symbol": symbol,
-            "period": period,
-            "candles": candles,
-            "count": len(candles)
-        }
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error fetching candles: {str(e)}")
 
 # Для development
 if __name__ == "__main__":
     print("🚀 Запуск Financial Potential Strategy API...")
     print("📊 Доступные символы: SBER, GAZP, LKOH, VTBR")
+    print("⏱️ Таймфрейм: 10 минут (история: 2 дня, обновление: каждые 5 мин)")
     print("🌐 API будет доступно по адресу: http://localhost:8000")
     print("📚 Документация: http://localhost:8000/docs")
     
