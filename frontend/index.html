@@ -468,7 +468,7 @@
         // Trading status
         async function loadTradingStatus() {
             try {
-                const status = await apiCall('/trading/status');
+                const status = await apiCall('/api/trading/status');
                 const indicator = document.getElementById('trading-indicator');
                 const statusText = document.getElementById('trading-status');
                 const startButton = document.querySelector('.btn-success');
@@ -869,7 +869,7 @@
                 button.disabled = true;
                 button.textContent = '⏳ Запуск...';
                 
-                await apiCall('/trading/start', { method: 'POST' });
+                await apiCall('/api/trading/start', { method: 'POST' });
                 showNotification('Торговля запущена!', 'success');
                 await loadTradingStatus();
             } catch (error) {
@@ -890,7 +890,7 @@
                 button.disabled = true;
                 button.textContent = '⏳ Остановка...';
                 
-                await apiCall('/trading/stop', { method: 'POST' });
+                await apiCall('/api/trading/stop', { method: 'POST' });
                 showNotification('Торговля остановлена!', 'success');
                 await loadTradingStatus();
             } catch (error) {
@@ -905,7 +905,7 @@
         async function resetAllAccounts() {
             if (confirm('Вы уверены, что хотите сбросить ВСЕ виртуальные счета? Все сделки будут закрыты.')) {
                 try {
-                    await apiCall('/account/reset', { method: 'POST' });
+                    await apiCall('/api/account/reset', { method: 'POST' });
                     showNotification('Все счета сброшены успешно!', 'success');
                     await loadDashboard();
                 } catch (error) {
@@ -917,7 +917,7 @@
         async function resetSymbolAccount(symbol) {
             if (confirm(`Вы уверены, что хотите сбросить счет для ${symbol}? Все сделки по этому инструменту будут закрыты.`)) {
                 try {
-                    await apiCall(`/account/${symbol}/reset`, { method: 'POST' });
+                    await apiCall(`/api/account/${symbol}/reset`, { method: 'POST' });
                     showNotification(`Счет ${symbol} сброшен успешно!`, 'success');
                     await loadDashboard();
                 } catch (error) {
