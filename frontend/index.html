@@ -423,6 +423,48 @@
         let currentSymbol = 'SBER';
         let currentSettings = {};
         
+        // Utility function for formatting time in UTC+3
+        function formatTimeUTC3(dateString) {
+            const date = new Date(dateString);
+            // Добавляем 3 часа для UTC+3
+            const utc3Date = new Date(date.getTime() + (3 * 60 * 60 * 1000));
+            return utc3Date.toLocaleString('ru-RU', {
+                timeZone: 'Europe/Moscow', // UTC+3
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit'
+            });
+        }
+
+        // Utility function for formatting time in UTC+3
+        function formatTimeUTC3(dateString) {
+            const date = new Date(dateString);
+            // Добавляем 3 часа для UTC+3
+            const utc3Date = new Date(date.getTime() + (3 * 60 * 60 * 1000));
+            return utc3Date.toLocaleString('ru-RU', {
+                timeZone: 'Europe/Moscow', // UTC+3
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit'
+            });
+        }
+
+        function getCurrentTimeUTC3() {
+            const now = new Date();
+            return now.toLocaleString('ru-RU', {
+                timeZone: 'Europe/Moscow',
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit'
+            });
+        }
+
         // Initialize dashboard
         document.addEventListener('DOMContentLoaded', function() {
             loadDashboard();
@@ -492,7 +534,7 @@
                 ]);
                 
                 document.getElementById('last-update').textContent = 
-                    `Последнее обновление: ${new Date().toLocaleTimeString()}`;
+                    `Последнее обновление: ${getCurrentTimeUTC3()} (UTC+3)`;
                     
             } catch (error) {
                 console.error('Dashboard load error:', error);
@@ -690,7 +732,7 @@
                     <table class="trades-table">
                         <thead>
                             <tr>
-                                <th>Время</th>
+                                <th>Время (UTC+3)</th>
                                 <th>Символ</th>
                                 <th>Направление</th>
                                 <th>Цена входа</th>
@@ -703,7 +745,7 @@
                 `;
                 
                 trades.forEach(trade => {
-                    const createdAt = new Date(trade.created_at).toLocaleString('ru-RU');
+                    const createdAt = formatTimeUTC3(trade.created_at);
                     const profitClass = trade.profit_loss > 0 ? 'profit' : trade.profit_loss < 0 ? 'loss' : '';
                     
                     html += `
@@ -863,7 +905,7 @@
                 
                 let html = '';
                 logs.forEach(log => {
-                    const timestamp = new Date(log.timestamp).toLocaleString('ru-RU');
+                    const timestamp = formatTimeUTC3(log.timestamp);
                     const eventClass = log.event_type.toLowerCase().includes('signal') ? 'log-signal' :
                                      log.event_type.toLowerCase().includes('trade') ? 'log-trade' :
                                      log.event_type.toLowerCase().includes('error') ? 'log-error' : '';
@@ -886,56 +928,115 @@
         }
 
         // Trading controls
+        let operationInProgress = false;
+
         async function startTrading() {
+            if (operationInProgress) return;
+            
+            const button = event.target;
+            const originalText = button.innerHTML;
+            
             try {
+                operationInProgress = true;
+                button.disabled = true;
+                button.innerHTML = '⏳ Запуск...';
+                
                 await apiCall('/api/trading/start', { method: 'POST' });
                 showNotification('Торговля запущена!', 'success');
                 await loadTradingStatus();
             } catch (error) {
                 showNotification('Ошибка запуска торговли', 'error');
+            } finally {
+                operationInProgress = false;
+                button.disabled = false;
+                button.innerHTML = originalText;
             }
         }
 
         async function stopTrading() {
+            if (operationInProgress) return;
+            
+            const button = event.target;
+            const originalText = button.innerHTML;
+            
             try {
+                operationInProgress = true;
+                button.disabled = true;
+                button.innerHTML = '⏳ Остановка...';
+                
                 await apiCall('/api/trading/stop', { method: 'POST' });
                 showNotification('Торговля остановлена!', 'success');
                 await loadTradingStatus();
             } catch (error) {
                 showNotification('Ошибка остановки торговли', 'error');
+            } finally {
+                operationInProgress = false;
+                button.disabled = false;
+                button.innerHTML = originalText;
             }
         }
 
         async function resetAccount() {
+            if (operationInProgress) return;
+            
             if (confirm('Вы уверены, что хотите сбросить ВСЕ виртуальные счета? Все сделки будут закрыты.')) {
+                const button = event.target;
+                const originalText = button.innerHTML;
+                
                 try {
+                    operationInProgress = true;
+                    button.disabled = true;
+                    button.innerHTML = '⏳ Сброс...';
+                    
                     await apiCall('/api/account/reset', { method: 'POST' });
                     showNotification('Все счета сброшены успешно!', 'success');
                     await loadDashboard();
                 } catch (error) {
                     showNotification('Ошибка сброса счетов', 'error');
+                } finally {
+                    operationInProgress = false;
+                    button.disabled = false;
+                    button.innerHTML = originalText;
                 }
             }
         }
 
         async function refreshData() {
-            showNotification('Обновление данных...', 'info');
+            if (operationInProgress) return;
             
-            // Сначала обновляем рыночные данные
+            const button = event.target;
+            const originalText = button.innerHTML;
+            
             try {
-                const refreshResult = await apiCall('/api/market-data/refresh', { method: 'POST' });
-                if (refreshResult.status === 'success') {
-                    showNotification(`Данные MOEX обновлены для ${refreshResult.updated_symbols.length} символов`, 'success');
-                } else {
-                    showNotification('Частичное обновление данных MOEX', 'warning');
+                operationInProgress = true;
+                button.disabled = true;
+                button.innerHTML = '⏳ Обновление...';
+                
+                showNotification('Обновление данных...', 'info');
+                
+                // Сначала обновляем рыночные данные
+                try {
+                    const refreshResult = await apiCall('/api/market-data/refresh', { method: 'POST' });
+                    if (refreshResult.status === 'success') {
+                        showNotification(`Данные MOEX обновлены для ${refreshResult.updated_symbols.length} символов`, 'success');
+                    } else {
+                        showNotification('Частичное обновление данных MOEX', 'warning');
+                    }
+                } catch (error) {
+                    console.warn('Ошибка обновления MOEX данных:', error);
                 }
+                
+                // Затем обновляем dashboard
+                await loadDashboard();
+                showNotification('Dashboard обновлен!', 'success');
+                
             } catch (error) {
-                console.warn('Ошибка обновления MOEX данных:', error);
+                showNotification('Ошибка обновления данных', 'error');
+            } finally {
+                operationInProgress = false;
+                button.disabled = false;
+                button.innerHTML = originalText;
             }
-            
-            // Затем обновляем dashboard
-            await loadDashboard();
-            showNotification('Dashboard обновлен!', 'success');
         }
 
         // Notifications
