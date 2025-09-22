@@ -207,11 +207,11 @@ async def get_sber_data():
                 'time': candle[6]  # время начала свечи
             })
         
-        # Ограничиваем до последних 35 свечей (оптимально для ADX)
-        if len(candles_data) > 35:
-            candles_data = candles_data[-35:]
+        # Ограничиваем до последних 45 свечей (больше данных для стабильности)
+        if len(candles_data) > 45:
+            candles_data = candles_data[-45:]
         
-        logger.info(f"Получено {len(candles_data)} часовых свечей с MOEX (ограничено до 35)")
+        logger.info(f"Получено {len(candles_data)} часовых свечей с MOEX (ограничено до 45)")
         
         # ДИАГНОСТИКА: показываем последние несколько свечей
         if candles_data:
@@ -247,7 +247,7 @@ async def get_sber_data():
         last_row = df.iloc[-1]
         
         # Сравниваем результаты в логах
-        logger.info("📊 СРАВНЕНИЕ ДВУХ ФОРМУЛ ADX (pandas-ta теперь использует SMA вместо RMA):")
+        logger.info("📊 СРАВНЕНИЕ ДВУХ ФОРМУЛ ADX (45 свечей, pandas-ta использует SMA):")
         logger.info(f"   🔧 pandas-ta (SMA): ADX={adx_data_standard['ADX_14'].iloc[-1]:.2f}, DI+={adx_data_standard['DMP_14'].iloc[-1]:.2f}, DI-={adx_data_standard['DMN_14'].iloc[-1]:.2f}")
         logger.info(f"   📈 Pine Script: ADX={adx_pinescript['adx']:.2f}, DI+={adx_pinescript['di_plus']:.2f}, DI-={adx_pinescript['di_minus']:.2f}")
         
