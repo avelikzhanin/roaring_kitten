@@ -320,7 +320,7 @@
         <!-- Header -->
         <div class="header">
             <h1>💰 Financial Potential Strategy</h1>
-            <p>Тестирование торговой стратегии на реальных данных MOEX</p>
+            <p>Тестирование торговой стратегии на 15-минутном таймфрейме с данными MOEX</p>
             
             <div class="status-bar">
                 <div class="status-item">
@@ -329,6 +329,9 @@
                 </div>
                 <div class="status-item">
                     <span>📊 Символы: SBER, GAZP, LKOH, VTBR</span>
+                </div>
+                <div class="status-item">
+                    <span>⏱️ Таймфрейм: 15 минут</span>
                 </div>
                 <div class="status-item">
                     <span id="last-update">Последнее обновление: --:--</span>
@@ -847,7 +850,16 @@
 
         // Save settings
         async function saveSettings() {
+            if (operationInProgress) return;
+            
+            const button = event.target;
+            const originalText = button.innerHTML;
+            
             try {
+                operationInProgress = true;
+                button.disabled = true;
+                button.innerHTML = '⏳ Сохранение...';
+                
                 const formData = {
                     symbol: currentSymbol,
                     atr_period: parseInt(document.getElementById('atr_period').value),
@@ -889,6 +901,10 @@
                 
             } catch (error) {
                 showNotification(`Ошибка сохранения настроек для ${currentSymbol}`, 'error');
+            } finally {
+                operationInProgress = false;
+                button.disabled = false;
+                button.innerHTML = originalText;
             }
         }
 
