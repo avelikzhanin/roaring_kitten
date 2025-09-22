@@ -165,9 +165,9 @@ async def get_sber_data():
         # Получаем актуальную цену
         current_price = await get_current_sber_price()
         
-        # Получаем исторические данные за последние 7 дней для индикаторов
+        # Получаем исторические данные за последние 5 дней для индикаторов
         to_date = datetime.now()
-        from_date = to_date - timedelta(days=7)
+        from_date = to_date - timedelta(days=5)
         
         # MOEX API для получения часовых свечей SBER (как TradingView)
         url = "https://iss.moex.com/iss/engines/stock/markets/shares/securities/SBER/candles.json"
@@ -177,7 +177,7 @@ async def get_sber_data():
             'interval': '60'  # 60 минут = часовые свечи (как TradingView)
         }
         
-        logger.info(f"Запрашиваем исторические данные MOEX API с {from_date.strftime('%Y-%m-%d')} по {to_date.strftime('%Y-%m-%d')} (часовой таймфрейм, 7 дней)")
+        logger.info(f"Запрашиваем исторические данные MOEX API с {from_date.strftime('%Y-%m-%d')} по {to_date.strftime('%Y-%m-%d')} (часовой таймфрейм, 5 дней)")
         
         # Делаем запрос к MOEX API с httpx
         async with httpx.AsyncClient() as client:
@@ -211,7 +211,7 @@ async def get_sber_data():
         if len(candles_data) > 50:
             candles_data = candles_data[-50:]
         
-        logger.info(f"Получено {len(candles_data)} часовых свечей с MOEX за 7 дней")
+        logger.info(f"Получено {len(candles_data)} часовых свечей с MOEX за 5 дней")
         
         # ДИАГНОСТИКА: показываем последние несколько свечей
         if candles_data:
