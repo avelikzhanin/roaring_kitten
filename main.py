@@ -27,104 +27,6 @@ if not TELEGRAM_TOKEN:
     raise ValueError("Missing TELEGRAM_TOKEN environment variable")
 
 
-def calculate_adx_image_formula(df, period=14):
-    """
-    ADX по формуле с ваших изображений:
-    ADX = (Prior ADX × 13) + Current DX) / 14
-    """
-    high = df['high'].values
-    low = df['low'].values
-    close = df['close'].values
-    
-    # Расчет True Range
-    tr = []
-    dm_plus = []
-    dm_minus = []
-    
-    for i in range(1, len(high)):
-        # True Range
-        tr1 = high[i] - low[i]
-        tr2 = abs(high[i] - close[i-1])
-        tr3 = abs(low[i] - close[i-1])
-        tr.append(max(tr1, tr2, tr3))
-        
-        # Directional Movement
-        up_move = high[i] - high[i-1]
-        down_move = low[i-1] - low[i]
-        
-        dm_p = max(up_move, 0) if up_move > down_move else 0
-        dm_m = max(down_move, 0) if down_move > up_move else 0
-        
-        dm_plus.append(dm_p)
-        dm_minus.append(dm_m)
-    
-    # Wilder's Smoothing
-    def wilders_smoothing(data, period):
-        if not data:
-            return []
-        
-        smoothed = []
-        # Первое значение - простая средняя
-        first_smooth = sum(data[:period]) / period if len(data) >= period else sum(data) / len(data)
-        smoothed.append(first_smooth)
-        
-        # Остальные по формуле Wilder's
-        start_idx = period if len(data) >= period else len(data)
-        for i in range(start_idx, len(data)):
-            prev_smooth = smoothed[-1]
-            new_smooth = prev_smooth - (prev_smooth / period) + data[i]
-            smoothed.append(new_smooth)
-        
-        return smoothed
-    
-    # Сглаженные значения
-    str_values = wilders_smoothing(tr, period)
-    sdm_plus = wilders_smoothing(dm_plus, period)
-    sdm_minus = wilders_smoothing(dm_minus, period)
-    
-    if not str_values or not sdm_plus or not sdm_minus:
-        return {'adx': 0, 'di_plus': 0, 'di_minus': 0}
-    
-    # DI+ и DI-
-    di_plus = [(sdm_plus[i] / str_values[i]) * 100 if str_values[i] > 0 else 0 
-               for i in range(min(len(str_values), len(sdm_plus)))]
-    di_minus = [(sdm_minus[i] / str_values[i]) * 100 if str_values[i] > 0 else 0
-                for i in range(min(len(str_values), len(sdm_minus)))]
-    
-    # DX
-    dx = []
-    for i in range(min(len(di_plus), len(di_minus))):
-        if (di_plus[i] + di_minus[i]) > 0:
-            dx_val = abs(di_plus[i] - di_minus[i]) / (di_plus[i] + di_minus[i]) * 100
-            dx.append(dx_val)
-        else:
-            dx.append(0)
-    
-    # ADX по формуле из изображений: ADX = (Prior ADX × 13) + Current DX) / 14
-    adx_values = []
-    if len(dx) >= period:
-        # Первое значение ADX = среднее первых 14 DX
-        first_adx = sum(dx[:period]) / period
-        adx_values.append(first_adx)
-        
-        # Остальные значения по формуле с изображений
-        for i in range(period, len(dx)):
-            current_dx = dx[i]
-            prior_adx = adx_values[-1]
-            new_adx = (prior_adx * 13 + current_dx) / 14  # ← Формула с изображений!
-            adx_values.append(new_adx)
-        
-        final_adx = adx_values[-1]
-    else:
-        final_adx = sum(dx) / len(dx) if dx else 0
-    
-    return {
-        'adx': final_adx,
-        'di_plus': di_plus[-1] if di_plus else 0,
-        'di_minus': di_minus[-1] if di_minus else 0
-    }
-
-
 def calculate_adx_tradingview_exact(df, period=14):
     """
     Точная копия Pine Script кода TradingView:
@@ -218,10 +120,52 @@ def calculate_adx_tradingview_exact(df, period=14):
     }
 
 
+async def get_current_sber_price():
+    """Получение актуальной цены SBER"""
+    try:
+        # Правильный endpoint для получения актуальной цены в режиме TQBR
+        url = "https://iss.moex.com/iss/engines/stock/markets/shares/boards/TQBR/securities/SBER.json"
+        params = {
+            'iss.meta': 'off',
+            'iss.only': 'marketdata',
+            'marketdata.columns': 'LAST,BID,OFFER,TIME'  # Последняя цена, bid, offer, время
+        }
+        
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url, params=params, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+        
+        # Извлекаем данные из правильной структуры
+        if 'marketdata' in data and 'data' in data['marketdata'] and data['marketdata']['data']:
+            columns = data['marketdata']['columns']  # ['LAST', 'BID', 'OFFER', 'TIME']
+            market_data = data['marketdata']['data'][0]  # Первая строка данных
+            
+            # Находим индекс колонки LAST
+            last_price_index = columns.index('LAST') if 'LAST' in columns else None
+            time_index = columns.index('TIME') if 'TIME' in columns else None
+            
+            if last_price_index is not None and market_data[last_price_index]:
+                current_price = float(market_data[last_price_index])
+                time_str = market_data[time_index] if time_index is not None else "неизвестно"
+                logger.info(f"💰 Получена актуальная цена SBER: {current_price:.2f} ₽ (время: {time_str})")
+                return current_price
+        
+        logger.warning("Не удалось получить актуальную цену из TQBR marketdata endpoint")
+        return None
+        
+    except Exception as e:
+        logger.error(f"Error fetching current SBER price: {e}")
+        return None
+
+
 async def get_sber_data():
     """Получение данных SBER через MOEX API и расчет технических индикаторов"""
     try:
-        # Получаем данные за последние 7 дней
+        # Получаем актуальную цену
+        current_price = await get_current_sber_price()
+        
+        # Получаем исторические данные за последние 7 дней для индикаторов
         to_date = datetime.now()
         from_date = to_date - timedelta(days=7)
         
@@ -233,7 +177,7 @@ async def get_sber_data():
             'interval': '60'  # 60 минут = часовые свечи (как TradingView)
         }
         
-        logger.info(f"Запрашиваем данные MOEX API с {from_date.strftime('%Y-%m-%d')} по {to_date.strftime('%Y-%m-%d')} (часовой таймфрейм)")
+        logger.info(f"Запрашиваем исторические данные MOEX API с {from_date.strftime('%Y-%m-%d')} по {to_date.strftime('%Y-%m-%d')} (часовой таймфрейм, 5 дней)")
         
         # Делаем запрос к MOEX API с httpx
         async with httpx.AsyncClient() as client:
@@ -263,25 +207,27 @@ async def get_sber_data():
                 'time': candle[6]  # время начала свечи
             })
         
-        # Ограничиваем до последних 50 свечей
+        # Ограничиваем до последних 50 свечей (как в оригинале)
         if len(candles_data) > 50:
             candles_data = candles_data[-50:]
         
-        logger.info(f"Получено {len(candles_data)} часовых свечей с MOEX")
+        logger.info(f"Получено {len(candles_data)} часовых свечей с MOEX (ограничено до 45)")
         
         # ДИАГНОСТИКА: показываем последние несколько свечей
         if candles_data:
-            logger.info("🔍 ПОСЛЕДНИЕ 3 СВЕЧИ (для диагностики):")
+            logger.info("🔍 ПОСЛЕДНИЕ 3 СВЕЧИ (для диагностики индикаторов):")
             for i, candle in enumerate(candles_data[-3:]):
                 logger.info(f"   {i+1}. {candle['time']} | O:{candle['open']:.2f} H:{candle['high']:.2f} L:{candle['low']:.2f} C:{candle['close']:.2f}")
             
             first_time = candles_data[0]['time']
             last_time = candles_data[-1]['time']
             logger.info(f"Диапазон времени (МСК): {first_time} → {last_time}")
-            logger.info(f"Цена: {candles_data[-1]['close']:.2f} ₽")
+            logger.info(f"Цена последней свечи: {candles_data[-1]['close']:.2f} ₽")
+            if current_price:
+                logger.info(f"Актуальная цена (отдельный запрос): {current_price:.2f} ₽")
         
         if len(candles_data) < 30:
-            logger.error(f"Insufficient data: {len(candles_data)} candles")
+            logger.error(f"Insufficient data: {len(candles_data)} candles (need at least 30)")
             return None
         
         # Преобразуем в DataFrame
@@ -290,27 +236,23 @@ async def get_sber_data():
         # Расчет EMA20
         df['ema20'] = ta.ema(df['close'], length=20)
         
-        # ТРИ ВАРИАНТА расчета ADX
-        # 1. pandas-ta (стандартный)
+        # ДВА ВАРИАНТА расчета ADX
+        # 1. pandas-ta (стандартный с правильным Wilder's smoothing)
         adx_data_standard = ta.adx(df['high'], df['low'], df['close'], length=14, mamode='rma')
         
         # 2. Pine Script (ADX = sma(DX, len))
         adx_pinescript = calculate_adx_tradingview_exact(df, period=14)
         
-        # 3. Формула с изображений (ADX = (Prior ADX × 13) + Current DX) / 14)
-        adx_image_formula = calculate_adx_image_formula(df, period=14)
-        
         # Берем последние значения
         last_row = df.iloc[-1]
         
         # Сравниваем результаты в логах
-        logger.info("📊 СРАВНЕНИЕ ТРЕХ ФОРМУЛ ADX:")
-        logger.info(f"   🔧 pandas-ta: ADX={adx_data_standard['ADX_14'].iloc[-1]:.2f}, DI+={adx_data_standard['DMP_14'].iloc[-1]:.2f}, DI-={adx_data_standard['DMN_14'].iloc[-1]:.2f}")
+        logger.info("📊 СРАВНЕНИЕ ДВУХ ФОРМУЛ ADX (вернули оригинальные настройки: 7 дней, 50 свечей, RMA):")
+        logger.info(f"   🔧 pandas-ta (RMA): ADX={adx_data_standard['ADX_14'].iloc[-1]:.2f}, DI+={adx_data_standard['DMP_14'].iloc[-1]:.2f}, DI-={adx_data_standard['DMN_14'].iloc[-1]:.2f}")
         logger.info(f"   📈 Pine Script: ADX={adx_pinescript['adx']:.2f}, DI+={adx_pinescript['di_plus']:.2f}, DI-={adx_pinescript['di_minus']:.2f}")
-        logger.info(f"   🖼️ Изображения: ADX={adx_image_formula['adx']:.2f}, DI+={adx_image_formula['di_plus']:.2f}, DI-={adx_image_formula['di_minus']:.2f}")
         
         return {
-            'current_price': last_row['close'],
+            'current_price': current_price if current_price else last_row['close'],  # Приоритет актуальной цене
             'ema20': last_row['ema20'],
             # pandas-ta
             'adx_standard': adx_data_standard['ADX_14'].iloc[-1],
@@ -319,11 +261,7 @@ async def get_sber_data():
             # Pine Script
             'adx_pinescript': adx_pinescript['adx'],
             'di_plus_pinescript': adx_pinescript['di_plus'],
-            'di_minus_pinescript': adx_pinescript['di_minus'],
-            # Формула с изображений
-            'adx_image': adx_image_formula['adx'],
-            'di_plus_image': adx_image_formula['di_plus'],
-            'di_minus_image': adx_image_formula['di_minus']
+            'di_minus_pinescript': adx_pinescript['di_minus']
         }
         
     except httpx.HTTPError as e:
@@ -335,31 +273,24 @@ async def get_sber_data():
 
 
 def format_sber_message(data):
-    """Форматирование сообщения с данными SBER - показываем ТРИ варианта ADX"""
+    """Форматирование сообщения с данными SBER - показываем ДВА варианта ADX"""
     
-    # Определяем силу тренда для всех трех вариантов
+    # Определяем силу тренда для двух вариантов
     adx_standard_strength = "Сильный тренд" if data['adx_standard'] > 25 else "Слабый тренд"
     adx_pine_strength = "Сильный тренд" if data['adx_pinescript'] > 25 else "Слабый тренд"
-    adx_image_strength = "Сильный тренд" if data['adx_image'] > 25 else "Слабый тренд"
     
     message = f"""🏦 <b>SBER - Сбербанк</b>
 
 💰 <b>Цена:</b> {data['current_price']:.2f} ₽
 📊 <b>EMA20:</b> {data['ema20']:.2f} ₽
 
-🔧 <b>ADX — pandas-ta (стандарт):</b>
+🔧 <b>ADX — pandas-ta (RMA):</b>
 • <b>ADX:</b> {data['adx_standard']:.2f} ({adx_standard_strength})
 • <b>DI+:</b> {data['di_plus_standard']:.2f} | <b>DI-:</b> {data['di_minus_standard']:.2f}
 
 📈 <b>ADX — Pine Script (sma):</b>
 • <b>ADX:</b> {data['adx_pinescript']:.2f} ({adx_pine_strength})
-• <b>DI+:</b> {data['di_plus_pinescript']:.2f} | <b>DI-:</b> {data['di_minus_pinescript']:.2f}
-
-🖼️ <b>ADX — Формула изображений:</b>
-• <b>ADX:</b> {data['adx_image']:.2f} ({adx_image_strength})
-• <b>DI+:</b> {data['di_plus_image']:.2f} | <b>DI-:</b> {data['di_minus_image']:.2f}
-
-<i>Сравните все три с графиком TradingView!</i>"""
+• <b>DI+:</b> {data['di_plus_pinescript']:.2f} | <b>DI-:</b> {data['di_minus_pinescript']:.2f}"""
     
     return message
 
@@ -387,11 +318,11 @@ async def sber_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await loading_message.edit_text('❌ Не удалось получить данные с MOEX API. Попробуйте позже.')
             return
         
-        # Проверяем на NaN значения (для всех трех вариантов)
+        # Проверяем на NaN значения (для двух вариантов)
         if (pd.isna(sber_data['ema20']) or 
-            pd.isna(sber_data['adx_standard']) or pd.isna(sber_data['adx_pinescript']) or pd.isna(sber_data['adx_image']) or
-            pd.isna(sber_data['di_plus_standard']) or pd.isna(sber_data['di_plus_pinescript']) or pd.isna(sber_data['di_plus_image']) or
-            pd.isna(sber_data['di_minus_standard']) or pd.isna(sber_data['di_minus_pinescript']) or pd.isna(sber_data['di_minus_image'])):
+            pd.isna(sber_data['adx_standard']) or pd.isna(sber_data['adx_pinescript']) or
+            pd.isna(sber_data['di_plus_standard']) or pd.isna(sber_data['di_plus_pinescript']) or
+            pd.isna(sber_data['di_minus_standard']) or pd.isna(sber_data['di_minus_pinescript'])):
             await loading_message.edit_text('❌ Недостаточно данных для расчета индикаторов. Попробуйте позже.')
             return
         
