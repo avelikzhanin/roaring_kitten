@@ -35,8 +35,8 @@ class MOEXClient:
             end_date: Дата окончания в формате YYYY-MM-DD
         """
         if not start_date:
-            # Увеличиваем период для получения достаточного количества 15-минутных свечей
-            start_date = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
+            # ИЗМЕНЕНИЕ: Уменьшаем период с 7 дней до 2 дней для оптимизации
+            start_date = (datetime.now() - timedelta(days=2)).strftime("%Y-%m-%d")
         if not end_date:
             end_date = datetime.now().strftime("%Y-%m-%d")
         
@@ -44,7 +44,7 @@ class MOEXClient:
         interval_map = {
             "1": "1",      # 1 минута
             "5": "5",      # 5 минут  
-            "10": "10",    # 10 минут (ближайший к 15 минутам)
+            "10": "10",    # 10 минут (основной таймфрейм)
             "15": "10",    # Используем 10 минут вместо 15
             "60": "60",    # 1 час
             "D": "24",     # день
@@ -136,13 +136,13 @@ class MOEXClient:
         
         for symbol in symbols:
             try:
-                print(f"📡 Получение данных {symbol} с таймфреймом {period} минут...")
+                print(f"📡 Получение данных {symbol} с таймфреймом {period} минут (2 дня истории)...")
                 
-                # Получаем свечи за последние 7 дней для лучшего анализа
+                # ИЗМЕНЕНИЕ: Получаем свечи за последние 2 дня вместо 7 для оптимизации
                 candles = await self.get_candles(
                     symbol, 
                     period=period,
-                    start_date=(datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
+                    start_date=(datetime.now() - timedelta(days=2)).strftime("%Y-%m-%d")
                 )
                 
                 # Получаем текущую цену
@@ -153,10 +153,11 @@ class MOEXClient:
                     "current_price": current_price,
                     "last_update": datetime.now().isoformat(),
                     "timeframe": f"{period}_minutes",
+                    "history_days": 2,  # Добавляем информацию об истории
                     "candles_count": len(candles) if not candles.empty else 0
                 }
                 
-                print(f"✅ {symbol}: цена {current_price}, свечей {len(candles) if not candles.empty else 0}")
+                print(f"✅ {symbol}: цена {current_price}, свечей {len(candles) if not candles.empty else 0} (2 дня)")
                 
             except Exception as e:
                 print(f"❌ Ошибка получения данных для {symbol}: {e}")
@@ -164,7 +165,8 @@ class MOEXClient:
                     "candles": pd.DataFrame(),
                     "current_price": None,
                     "error": str(e),
-                    "timeframe": f"{period}_minutes"
+                    "timeframe": f"{period}_minutes",
+                    "history_days": 2
                 }
         
         return results
@@ -189,13 +191,14 @@ def get_moex_data(symbols: List[str], period: str = "10") -> dict:
         # Если нет running event loop, используем asyncio.run
         return asyncio.run(get_moex_data_async(symbols, period))
 
-async def get_moex_candles_async(symbol: str, period: str = "10", days: int = 7) -> pd.DataFrame:
+async def get_moex_candles_async(symbol: str, period: str = "10", days: int = 2) -> pd.DataFrame:
     """Асинхронная функция для получения свечей с поддержкой таймфрейма"""
     async with MOEXClient() as client:
+        # ИЗМЕНЕНИЕ: По умолчанию используем 2 дня вместо 7
         start_date = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
         return await client.get_candles(symbol, period, start_date)
 
-def get_moex_candles(symbol: str, period: str = "10", days: int = 7) -> pd.DataFrame:
+def get_moex_candles(symbol: str, period: str = "10", days: int = 2) -> pd.DataFrame:
     """Синхронная функция для получения свечей с поддержкой таймфрейма"""
     try:
         loop = asyncio.get_running_loop()
@@ -214,19 +217,21 @@ if __name__ == "__main__":
         symbols = ["SBER", "GAZP", "LKOH", "VTBR"]
         
         async with MOEXClient() as client:
-            print("Тестирование MOEX API с 15-минутным таймфреймом...")
+            print("Тестирование MOEX API с 10-минутным таймфреймом (оптимизированно)...")
             
-            # Тест получения данных с 10-минутным таймфреймом (ближайший к 15)
+            # Тест получения данных с 10-минутным таймфреймом за 2 дня
             market_data = await client.get_market_data(symbols, period="10")
             
             for symbol, data in market_data.items():
                 print(f"\n{symbol}:")
                 print(f"Текущая цена: {data.get('current_price')}")
                 print(f"Таймфрейм: {data.get('timeframe')}")
+                print(f"История: {data.get('history_days')} дней")
                 print(f"Свечей получено: {data.get('candles_count', 0)}")
                 
                 if not data.get('candles', pd.DataFrame()).empty:
                     df = data['candles']
                     print(f"Последняя свеча: {df.iloc[-1]['datetime']} - Close: {df.iloc[-1]['close']}")
+                    print(f"Период данных: {df.iloc[0]['datetime']} - {df.iloc[-1]['datetime']}")
     
     asyncio.run(test())
