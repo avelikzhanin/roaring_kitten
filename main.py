@@ -207,11 +207,11 @@ async def get_sber_data():
                 'time': candle[6]  # время начала свечи
             })
         
-        # Ограничиваем до последних 50 свечей
-        if len(candles_data) > 50:
-            candles_data = candles_data[-50:]
+        # Ограничиваем до последних 28 свечей (2 × ADX period)
+        if len(candles_data) > 28:
+            candles_data = candles_data[-28:]
         
-        logger.info(f"Получено {len(candles_data)} часовых свечей с MOEX за 5 дней")
+        logger.info(f"Получено {len(candles_data)} часовых свечей с MOEX (ограничено до 28)")
         
         # ДИАГНОСТИКА: показываем последние несколько свечей
         if candles_data:
@@ -226,8 +226,8 @@ async def get_sber_data():
             if current_price:
                 logger.info(f"Актуальная цена (отдельный запрос): {current_price:.2f} ₽")
         
-        if len(candles_data) < 30:
-            logger.error(f"Insufficient data: {len(candles_data)} candles (need at least 30)")
+        if len(candles_data) < 25:
+            logger.error(f"Insufficient data: {len(candles_data)} candles (need at least 25)")
             return None
         
         # Преобразуем в DataFrame
@@ -247,7 +247,7 @@ async def get_sber_data():
         last_row = df.iloc[-1]
         
         # Сравниваем результаты в логах
-        logger.info("📊 СРАВНЕНИЕ ДВУХ ФОРМУЛ ADX:")
+        logger.info("📊 СРАВНЕНИЕ ДВУХ ФОРМУЛ ADX (используем ровно 28 свечей для точности):")
         logger.info(f"   🔧 pandas-ta: ADX={adx_data_standard['ADX_14'].iloc[-1]:.2f}, DI+={adx_data_standard['DMP_14'].iloc[-1]:.2f}, DI-={adx_data_standard['DMN_14'].iloc[-1]:.2f}")
         logger.info(f"   📈 Pine Script: ADX={adx_pinescript['adx']:.2f}, DI+={adx_pinescript['di_plus']:.2f}, DI-={adx_pinescript['di_minus']:.2f}")
         
