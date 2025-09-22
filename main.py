@@ -120,12 +120,48 @@ def calculate_adx_tradingview_exact(df, period=14):
     }
 
 
+async def get_current_sber_price():
+    """Получение актуальной цены SBER"""
+    try:
+        # Получаем текущую цену через securities endpoint
+        url = "https://iss.moex.com/iss/engines/stock/markets/shares/securities/SBER.json"
+        
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+        
+        # Извлекаем текущую цену
+        if 'securities' in data and 'data' in data['securities'] and data['securities']['data']:
+            # Ищем поле LAST (последняя цена)
+            columns = data['securities']['columns']
+            securities_data = data['securities']['data'][0]  # Первая (и единственная) строка для SBER
+            
+            # Находим индекс колонки LAST
+            last_price_index = columns.index('LAST') if 'LAST' in columns else None
+            
+            if last_price_index is not None and securities_data[last_price_index]:
+                current_price = float(securities_data[last_price_index])
+                logger.info(f"💰 Получена актуальная цена SBER: {current_price:.2f} ₽")
+                return current_price
+        
+        logger.warning("Не удалось получить актуальную цену из securities endpoint")
+        return None
+        
+    except Exception as e:
+        logger.error(f"Error fetching current SBER price: {e}")
+        return None
+
+
 async def get_sber_data():
     """Получение данных SBER через MOEX API и расчет технических индикаторов"""
     try:
-        # Получаем данные за последние 7 дней
+        # Получаем актуальную цену
+        current_price = await get_current_sber_price()
+        
+        # Получаем исторические данные за последние 3 дня для индикаторов
         to_date = datetime.now()
-        from_date = to_date - timedelta(days=7)
+        from_date = to_date - timedelta(days=3)
         
         # MOEX API для получения часовых свечей SBER (как TradingView)
         url = "https://iss.moex.com/iss/engines/stock/markets/shares/securities/SBER/candles.json"
@@ -135,7 +171,7 @@ async def get_sber_data():
             'interval': '60'  # 60 минут = часовые свечи (как TradingView)
         }
         
-        logger.info(f"Запрашиваем данные MOEX API с {from_date.strftime('%Y-%m-%d')} по {to_date.strftime('%Y-%m-%d')} (часовой таймфрейм)")
+        logger.info(f"Запрашиваем исторические данные MOEX API с {from_date.strftime('%Y-%m-%d')} по {to_date.strftime('%Y-%m-%d')} (часовой таймфрейм, 3 дня)")
         
         # Делаем запрос к MOEX API с httpx
         async with httpx.AsyncClient() as client:
@@ -169,21 +205,23 @@ async def get_sber_data():
         if len(candles_data) > 50:
             candles_data = candles_data[-50:]
         
-        logger.info(f"Получено {len(candles_data)} часовых свечей с MOEX")
+        logger.info(f"Получено {len(candles_data)} часовых свечей с MOEX за 3 дня")
         
         # ДИАГНОСТИКА: показываем последние несколько свечей
         if candles_data:
-            logger.info("🔍 ПОСЛЕДНИЕ 3 СВЕЧИ (для диагностики):")
+            logger.info("🔍 ПОСЛЕДНИЕ 3 СВЕЧИ (для диагностики индикаторов):")
             for i, candle in enumerate(candles_data[-3:]):
                 logger.info(f"   {i+1}. {candle['time']} | O:{candle['open']:.2f} H:{candle['high']:.2f} L:{candle['low']:.2f} C:{candle['close']:.2f}")
             
             first_time = candles_data[0]['time']
             last_time = candles_data[-1]['time']
             logger.info(f"Диапазон времени (МСК): {first_time} → {last_time}")
-            logger.info(f"Цена: {candles_data[-1]['close']:.2f} ₽")
+            logger.info(f"Цена последней свечи: {candles_data[-1]['close']:.2f} ₽")
+            if current_price:
+                logger.info(f"Актуальная цена (отдельный запрос): {current_price:.2f} ₽")
         
         if len(candles_data) < 30:
-            logger.error(f"Insufficient data: {len(candles_data)} candles")
+            logger.error(f"Insufficient data: {len(candles_data)} candles (need at least 30)")
             return None
         
         # Преобразуем в DataFrame
@@ -208,7 +246,7 @@ async def get_sber_data():
         logger.info(f"   📈 Pine Script: ADX={adx_pinescript['adx']:.2f}, DI+={adx_pinescript['di_plus']:.2f}, DI-={adx_pinescript['di_minus']:.2f}")
         
         return {
-            'current_price': last_row['close'],
+            'current_price': current_price if current_price else last_row['close'],  # Приоритет актуальной цене
             'ema20': last_row['ema20'],
             # pandas-ta
             'adx_standard': adx_data_standard['ADX_14'].iloc[-1],
@@ -246,9 +284,7 @@ def format_sber_message(data):
 
 📈 <b>ADX — Pine Script (sma):</b>
 • <b>ADX:</b> {data['adx_pinescript']:.2f} ({adx_pine_strength})
-• <b>DI+:</b> {data['di_plus_pinescript']:.2f} | <b>DI-:</b> {data['di_minus_pinescript']:.2f}
-
-<i>Сравните оба варианта с графиком TradingView!</i>"""
+• <b>DI+:</b> {data['di_plus_pinescript']:.2f} | <b>DI-:</b> {data['di_minus_pinescript']:.2f}"""
     
     return message
 
