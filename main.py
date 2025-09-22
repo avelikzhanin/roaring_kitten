@@ -207,11 +207,11 @@ async def get_sber_data():
                 'time': candle[6]  # время начала свечи
             })
         
-        # Ограничиваем до последних 28 свечей (2 × ADX period)
-        if len(candles_data) > 28:
-            candles_data = candles_data[-28:]
+        # Ограничиваем до последних 35 свечей (оптимально для ADX)
+        if len(candles_data) > 35:
+            candles_data = candles_data[-35:]
         
-        logger.info(f"Получено {len(candles_data)} часовых свечей с MOEX (ограничено до 28)")
+        logger.info(f"Получено {len(candles_data)} часовых свечей с MOEX (ограничено до 35)")
         
         # ДИАГНОСТИКА: показываем последние несколько свечей
         if candles_data:
@@ -226,8 +226,8 @@ async def get_sber_data():
             if current_price:
                 logger.info(f"Актуальная цена (отдельный запрос): {current_price:.2f} ₽")
         
-        if len(candles_data) < 25:
-            logger.error(f"Insufficient data: {len(candles_data)} candles (need at least 25)")
+        if len(candles_data) < 30:
+            logger.error(f"Insufficient data: {len(candles_data)} candles (need at least 30)")
             return None
         
         # Преобразуем в DataFrame
@@ -237,8 +237,8 @@ async def get_sber_data():
         df['ema20'] = ta.ema(df['close'], length=20)
         
         # ДВА ВАРИАНТА расчета ADX
-        # 1. pandas-ta (стандартный)
-        adx_data_standard = ta.adx(df['high'], df['low'], df['close'], length=14, mamode='rma')
+        # 1. pandas-ta с простой скользящей средней (как в TradingView)
+        adx_data_standard = ta.adx(df['high'], df['low'], df['close'], length=14, mamode='sma')
         
         # 2. Pine Script (ADX = sma(DX, len))
         adx_pinescript = calculate_adx_tradingview_exact(df, period=14)
@@ -247,8 +247,8 @@ async def get_sber_data():
         last_row = df.iloc[-1]
         
         # Сравниваем результаты в логах
-        logger.info("📊 СРАВНЕНИЕ ДВУХ ФОРМУЛ ADX (используем ровно 28 свечей для точности):")
-        logger.info(f"   🔧 pandas-ta: ADX={adx_data_standard['ADX_14'].iloc[-1]:.2f}, DI+={adx_data_standard['DMP_14'].iloc[-1]:.2f}, DI-={adx_data_standard['DMN_14'].iloc[-1]:.2f}")
+        logger.info("📊 СРАВНЕНИЕ ДВУХ ФОРМУЛ ADX (pandas-ta теперь использует SMA вместо RMA):")
+        logger.info(f"   🔧 pandas-ta (SMA): ADX={adx_data_standard['ADX_14'].iloc[-1]:.2f}, DI+={adx_data_standard['DMP_14'].iloc[-1]:.2f}, DI-={adx_data_standard['DMN_14'].iloc[-1]:.2f}")
         logger.info(f"   📈 Pine Script: ADX={adx_pinescript['adx']:.2f}, DI+={adx_pinescript['di_plus']:.2f}, DI-={adx_pinescript['di_minus']:.2f}")
         
         return {
@@ -284,7 +284,7 @@ def format_sber_message(data):
 💰 <b>Цена:</b> {data['current_price']:.2f} ₽
 📊 <b>EMA20:</b> {data['ema20']:.2f} ₽
 
-🔧 <b>ADX — pandas-ta (стандарт):</b>
+🔧 <b>ADX — pandas-ta (SMA):</b>
 • <b>ADX:</b> {data['adx_standard']:.2f} ({adx_standard_strength})
 • <b>DI+:</b> {data['di_plus_standard']:.2f} | <b>DI-:</b> {data['di_minus_standard']:.2f}
 
