@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Financial Potential Strategy Dashboard</title>
-    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/plotly.js/2.26.0/plotly.min.js"></script>
     <style>
         * {
             margin: 0;
@@ -139,6 +139,12 @@
         .btn:hover {
             transform: translateY(-2px);
             box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
         }
 
         .stats-grid {
@@ -411,7 +417,7 @@
 
     <script>
         // API Configuration
-        const API_BASE = window.location.origin.includes('localhost') ? 'http://localhost:8000' : '';
+        const API_BASE = '';
         
         // Global state
         let currentSymbol = 'SBER';
@@ -436,11 +442,11 @@
                     ...options
                 });
                 
-                console.log(`📡 Response status: ${response.status} ${response.statusText}`);
+                console.log(`📡 Response status: ${response.status}`);
                 
                 if (!response.ok) {
                     const errorText = await response.text();
-                    console.error(`❌ API Error Response:`, errorText);
+                    console.error(`❌ API Error Response:`, JSON.parse(errorText));
                     
                     let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
                     try {
@@ -449,7 +455,6 @@
                             errorMessage += ` - ${errorJson.detail}`;
                         }
                     } catch (e) {
-                        // Не JSON ответ
                         if (errorText) {
                             errorMessage += ` - ${errorText.substring(0, 100)}`;
                         }
@@ -459,7 +464,6 @@
                 }
                 
                 const result = await response.json();
-                console.log(`✅ API Success:`, result);
                 return result;
                 
             } catch (error) {
@@ -494,23 +498,13 @@
                 const status = await apiCall('/api/trading/status');
                 const indicator = document.getElementById('trading-indicator');
                 const statusText = document.getElementById('trading-status');
-                const startButton = document.querySelector('.btn-success');
-                const stopButton = document.querySelector('.btn-danger');
                 
                 if (status.active) {
                     indicator.className = 'status-indicator status-active';
                     statusText.textContent = 'Торговля активна';
-                    startButton.disabled = true;
-                    startButton.style.opacity = '0.5';
-                    stopButton.disabled = false;
-                    stopButton.style.opacity = '1';
                 } else {
                     indicator.className = 'status-indicator status-inactive';
                     statusText.textContent = 'Торговля остановлена';
-                    startButton.disabled = false;
-                    startButton.style.opacity = '1';
-                    stopButton.disabled = true;
-                    stopButton.style.opacity = '0.5';
                 }
             } catch (error) {
                 console.error('Status load error:', error);
@@ -630,7 +624,7 @@
                     let signalText = 'Нет сигнала';
                     
                     try {
-                        const signal = await apiCall(`/signals/${symbol}`);
+                        const signal = await apiCall(`/api/signals/${symbol}`);
                         if (signal.direction === 'BUY') {
                             signalClass = 'signal-buy';
                             signalText = `BUY (${(signal.confidence * 100).toFixed(0)}%)`;
@@ -793,7 +787,6 @@
         // Save settings
         async function saveSettings() {
             try {
-                // Собираем все данные из формы
                 const formData = {
                     symbol: currentSymbol,
                     atr_period: parseInt(document.getElementById('atr_period').value),
@@ -825,22 +818,15 @@
                     mode: document.getElementById('mode').value
                 };
                 
-                console.log('Отправляем настройки для', currentSymbol, ':', formData);
-                
                 const response = await apiCall(`/settings/${currentSymbol}`, {
                     method: 'POST',
                     body: JSON.stringify(formData)
                 });
                 
-                console.log('Ответ сервера:', response);
-                
                 showNotification(`Настройки для ${currentSymbol} сохранены успешно!`, 'success');
-                
-                // Обновляем currentSettings
                 currentSettings = response;
                 
             } catch (error) {
-                console.error('Ошибка сохранения настроек:', error);
                 showNotification(`Ошибка сохранения настроек для ${currentSymbol}`, 'error');
             }
         }
@@ -881,51 +867,27 @@
         }
 
         // Trading controls
-        let tradingOperationInProgress = false;
-
         async function startTrading() {
-            if (tradingOperationInProgress) return;
-            
-            const button = document.querySelector('.btn-success');
             try {
-                tradingOperationInProgress = true;
-                button.disabled = true;
-                button.textContent = '⏳ Запуск...';
-                
                 await apiCall('/api/trading/start', { method: 'POST' });
                 showNotification('Торговля запущена!', 'success');
                 await loadTradingStatus();
             } catch (error) {
                 showNotification('Ошибка запуска торговли', 'error');
-            } finally {
-                tradingOperationInProgress = false;
-                button.disabled = false;
-                button.textContent = '▶️ Запустить торговлю';
             }
         }
 
         async function stopTrading() {
-            if (tradingOperationInProgress) return;
-            
-            const button = document.querySelector('.btn-danger');
             try {
-                tradingOperationInProgress = true;
-                button.disabled = true;
-                button.textContent = '⏳ Остановка...';
-                
                 await apiCall('/api/trading/stop', { method: 'POST' });
                 showNotification('Торговля остановлена!', 'success');
                 await loadTradingStatus();
             } catch (error) {
                 showNotification('Ошибка остановки торговли', 'error');
-            } finally {
-                tradingOperationInProgress = false;
-                button.disabled = false;
-                button.textContent = '⏹️ Остановить торговлю';
             }
         }
 
-        async function resetAllAccounts() {
+        async function resetAccount() {
             if (confirm('Вы уверены, что хотите сбросить ВСЕ виртуальные счета? Все сделки будут закрыты.')) {
                 try {
                     await apiCall('/api/account/reset', { method: 'POST' });
@@ -933,18 +895,6 @@
                     await loadDashboard();
                 } catch (error) {
                     showNotification('Ошибка сброса счетов', 'error');
-                }
-            }
-        }
-
-        async function resetSymbolAccount(symbol) {
-            if (confirm(`Вы уверены, что хотите сбросить счет для ${symbol}? Все сделки по этому инструменту будут закрыты.`)) {
-                try {
-                    await apiCall(`/api/account/${symbol}/reset`, { method: 'POST' });
-                    showNotification(`Счет ${symbol} сброшен успешно!`, 'success');
-                    await loadDashboard();
-                } catch (error) {
-                    showNotification(`Ошибка сброса счета ${symbol}`, 'error');
                 }
             }
         }
@@ -957,7 +907,6 @@
 
         // Notifications
         function showNotification(message, type = 'info') {
-            // Простая реализация уведомлений
             const notification = document.createElement('div');
             notification.style.cssText = `
                 position: fixed;
