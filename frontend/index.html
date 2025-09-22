@@ -47,6 +47,7 @@
             gap: 20px;
             align-items: center;
             margin-top: 20px;
+            flex-wrap: wrap;
         }
 
         .status-item {
@@ -57,6 +58,7 @@
             background: #f0f4f8;
             border-radius: 20px;
             font-weight: 500;
+            font-size: 0.9em;
         }
 
         .status-indicator {
@@ -304,6 +306,27 @@
         .log-trade { color: #2563eb; }
         .log-error { color: #dc2626; }
 
+        /* Новые стили для оптимизированной информации */
+        .optimization-info {
+            background: linear-gradient(45deg, #e3f2fd, #f3e5f5);
+            padding: 15px;
+            border-radius: 10px;
+            margin-top: 15px;
+            border-left: 4px solid #2196f3;
+        }
+
+        .optimization-info h4 {
+            color: #1976d2;
+            margin-bottom: 8px;
+            font-size: 1.1em;
+        }
+
+        .optimization-info p {
+            color: #666;
+            font-size: 0.9em;
+            margin: 4px 0;
+        }
+
         @media (max-width: 768px) {
             .dashboard {
                 grid-template-columns: 1fr;
@@ -311,6 +334,15 @@
             
             .controls {
                 flex-direction: column;
+            }
+            
+            .status-bar {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            
+            .status-item {
+                justify-content: center;
             }
         }
     </style>
@@ -320,7 +352,7 @@
         <!-- Header -->
         <div class="header">
             <h1>💰 Financial Potential Strategy</h1>
-            <p>Тестирование торговой стратегии на 15-минутном таймфрейме с данными MOEX</p>
+            <p>Тестирование торговой стратегии на оптимизированных данных MOEX</p>
             
             <div class="status-bar">
                 <div class="status-item">
@@ -331,11 +363,25 @@
                     <span>📊 Символы: SBER, GAZP, LKOH, VTBR</span>
                 </div>
                 <div class="status-item">
-                    <span>⏱️ Таймфрейм: 15 минут</span>
+                    <span>⏱️ Таймфрейм: 10 минут</span>
+                </div>
+                <div class="status-item">
+                    <span>🔄 Обновление: каждые 5 мин</span>
+                </div>
+                <div class="status-item">
+                    <span>📈 История: 2 дня</span>
                 </div>
                 <div class="status-item">
                     <span id="last-update">Последнее обновление: --:--</span>
                 </div>
+            </div>
+
+            <!-- Информация об оптимизации -->
+            <div class="optimization-info">
+                <h4>🚀 Оптимизированная версия v2.1</h4>
+                <p>• <strong>Частые обновления:</strong> Каждые 5 минут для актуальных цен</p>
+                <p>• <strong>Меньше трафика:</strong> История сокращена с 7 до 2 дней (71% экономии)</p>
+                <p>• <strong>Актуальнее данные:</strong> Обновление цен в 3 раза чаще</p>
             </div>
         </div>
 
@@ -429,25 +475,7 @@
         // Utility function for formatting time in UTC+3
         function formatTimeUTC3(dateString) {
             const date = new Date(dateString);
-            // Добавляем 3 часа для UTC+3
-            const utc3Date = new Date(date.getTime() + (3 * 60 * 60 * 1000));
-            return utc3Date.toLocaleString('ru-RU', {
-                timeZone: 'Europe/Moscow', // UTC+3
-                year: 'numeric',
-                month: '2-digit',
-                day: '2-digit',
-                hour: '2-digit',
-                minute: '2-digit',
-                second: '2-digit'
-            });
-        }
-
-        // Utility function for formatting time in UTC+3
-        function formatTimeUTC3(dateString) {
-            const date = new Date(dateString);
-            // Добавляем 3 часа для UTC+3
-            const utc3Date = new Date(date.getTime() + (3 * 60 * 60 * 1000));
-            return utc3Date.toLocaleString('ru-RU', {
+            return date.toLocaleString('ru-RU', {
                 timeZone: 'Europe/Moscow', // UTC+3
                 year: 'numeric',
                 month: '2-digit',
@@ -553,7 +581,7 @@
                 
                 if (status.active) {
                     indicator.className = 'status-indicator status-active';
-                    statusText.textContent = 'Торговля активна';
+                    statusText.textContent = 'Торговля активна (5 мин)';
                 } else {
                     indicator.className = 'status-indicator status-inactive';
                     statusText.textContent = 'Торговля остановлена';
@@ -583,7 +611,7 @@
                             <div class="stat-value ${stats.summary.total_return >= 0 ? 'profit' : 'loss'}">
                                 ${stats.summary.total_return.toFixed(2)}%
                             </div>
-                            <div class="stat-label">Общая доходность портфеля</div>
+                            <div class="stat-label">Общая доходность портфеля (10-мин данные)</div>
                         </div>
                     `;
                     
@@ -848,66 +876,6 @@
             }
         }
 
-        // Save settings
-        async function saveSettings() {
-            if (operationInProgress) return;
-            
-            const button = event.target;
-            const originalText = button.innerHTML;
-            
-            try {
-                operationInProgress = true;
-                button.disabled = true;
-                button.innerHTML = '⏳ Сохранение...';
-                
-                const formData = {
-                    symbol: currentSymbol,
-                    atr_period: parseInt(document.getElementById('atr_period').value),
-                    rsi_period: parseInt(document.getElementById('rsi_period').value),
-                    ema_period: parseInt(document.getElementById('ema_period').value),
-                    threshold_level: currentSettings.threshold_level || 0.4,
-                    level_radius_factor: currentSettings.level_radius_factor || 4.5,
-                    min_potential_strength: currentSettings.min_potential_strength || 0.6,
-                    risk_percent: parseFloat(document.getElementById('risk_percent').value),
-                    dynamic_lot: currentSettings.dynamic_lot !== undefined ? currentSettings.dynamic_lot : true,
-                    base_lot: parseFloat(document.getElementById('base_lot').value),
-                    min_lot: currentSettings.min_lot || 0.01,
-                    max_drawdown_percent: parseFloat(document.getElementById('max_drawdown_percent').value),
-                    reduce_risk_on_drawdown: currentSettings.reduce_risk_on_drawdown !== undefined ? currentSettings.reduce_risk_on_drawdown : true,
-                    drawdown_risk_reduction: currentSettings.drawdown_risk_reduction || 0.5,
-                    stop_loss_atr: parseFloat(document.getElementById('stop_loss_atr').value),
-                    take_profit_atr: parseFloat(document.getElementById('take_profit_atr').value),
-                    enable_ladder: currentSettings.enable_ladder !== undefined ? currentSettings.enable_ladder : false,
-                    ladder_count: currentSettings.ladder_count || 2,
-                    ladder_step_atr: currentSettings.ladder_step_atr || 0.4,
-                    buy_rsi_threshold: parseFloat(document.getElementById('buy_rsi_threshold').value),
-                    sell_rsi_threshold: parseFloat(document.getElementById('sell_rsi_threshold').value),
-                    buy_threshold_multiplier: currentSettings.buy_threshold_multiplier || 1.0,
-                    sell_threshold_multiplier: currentSettings.sell_threshold_multiplier || 1.3,
-                    use_volatility_filter: document.getElementById('use_volatility_filter').value === 'true',
-                    max_atr_multiplier: currentSettings.max_atr_multiplier || 2.2,
-                    use_volume_filter: currentSettings.use_volume_filter !== undefined ? currentSettings.use_volume_filter : true,
-                    min_volume_ratio: currentSettings.min_volume_ratio || 1.2,
-                    mode: document.getElementById('mode').value
-                };
-                
-                const response = await apiCall(`/settings/${currentSymbol}`, {
-                    method: 'POST',
-                    body: JSON.stringify(formData)
-                });
-                
-                showNotification(`Настройки для ${currentSymbol} сохранены успешно!`, 'success');
-                currentSettings = response;
-                
-            } catch (error) {
-                showNotification(`Ошибка сохранения настроек для ${currentSymbol}`, 'error');
-            } finally {
-                operationInProgress = false;
-                button.disabled = false;
-                button.innerHTML = originalText;
-            }
-        }
-
         // Load logs
         async function loadLogs() {
             try {
@@ -976,7 +944,7 @@
                 
                 console.log('🚀 Starting trading...');
                 await apiCall('/api/trading/start', { method: 'POST' });
-                showNotification('Торговля запущена!', 'success');
+                showNotification('Торговля запущена! (умное обновление активно)', 'success');
                 await loadTradingStatus();
                 console.log('✅ Trading started successfully');
             } catch (error) {
@@ -1067,7 +1035,7 @@
                 button.innerHTML = '⏳ Обновление...';
                 
                 console.log('🔃 Refreshing data...');
-                showNotification('Обновление данных...', 'info');
+                showNotification('Обновление данных (10-мин свечи, 2 дня)...', 'info');
                 
                 // Сначала обновляем рыночные данные
                 try {
