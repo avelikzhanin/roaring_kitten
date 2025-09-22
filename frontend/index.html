@@ -428,7 +428,7 @@
             try {
                 console.log(`🌐 API Call: ${endpoint}`, options);
                 
-                const response = await fetch(`${API_BASE}/api${endpoint}`, {
+                const response = await fetch(`${API_BASE}${endpoint}`, {
                     headers: {
                         'Content-Type': 'application/json',
                         ...options.headers
