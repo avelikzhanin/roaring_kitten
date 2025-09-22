@@ -442,34 +442,116 @@ async def get_current_signal(symbol: str):
     if symbol not in symbols:
         raise HTTPException(status_code=404, detail="Symbol not found")
     
-    if not strategy_manager or symbol not in latest_market_data:
-        raise HTTPException(status_code=503, detail="Market data not available")
+    if not strategy_manager:
+        raise HTTPException(status_code=503, detail="Strategy manager not initialized")
     
-    data = latest_market_data[symbol]
-    if data.get('candles', {}).empty or not data.get('current_price'):
-        raise HTTPException(status_code=503, detail="Insufficient market data")
-    
-    strategy = strategy_manager.strategies[symbol]
-    signal = strategy.generate_signal(data['candles'], data['current_price'])
-    
-    return {
-        "symbol": signal.symbol,
-        "direction": signal.direction,
-        "confidence": signal.confidence,
-        "entry_price": signal.entry_price,
-        "stop_loss": signal.stop_loss,
-        "take_profit": signal.take_profit,
-        "lot_size": signal.lot_size,
-        "indicators": {
-            "h_fin": signal.h_fin,
-            "rsi": signal.rsi,
-            "v_level": signal.v_level,
-            "v_trend": signal.v_trend,
-            "v_rsi": signal.v_rsi,
-            "v_total": signal.v_total
-        },
-        "timestamp": signal.timestamp.isoformat()
-    }
+    # Пытаемся получить свежие данные
+    try:
+        if symbol not in latest_market_data or not latest_market_data[symbol].get('current_price'):
+            print(f"🔄 Получение свежих данных для {symbol}...")
+            from moex_api import get_moex_data_async
+            fresh_data = await get_moex_data_async([symbol])
+            if symbol in fresh_data:
+                latest_market_data[symbol] = fresh_data[symbol]
+        
+        data = latest_market_data.get(symbol, {})
+        
+        # Проверяем наличие данных более гибко
+        candles = data.get('candles')
+        current_price = data.get('current_price')
+        
+        if current_price is None:
+            # Возвращаем пустой сигнал вместо ошибки
+            return {
+                "symbol": symbol,
+                "direction": "NONE",
+                "confidence": 0.0,
+                "entry_price": 0.0,
+                "stop_loss": 0.0,
+                "take_profit": 0.0,
+                "lot_size": 0.0,
+                "indicators": {
+                    "h_fin": 0.0,
+                    "rsi": 50.0,
+                    "v_level": 0.0,
+                    "v_trend": 0.0,
+                    "v_rsi": 0.0,
+                    "v_total": 0.0
+                },
+                "timestamp": datetime.now().isoformat(),
+                "status": "no_price_data"
+            }
+        
+        # Проверяем наличие свечей
+        if candles is None or (hasattr(candles, 'empty') and candles.empty) or len(candles) < 10:
+            # Возвращаем базовый сигнал только с ценой
+            return {
+                "symbol": symbol,
+                "direction": "NONE",
+                "confidence": 0.0,
+                "entry_price": current_price,
+                "stop_loss": current_price,
+                "take_profit": current_price,
+                "lot_size": 0.0,
+                "indicators": {
+                    "h_fin": 0.0,
+                    "rsi": 50.0,
+                    "v_level": 0.0,
+                    "v_trend": 0.0,
+                    "v_rsi": 0.0,
+                    "v_total": 0.0
+                },
+                "timestamp": datetime.now().isoformat(),
+                "status": "insufficient_candles"
+            }
+        
+        # Генерируем сигнал
+        strategy = strategy_manager.strategies[symbol]
+        signal = strategy.generate_signal(candles, current_price)
+        
+        return {
+            "symbol": signal.symbol,
+            "direction": signal.direction,
+            "confidence": signal.confidence,
+            "entry_price": signal.entry_price,
+            "stop_loss": signal.stop_loss,
+            "take_profit": signal.take_profit,
+            "lot_size": signal.lot_size,
+            "indicators": {
+                "h_fin": signal.h_fin,
+                "rsi": signal.rsi,
+                "v_level": signal.v_level,
+                "v_trend": signal.v_trend,
+                "v_rsi": signal.v_rsi,
+                "v_total": signal.v_total
+            },
+            "timestamp": signal.timestamp.isoformat(),
+            "status": "ok"
+        }
+        
+    except Exception as e:
+        print(f"❌ Ошибка генерации сигнала для {symbol}: {e}")
+        # Возвращаем безопасный fallback сигнал
+        return {
+            "symbol": symbol,
+            "direction": "NONE",
+            "confidence": 0.0,
+            "entry_price": 0.0,
+            "stop_loss": 0.0,
+            "take_profit": 0.0,
+            "lot_size": 0.0,
+            "indicators": {
+                "h_fin": 0.0,
+                "rsi": 50.0,
+                "v_level": 0.0,
+                "v_trend": 0.0,
+                "v_rsi": 0.0,
+                "v_total": 0.0
+            },
+            "timestamp": datetime.now().isoformat(),
+            "status": "error",
+            "error": str(e)
+        }
 
 @app.get("/api/levels/{symbol}")
 async def get_levels(symbol: str):
@@ -510,8 +592,53 @@ async def get_logs(limit: int = 100):
     finally:
         db.close()
 
-@app.get("/api/candles/{symbol}")
-async def get_candles(symbol: str, period: str = "60", days: int = 7):
+@app.post("/api/market-data/refresh")
+async def refresh_market_data():
+    """Принудительное обновление рыночных данных"""
+    global latest_market_data
+    
+    try:
+        print("🔄 Принудительное обновление рыночных данных...")
+        from moex_api import get_moex_data_async
+        fresh_data = await get_moex_data_async(symbols)
+        
+        if fresh_data:
+            latest_market_data = fresh_data
+            print(f"✅ Данные обновлены для {len(fresh_data)} символов")
+            
+            # Возвращаем статистику по обновлению
+            result = {
+                "status": "success",
+                "updated_symbols": [],
+                "failed_symbols": [],
+                "timestamp": datetime.now().isoformat()
+            }
+            
+            for symbol in symbols:
+                if symbol in fresh_data and fresh_data[symbol].get('current_price'):
+                    result["updated_symbols"].append({
+                        "symbol": symbol,
+                        "price": fresh_data[symbol]['current_price'],
+                        "candles_count": len(fresh_data[symbol].get('candles', []))
+                    })
+                else:
+                    result["failed_symbols"].append(symbol)
+            
+            return result
+        else:
+            return {
+                "status": "failed",
+                "message": "Не удалось получить данные MOEX",
+                "timestamp": datetime.now().isoformat()
+            }
+            
+    except Exception as e:
+        print(f"❌ Ошибка обновления данных: {e}")
+        return {
+            "status": "error",
+            "message": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
     """Получение свечей для графика"""
     if symbol not in symbols:
         raise HTTPException(status_code=404, detail="Symbol not found")
