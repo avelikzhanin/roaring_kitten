@@ -3,7 +3,7 @@ from telegram import Update
 from telegram.ext import Application
 
 from config import TELEGRAM_TOKEN
-from handlers.telegram_handlers import TelegramHandlers
+from telegram_handlers import TelegramHandlers
 
 # Настройка логирования
 logging.basicConfig(
