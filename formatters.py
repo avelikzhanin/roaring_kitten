@@ -1,5 +1,5 @@
 from models import StockData
-from config import ADX_STRONG_TREND_THRESHOLD
+from config import ADX_STRONG_TREND_THRESHOLD, SUPPORTED_STOCKS
 
 
 class MessageFormatter:
@@ -31,12 +31,35 @@ class MessageFormatter:
     @staticmethod
     def format_welcome_message() -> str:
         """Приветственное сообщение"""
-        return """👋 Привет! Я бот для мониторинга акций SBER.
+        return """👋 Привет! Я бот для мониторинга российских акций.
 
 📊 <b>Доступные команды:</b>
-/sber - Получить актуальные данные по Сбербанку
+/stocks - Список всех поддерживаемых акций
+/stock TICKER - Данные по любой акции (например: /stock SBER)
+
+<b>Быстрый доступ к популярным акциям:</b>
+/sber - Сбербанк 🏦
+/gazp - Газпром 🛢️
+/lkoh - ЛУКОЙЛ ⛽
+/vtbr - ВТБ 🏛️
+/head - Headhunter 🧑‍💼
 
 <i>Данные получаются напрямую с Московской биржи через MOEX API</i>"""
+    
+    @staticmethod
+    def format_stocks_list() -> str:
+        """Список всех поддерживаемых акций"""
+        message = "📈 <b>Поддерживаемые акции:</b>\n\n"
+        
+        for ticker, info in SUPPORTED_STOCKS.items():
+            message += f"{info['emoji']} <b>{ticker}</b> - {info['name']}\n"
+        
+        message += f"\n💡 <b>Всего акций:</b> {len(SUPPORTED_STOCKS)}"
+        message += "\n\n<b>Использование:</b>\n"
+        message += "• <code>/stock TICKER</code> - данные по любой акции\n"
+        message += f"• <code>/{list(SUPPORTED_STOCKS.keys())[0].lower()}</code> - быстрый доступ"
+        
+        return message
     
     @staticmethod
     def format_error_message(error_type: str = "general") -> str:
@@ -49,6 +72,8 @@ class MessageFormatter:
         return error_messages.get(error_type, error_messages["general"])
     
     @staticmethod
-    def format_loading_message() -> str:
+    def format_loading_message(ticker: str = None) -> str:
         """Сообщение загрузки"""
+        if ticker:
+            return f"⏳ Получаю данные {ticker} с MOEX..."
         return "⏳ Получаю данные с MOEX..."
