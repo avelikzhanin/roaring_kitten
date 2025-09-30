@@ -60,12 +60,9 @@ class StockService:
             
             technical = TechnicalData(
                 ema20=technical_data['ema20'],
-                adx_standard=technical_data['adx_standard'],
-                di_plus_standard=technical_data['di_plus_standard'],
-                di_minus_standard=technical_data['di_minus_standard'],
-                adx_pinescript=technical_data['adx_pinescript'],
-                di_plus_pinescript=technical_data['di_plus_pinescript'],
-                di_minus_pinescript=technical_data['di_minus_pinescript']
+                adx=technical_data['adx'],
+                di_plus=technical_data['di_plus'],
+                di_minus=technical_data['di_minus']
             )
             
             stock_data = StockData(
@@ -88,11 +85,11 @@ class StockService:
     def _log_candles_info(self, ticker: str, candles_data: list):
         """Логирование информации о свечах для диагностики"""
         if candles_data:
-            logger.info(f"🔍 ПОСЛЕДНИЕ 3 СВЕЧИ {ticker} (для диагностики индикаторов):")
+            logger.info(f"🔍 ПОСЛЕДНИЕ 3 СВЕЧИ {ticker}:")
             for i, candle in enumerate(candles_data[-3:]):
                 logger.info(f"   {i+1}. {candle['time']} | O:{candle['open']:.2f} H:{candle['high']:.2f} L:{candle['low']:.2f} C:{candle['close']:.2f}")
             
             first_time = candles_data[0]['time']
             last_time = candles_data[-1]['time']
-            logger.info(f"Диапазон времени (МСК): {first_time} → {last_time}")
+            logger.info(f"Диапазон: {first_time} → {last_time}")
             logger.info(f"Цена последней свечи: {candles_data[-1]['close']:.2f} ₽")
