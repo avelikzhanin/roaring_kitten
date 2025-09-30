@@ -2,7 +2,6 @@ import logging
 from typing import Dict, List, Any
 
 import pandas as pd
-import pandas_ta as ta
 
 from config import DEFAULT_ADX_PERIOD, DEFAULT_EMA_PERIOD
 
@@ -15,24 +14,13 @@ class TechnicalIndicators:
     @staticmethod
     def calculate_ema(df: pd.DataFrame, period: int = DEFAULT_EMA_PERIOD) -> pd.Series:
         """Расчет экспоненциальной скользящей средней"""
-        return ta.ema(df['close'], length=period)
+        return df['close'].ewm(span=period, adjust=False).mean()
     
     @staticmethod
-    def calculate_adx_standard(df: pd.DataFrame, period: int = DEFAULT_ADX_PERIOD) -> Dict[str, float]:
-        """Стандартный расчет ADX через pandas-ta с RMA сглаживанием"""
-        adx_data = ta.adx(df['high'], df['low'], df['close'], length=period, mamode='rma')
-        
-        return {
-            'adx': adx_data['ADX_14'].iloc[-1] if not adx_data['ADX_14'].empty else 0,
-            'di_plus': adx_data['DMP_14'].iloc[-1] if not adx_data['DMP_14'].empty else 0,
-            'di_minus': adx_data['DMN_14'].iloc[-1] if not adx_data['DMN_14'].empty else 0
-        }
-    
-    @staticmethod
-    def calculate_adx_pinescript(df: pd.DataFrame, period: int = DEFAULT_ADX_PERIOD) -> Dict[str, float]:
+    def calculate_adx(df: pd.DataFrame, period: int = DEFAULT_ADX_PERIOD) -> Dict[str, float]:
         """
-        Точная копия Pine Script кода TradingView:
-        ADX = sma(DX, len) - простая скользящая средняя!
+        Расчет ADX по алгоритму Pine Script:
+        ADX = sma(DX, len) - простая скользящая средняя
         """
         high = df['high'].values
         low = df['low'].values
@@ -44,13 +32,13 @@ class TechnicalIndicators:
         dm_minus = []
         
         for i in range(1, len(high)):
-            # True Range (точно как в Pine Script)
+            # True Range
             tr1 = high[i] - low[i]
             tr2 = abs(high[i] - close[i-1])
             tr3 = abs(low[i] - close[i-1])
             tr.append(max(tr1, tr2, tr3))
             
-            # Directional Movement (точно как в Pine Script)
+            # Directional Movement
             up_move = high[i] - high[i-1]
             down_move = low[i-1] - low[i]
             
@@ -60,17 +48,15 @@ class TechnicalIndicators:
             dm_plus.append(dm_p)
             dm_minus.append(dm_m)
         
-        # Wilder's Smoothing (точно как в Pine Script)
+        # Wilder's Smoothing
         def wilders_smoothing_exact(data, period):
             if not data:
                 return []
             
             smoothed = []
-            # Первое значение - простая средняя
             first_smooth = sum(data[:period]) / period if len(data) >= period else sum(data) / len(data)
             smoothed.append(first_smooth)
             
-            # Остальные по формуле: new = previous - (previous/period) + current
             start_idx = period if len(data) >= period else len(data)
             for i in range(start_idx, len(data)):
                 prev_smooth = smoothed[-1]
@@ -102,7 +88,7 @@ class TechnicalIndicators:
             else:
                 dx.append(0)
         
-        # ADX - ПРОСТАЯ СКОЛЬЗЯЩАЯ СРЕДНЯЯ (как в Pine Script!)
+        # ADX - простая скользящая средняя
         if len(dx) >= period:
             adx = sum(dx[-period:]) / period
         else:
@@ -127,23 +113,16 @@ class TechnicalIndicators:
         # Расчет EMA20
         df['ema20'] = cls.calculate_ema(df)
         
-        # Два варианта расчета ADX
-        adx_standard = cls.calculate_adx_standard(df)
-        adx_pinescript = cls.calculate_adx_pinescript(df)
+        # Расчет ADX
+        adx_data = cls.calculate_adx(df)
         
         last_row = df.iloc[-1]
         
-        # Логируем сравнение
-        logger.info("📊 СРАВНЕНИЕ ДВУХ ФОРМУЛ ADX:")
-        logger.info(f"   🔧 pandas-ta (RMA): ADX={adx_standard['adx']:.2f}, DI+={adx_standard['di_plus']:.2f}, DI-={adx_standard['di_minus']:.2f}")
-        logger.info(f"   📈 Pine Script: ADX={adx_pinescript['adx']:.2f}, DI+={adx_pinescript['di_plus']:.2f}, DI-={adx_pinescript['di_minus']:.2f}")
+        logger.info(f"📊 ADX: {adx_data['adx']:.2f}, DI+: {adx_data['di_plus']:.2f}, DI-: {adx_data['di_minus']:.2f}")
         
         return {
             'ema20': last_row['ema20'],
-            'adx_standard': adx_standard['adx'],
-            'di_plus_standard': adx_standard['di_plus'],
-            'di_minus_standard': adx_standard['di_minus'],
-            'adx_pinescript': adx_pinescript['adx'],
-            'di_plus_pinescript': adx_pinescript['di_plus'],
-            'di_minus_pinescript': adx_pinescript['di_minus']
+            'adx': adx_data['adx'],
+            'di_plus': adx_data['di_plus'],
+            'di_minus': adx_data['di_minus']
         }
