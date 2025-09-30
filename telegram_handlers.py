@@ -1,6 +1,6 @@
 import logging
-from telegram import Update
-from telegram.ext import ContextTypes, CommandHandler
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ContextTypes, CommandHandler, CallbackQueryHandler
 
 from stock_service import StockService
 from formatters import MessageFormatter
@@ -22,36 +22,35 @@ class TelegramHandlers:
         await update.message.reply_text(welcome_message, parse_mode='HTML')
     
     async def stocks_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Обработчик команды /stocks - список всех поддерживаемых акций"""
-        stocks_message = self.formatter.format_stocks_list()
-        await update.message.reply_text(stocks_message, parse_mode='HTML')
-    
-    async def stock_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Универсальная команда /stock TICKER"""
-        if not context.args:
-            await update.message.reply_text(
-                "❌ Укажите тикер акции.\n\nПример: <code>/stock SBER</code>\n\nДоступные тикеры: /stocks", 
-                parse_mode='HTML'
-            )
-            return
+        """Обработчик команды /stocks - показываем inline кнопки с акциями"""
+        keyboard = []
         
-        ticker = context.args[0].upper()
-        await self._get_stock_data(update, ticker)
+        # Создаем кнопки для каждой акции
+        for ticker, info in SUPPORTED_STOCKS.items():
+            button = InlineKeyboardButton(
+                text=f"{info['emoji']} {ticker} - {info['name']}",
+                callback_data=f"stock:{ticker}"
+            )
+            keyboard.append([button])
+        
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        message = self.formatter.format_stocks_selection()
+        await update.message.reply_text(message, reply_markup=reply_markup, parse_mode='HTML')
     
-    async def _get_stock_data(self, update: Update, ticker: str):
+    async def button_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработчик нажатий на inline кнопки"""
+        query = update.callback_query
+        await query.answer()
+        
+        # Парсим callback_data
+        if query.data.startswith("stock:"):
+            ticker = query.data.split(":")[1]
+            await self._get_stock_data(query, ticker)
+    
+    async def _get_stock_data(self, query, ticker: str):
         """Универсальный метод получения данных по акции"""
-        # Проверяем поддержку тикера
-        if ticker not in SUPPORTED_STOCKS:
-            supported_tickers = ', '.join(SUPPORTED_STOCKS.keys())
-            await update.message.reply_text(
-                f"❌ Тикер {ticker} не поддерживается.\n\n"
-                f"Доступные тикеры: {supported_tickers}\n\n"
-                f"Полный список: /stocks", 
-                parse_mode='HTML'
-            )
-            return
-        
-        loading_message = await update.message.reply_text(
+        loading_message = await query.edit_message_text(
             self.formatter.format_loading_message(ticker)
         )
         
@@ -59,46 +58,25 @@ class TelegramHandlers:
             stock_data = await self.stock_service.get_stock_data(ticker)
             
             if not stock_data:
-                await loading_message.edit_text(
+                await query.edit_message_text(
                     self.formatter.format_error_message("no_data")
                 )
                 return
             
             if not stock_data.is_valid():
-                await loading_message.edit_text(
+                await query.edit_message_text(
                     self.formatter.format_error_message("insufficient_data")
                 )
                 return
             
             message = self.formatter.format_stock_message(stock_data)
-            await loading_message.edit_text(message, parse_mode='HTML')
+            await query.edit_message_text(message, parse_mode='HTML')
             
         except Exception as e:
             logger.error(f"Error getting {ticker} data: {e}")
-            await loading_message.edit_text(
+            await query.edit_message_text(
                 self.formatter.format_error_message("general")
             )
-    
-    # Отдельные команды для каждой акции (для удобства)
-    async def sber_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Обработчик команды /sber"""
-        await self._get_stock_data(update, 'SBER')
-    
-    async def gazp_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Обработчик команды /gazp"""
-        await self._get_stock_data(update, 'GAZP')
-    
-    async def lkoh_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Обработчик команды /lkoh"""
-        await self._get_stock_data(update, 'LKOH')
-    
-    async def vtbr_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Обработчик команды /vtbr"""
-        await self._get_stock_data(update, 'VTBR')
-    
-    async def head_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Обработчик команды /head"""
-        await self._get_stock_data(update, 'HEAD')
     
     async def error_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработчик ошибок"""
@@ -109,11 +87,5 @@ class TelegramHandlers:
         return [
             CommandHandler("start", self.start_command),
             CommandHandler("stocks", self.stocks_command),
-            CommandHandler("stock", self.stock_command),
-            # Отдельные команды для каждой акции
-            CommandHandler("sber", self.sber_command),
-            CommandHandler("gazp", self.gazp_command),
-            CommandHandler("lkoh", self.lkoh_command),
-            CommandHandler("vtbr", self.vtbr_command),
-            CommandHandler("head", self.head_command),
+            CallbackQueryHandler(self.button_callback),
         ]
