@@ -15,16 +15,9 @@ class StockPrice:
 class TechnicalData:
     """Модель для технических индикаторов"""
     ema20: float
-    
-    # pandas-ta версия
-    adx_standard: float
-    di_plus_standard: float
-    di_minus_standard: float
-    
-    # Pine Script версия
-    adx_pinescript: float
-    di_plus_pinescript: float
-    di_minus_pinescript: float
+    adx: float
+    di_plus: float
+    di_minus: float
 
 
 @dataclass
@@ -46,10 +39,7 @@ class StockData:
         """Проверка на валидность данных"""
         return (
             not pd.isna(self.technical.ema20) and
-            not pd.isna(self.technical.adx_standard) and
-            not pd.isna(self.technical.adx_pinescript) and
-            not pd.isna(self.technical.di_plus_standard) and
-            not pd.isna(self.technical.di_plus_pinescript) and
-            not pd.isna(self.technical.di_minus_standard) and
-            not pd.isna(self.technical.di_minus_pinescript)
+            not pd.isna(self.technical.adx) and
+            not pd.isna(self.technical.di_plus) and
+            not pd.isna(self.technical.di_minus)
         )
