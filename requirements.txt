@@ -1,5 +1,4 @@
 python-telegram-bot>=20.0
-pandas-ta>=0.3.14b
 pandas>=2.0.0
 python-dotenv>=1.0.0
 httpx>=0.24.0
