@@ -34,22 +34,67 @@ class Database:
     async def _init_schema(self):
         """Инициализация схемы БД"""
         async with self.pool.acquire() as conn:
-            # ВРЕМЕННО: Удаляем старые таблицы для пересоздания
-            # После первого успешного запуска можно удалить эти строки
-            try:
-                await conn.execute("DROP TABLE IF EXISTS signal_states CASCADE")
-                await conn.execute("DROP TABLE IF EXISTS positions CASCADE")
-                await conn.execute("DROP TABLE IF EXISTS subscriptions CASCADE")
-                await conn.execute("DROP TABLE IF EXISTS users CASCADE")
-                logger.info("🗑️ Old tables dropped")
-            except Exception as e:
-                logger.warning(f"Could not drop tables: {e}")
-            
             # Создаем таблицы по порядку
             
             # 1. Таблица пользователей
             await conn.execute("""
                 CREATE TABLE IF NOT EXISTS users (
+                    user_id BIGINT PRIMARY KEY,
+                    username VARCHAR(255),
+                    first_name VARCHAR(255),
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            
+            # 2. Таблица подписок
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS subscriptions (
+                    id SERIAL PRIMARY KEY,
+                    user_id BIGINT NOT NULL,
+                    ticker VARCHAR(10) NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(user_id, ticker)
+                )
+            """)
+            
+            # 3. Таблица позиций
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS positions (
+                    id SERIAL PRIMARY KEY,
+                    user_id BIGINT NOT NULL,
+                    ticker VARCHAR(10) NOT NULL,
+                    entry_price DECIMAL(10, 2) NOT NULL,
+                    entry_time TIMESTAMP NOT NULL,
+                    entry_adx DECIMAL(5, 2),
+                    entry_di_plus DECIMAL(5, 2),
+                    exit_price DECIMAL(10, 2),
+                    exit_time TIMESTAMP,
+                    profit_percent DECIMAL(10, 2),
+                    is_open BOOLEAN DEFAULT TRUE,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            
+            # 4. Таблица состояний сигналов
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS signal_states (
+                    ticker VARCHAR(10) PRIMARY KEY,
+                    last_signal VARCHAR(10) NOT NULL,
+                    last_adx DECIMAL(5, 2),
+                    last_di_plus DECIMAL(5, 2),
+                    last_di_minus DECIMAL(5, 2),
+                    last_price DECIMAL(10, 2),
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            
+            # 5. Создаем индексы
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_subscriptions_user_id ON subscriptions(user_id)")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_subscriptions_ticker ON subscriptions(ticker)")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_positions_user_id ON positions(user_id)")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_positions_is_open ON positions(is_open)")
+            
+            logger.info("✅ Database schema initialized")
                     user_id BIGINT PRIMARY KEY,
                     username VARCHAR(255),
                     first_name VARCHAR(255),
