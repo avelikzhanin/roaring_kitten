@@ -50,9 +50,13 @@ class GPTAnalyst:
                 max_completion_tokens=GPT_MAX_TOKENS
             )
             
+            # Логируем структуру ответа для отладки
+            logger.info(f"🔍 Response structure: {response.model_dump_json()[:500]}")
+            
             # Проверяем что ответ содержит content
             if not response.choices or not response.choices[0].message.content:
-                logger.error(f"⚠️ GPT вернул пустой ответ для {stock_data.info.ticker}")
+                logger.error(f"⚠️ GPT вернул пустой content для {stock_data.info.ticker}")
+                logger.error(f"Response: {response.model_dump_json()}")
                 return None
             
             analysis = response.choices[0].message.content.strip()
