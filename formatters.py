@@ -54,9 +54,9 @@ class MessageFormatter:
         return message
     
     @staticmethod
-    def format_buy_signal_notification(signal: Signal, stock_name: str, stock_emoji: str) -> str:
+    def format_buy_signal_notification(signal: Signal, stock_name: str, stock_emoji: str, gpt_analysis: str = None) -> str:
         """Уведомление о сигнале на покупку"""
-        return f"""🔥 <b>СИГНАЛ НА ПОКУПКУ!</b>
+        message = f"""🔥 <b>СИГНАЛ НА ПОКУПКУ!</b>
 
 {stock_emoji} <b>{signal.ticker} - {stock_name}</b>
 
@@ -65,9 +65,15 @@ class MessageFormatter:
 📈 <b>Индикаторы:</b>
 • ADX: {signal.adx:.2f}
 • DI+: {signal.di_plus:.2f}
-• DI-: {signal.di_minus:.2f}
+• DI-: {signal.di_minus:.2f}"""
 
-✅ Позиция открыта! Ждём сигнала на продажу."""
+        # Добавляем GPT анализ если есть
+        if gpt_analysis:
+            message += f"\n\n🤖 <b>GPT АНАЛИЗ:</b>\n{gpt_analysis}"
+        
+        message += "\n\n✅ Позиция открыта! Ждём сигнала на продажу."
+        
+        return message
     
     @staticmethod
     def format_sell_signal_notification(
