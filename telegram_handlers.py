@@ -96,6 +96,26 @@ class TelegramHandlers:
         elif query.data.startswith("unsubscribe:"):
             ticker = query.data.split(":")[1]
             await self._handle_unsubscribe(query, user_id, ticker)
+        
+        elif query.data == "back_to_stocks":
+            await self._show_stocks_list(query)
+    
+    async def _show_stocks_list(self, query):
+        """Показать список акций"""
+        keyboard = []
+        
+        # Создаем кнопки для каждой акции
+        for ticker, info in SUPPORTED_STOCKS.items():
+            button = InlineKeyboardButton(
+                text=f"{info['emoji']} {ticker} - {info['name']}",
+                callback_data=f"stock:{ticker}"
+            )
+            keyboard.append([button])
+        
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        message = self.formatter.format_stocks_selection()
+        await query.edit_message_text(message, reply_markup=reply_markup, parse_mode='HTML')
     
     async def _show_stock_data(self, query, user_id: int, ticker: str):
         """Показать данные акции с кнопками подписки"""
