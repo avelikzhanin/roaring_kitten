@@ -10,11 +10,17 @@ TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 # PostgreSQL
 DATABASE_URL = os.getenv('DATABASE_URL')
 
+# OpenAI
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+
 if not TELEGRAM_TOKEN:
     raise ValueError("Missing TELEGRAM_TOKEN environment variable")
 
 if not DATABASE_URL:
     raise ValueError("Missing DATABASE_URL environment variable")
+
+if not OPENAI_API_KEY:
+    raise ValueError("Missing OPENAI_API_KEY environment variable")
 
 # MOEX API настройки
 MOEX_BASE_URL = "https://iss.moex.com/iss"
