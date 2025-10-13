@@ -25,7 +25,16 @@ class TelegramHandlers:
         await db.add_user(user.id, user.username, user.first_name)
         
         welcome_message = self.formatter.format_welcome_message()
-        await update.message.reply_text(welcome_message, parse_mode='HTML')
+        
+        # Создаем главное меню
+        keyboard = [
+            [InlineKeyboardButton("📊 Акции", callback_data="menu_stocks")],
+            [InlineKeyboardButton("🔔 Мои подписки", callback_data="menu_subscriptions")],
+            [InlineKeyboardButton("💼 Мои позиции", callback_data="menu_positions")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await update.message.reply_text(welcome_message, parse_mode='HTML', reply_markup=reply_markup)
     
     async def stocks_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработчик команды /stocks - показываем inline кнопки с акциями"""
@@ -39,6 +48,9 @@ class TelegramHandlers:
             )
             keyboard.append([button])
         
+        # Добавляем кнопку "Главное меню"
+        keyboard.append([InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")])
+        
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         message = self.formatter.format_stocks_selection()
@@ -51,7 +63,11 @@ class TelegramHandlers:
         subscriptions = await db.get_user_subscriptions(user_id)
         message = self.formatter.format_subscriptions_list(subscriptions)
         
-        await update.message.reply_text(message, parse_mode='HTML')
+        # Добавляем кнопку "Главное меню"
+        keyboard = [[InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await update.message.reply_text(message, parse_mode='HTML', reply_markup=reply_markup)
     
     async def positions_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработчик команды /positions - показать позиции"""
@@ -75,7 +91,11 @@ class TelegramHandlers:
             current_prices
         )
         
-        await update.message.reply_text(message, parse_mode='HTML')
+        # Добавляем кнопку "Главное меню"
+        keyboard = [[InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await update.message.reply_text(message, parse_mode='HTML', reply_markup=reply_markup)
     
     async def button_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработчик нажатий на inline кнопки"""
@@ -99,6 +119,31 @@ class TelegramHandlers:
         
         elif query.data == "back_to_stocks":
             await self._show_stocks_list(query)
+        
+        elif query.data == "main_menu":
+            await self._show_main_menu(query)
+        
+        elif query.data == "menu_stocks":
+            await self._show_stocks_list(query)
+        
+        elif query.data == "menu_subscriptions":
+            await self._show_subscriptions(query, user_id)
+        
+        elif query.data == "menu_positions":
+            await self._show_positions(query, user_id)
+    
+    async def _show_main_menu(self, query):
+        """Показать главное меню"""
+        welcome_message = self.formatter.format_welcome_message()
+        
+        keyboard = [
+            [InlineKeyboardButton("📊 Акции", callback_data="menu_stocks")],
+            [InlineKeyboardButton("🔔 Мои подписки", callback_data="menu_subscriptions")],
+            [InlineKeyboardButton("💼 Мои позиции", callback_data="menu_positions")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await query.edit_message_text(welcome_message, parse_mode='HTML', reply_markup=reply_markup)
     
     async def _show_stocks_list(self, query):
         """Показать список акций"""
@@ -112,10 +157,48 @@ class TelegramHandlers:
             )
             keyboard.append([button])
         
+        # Добавляем кнопку "Главное меню"
+        keyboard.append([InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")])
+        
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         message = self.formatter.format_stocks_selection()
         await query.edit_message_text(message, reply_markup=reply_markup, parse_mode='HTML')
+    
+    async def _show_subscriptions(self, query, user_id: int):
+        """Показать подписки"""
+        subscriptions = await db.get_user_subscriptions(user_id)
+        message = self.formatter.format_subscriptions_list(subscriptions)
+        
+        keyboard = [[InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await query.edit_message_text(message, parse_mode='HTML', reply_markup=reply_markup)
+    
+    async def _show_positions(self, query, user_id: int):
+        """Показать позиции"""
+        open_positions = await db.get_open_positions(user_id)
+        closed_positions = await db.get_closed_positions(user_id, limit=5)
+        
+        # Получаем текущие цены для открытых позиций
+        current_prices = {}
+        if open_positions:
+            for pos in open_positions:
+                ticker = pos['ticker']
+                stock_data = await self.stock_service.get_stock_data(ticker)
+                if stock_data:
+                    current_prices[ticker] = stock_data.price.current_price
+        
+        message = self.formatter.format_positions_list(
+            open_positions, 
+            closed_positions,
+            current_prices
+        )
+        
+        keyboard = [[InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await query.edit_message_text(message, parse_mode='HTML', reply_markup=reply_markup)
     
     async def _show_stock_data(self, query, user_id: int, ticker: str):
         """Показать данные акции с кнопками подписки"""
