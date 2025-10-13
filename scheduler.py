@@ -8,6 +8,7 @@ from signals import SignalDetector
 from formatters import MessageFormatter
 from models import SignalType
 from config import SUPPORTED_STOCKS
+from gpt_analyst import gpt_analyst
 
 logger = logging.getLogger(__name__)
 
