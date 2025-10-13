@@ -50,9 +50,20 @@ class GPTAnalyst:
                 max_completion_tokens=GPT_MAX_TOKENS
             )
             
+            # Проверяем что ответ содержит content
+            if not response.choices or not response.choices[0].message.content:
+                logger.error(f"⚠️ GPT вернул пустой ответ для {stock_data.info.ticker}")
+                return None
+            
             analysis = response.choices[0].message.content.strip()
             
             logger.info(f"✅ GPT анализ получен для {stock_data.info.ticker}")
+            logger.info(f"📝 Длина ответа: {len(analysis)} символов")
+            logger.info(f"📄 Текст ответа: {analysis[:200]}...")  # Первые 200 символов
+            
+            if not analysis:
+                logger.warning(f"⚠️ GPT вернул пустой ответ после strip для {stock_data.info.ticker}")
+                return None
             
             return analysis
             
