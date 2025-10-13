@@ -39,6 +39,11 @@ DI_PLUS_THRESHOLD = 25
 # Мониторинг
 MONITOR_INTERVAL_MINUTES = 20
 
+# OpenAI GPT настройки
+GPT_MODEL = "gpt-5-mini"
+GPT_MAX_TOKENS = 500
+GPT_TEMPERATURE = 0.7
+
 # Поддерживаемые акции
 SUPPORTED_STOCKS = {
     'SBER': {
