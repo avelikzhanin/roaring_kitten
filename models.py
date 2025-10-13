@@ -1,6 +1,16 @@
 from dataclasses import dataclass
 from typing import Optional
+from datetime import datetime
+from enum import Enum
+
 import pandas as pd
+
+
+class SignalType(Enum):
+    """Типы сигналов"""
+    BUY = "BUY"
+    SELL = "SELL"
+    NONE = "NONE"
 
 
 @dataclass
@@ -43,3 +53,45 @@ class StockData:
             not pd.isna(self.technical.di_plus) and
             not pd.isna(self.technical.di_minus)
         )
+
+
+@dataclass
+class Signal:
+    """Модель сигнала"""
+    ticker: str
+    signal_type: SignalType
+    adx: float
+    di_plus: float
+    di_minus: float
+    price: float
+    timestamp: datetime
+    
+    def is_buy_signal(self) -> bool:
+        """Проверка на сигнал покупки"""
+        return self.signal_type == SignalType.BUY
+    
+    def is_sell_signal(self) -> bool:
+        """Проверка на сигнал продажи"""
+        return self.signal_type == SignalType.SELL
+
+
+@dataclass
+class Position:
+    """Модель позиции"""
+    id: int
+    user_id: int
+    ticker: str
+    entry_price: float
+    entry_time: datetime
+    entry_adx: float
+    entry_di_plus: float
+    exit_price: Optional[float] = None
+    exit_time: Optional[datetime] = None
+    profit_percent: Optional[float] = None
+    is_open: bool = True
+    
+    def calculate_profit_percent(self, current_price: float) -> float:
+        """Расчет текущей прибыли в процентах"""
+        if self.is_open:
+            return ((current_price - self.entry_price) / self.entry_price) * 100
+        return self.profit_percent or 0.0
