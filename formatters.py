@@ -14,27 +14,41 @@ class MessageFormatter:
         
         adx_strength = "Сильный тренд" if data.technical.adx > ADX_THRESHOLD else "Слабый тренд"
         
-        # Определяем текущий сигнал
-        signal_emoji = ""
-        signal_text = ""
-        if data.technical.adx > ADX_THRESHOLD and data.technical.di_plus > ADX_THRESHOLD:
-            signal_emoji = "🟢"
-            signal_text = "BUY сигнал"
-        elif data.technical.adx <= ADX_THRESHOLD or data.technical.di_plus <= ADX_THRESHOLD:
-            signal_emoji = "🔴"
-            signal_text = "SELL сигнал"
+        # Определяем направление тренда по EMA
+        price_vs_ema = data.price.current_price - data.technical.ema20
+        price_vs_ema_percent = (price_vs_ema / data.technical.ema20) * 100
         
-        subscription_status = "✅ Подписка активна" if is_subscribed else ""
+        if data.price.current_price > data.technical.ema20:
+            trend_emoji = "📈"
+            trend_text = f"Цена выше EMA20 ({price_vs_ema_percent:+.2f}%)"
+        else:
+            trend_emoji = "📉"
+            trend_text = f"Цена ниже EMA20 ({price_vs_ema_percent:+.2f}%)"
+        
+        # Проверяем условия для входа
+        buy_conditions_met = data.technical.adx > ADX_THRESHOLD and data.technical.di_plus > ADX_THRESHOLD
+        
+        if buy_conditions_met:
+            signal_emoji = "🔥"
+            signal_text = "✅ Условия для входа выполнены!\nПри подписке получите уведомление"
+        else:
+            signal_emoji = "❌"
+            signal_text = f"❌ Условия для входа не выполнены\n(Нужно: ADX > {ADX_THRESHOLD} AND DI+ > {ADX_THRESHOLD})"
+        
+        subscription_status = "⭐ Подписка активна" if is_subscribed else ""
         
         message = f"""{data.info.emoji} <b>{data.info.ticker} - {data.info.name}</b>
 
 💰 <b>Цена:</b> {data.price.current_price:.2f} ₽
 📊 <b>EMA20:</b> {data.technical.ema20:.2f} ₽
+{trend_emoji} {trend_text}
 
-📈 <b>ADX:</b> {data.technical.adx:.2f} ({adx_strength})
-<b>DI+:</b> {data.technical.di_plus:.2f} | <b>DI-:</b> {data.technical.di_minus:.2f}
+📈 <b>Индикаторы:</b>
+• ADX: {data.technical.adx:.2f} ({adx_strength})
+• DI+: {data.technical.di_plus:.2f} | DI-: {data.technical.di_minus:.2f}
 
-{signal_emoji} <b>{signal_text}</b>
+{signal_text}
+
 {subscription_status}"""
         
         return message
@@ -90,19 +104,19 @@ class MessageFormatter:
 
 💡 <b>Как это работает:</b>
 • Выбери акции для анализа
-• Подпишись на уведомления о сигналах
-• Получай BUY/SELL сигналы автоматически
+• Подпишись на уведомления (⭐)
+• Получай автоматические сигналы на вход/выход
 • Отслеживай прибыль по сделкам
 
-🟢 <b>BUY сигнал:</b> ADX > 25 AND DI+ > 25
-🔴 <b>SELL сигнал:</b> ADX ≤ 25 OR DI+ ≤ 25
+🔥 <b>Сигнал на вход:</b> ADX > 25 AND DI+ > 25
+📉 <b>Сигнал на выход:</b> ADX ≤ 25 OR DI+ ≤ 25
 
 Выбери действие из меню ниже 👇"""
     
     @staticmethod
     def format_stocks_selection() -> str:
         """Сообщение для выбора акции"""
-        return "📈 Выберите акцию для анализа:\n\n🔔 - подписка активна"
+        return "📈 Выберите акцию для анализа:\n\n⭐ - подписка активна | 🔥 - готова к входу"
     
     @staticmethod
     def format_positions_list(
