@@ -102,7 +102,7 @@ class MessageFormatter:
     @staticmethod
     def format_stocks_selection() -> str:
         """Сообщение для выбора акции"""
-        return "📈 Выберите акцию для анализа:"
+        return "📈 Выберите акцию для анализа:\n\n🔔 - подписка активна"
     
     @staticmethod
     def format_subscriptions_list(subscriptions: List[str]) -> str:
