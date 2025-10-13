@@ -6,6 +6,7 @@ from stock_service import StockService
 from formatters import MessageFormatter
 from config import SUPPORTED_STOCKS
 from database import db
+from gpt_analyst import gpt_analyst
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +107,10 @@ class TelegramHandlers:
         elif query.data.startswith("unsubscribe:"):
             ticker = query.data.split(":")[1]
             await self._handle_unsubscribe(query, user_id, ticker)
+        
+        elif query.data.startswith("gpt_analyze:"):
+            ticker = query.data.split(":")[1]
+            await self._handle_gpt_analysis(query, user_id, ticker)
         
         elif query.data == "back_to_stocks":
             await self._show_stocks_list(query, user_id)
@@ -231,6 +236,13 @@ class TelegramHandlers:
             
             keyboard.append([
                 InlineKeyboardButton(
+                    text="🤖 GPT анализ",
+                    callback_data=f"gpt_analyze:{ticker}"
+                )
+            ])
+            
+            keyboard.append([
+                InlineKeyboardButton(
                     text="◀️ Назад",
                     callback_data="back_to_stocks"
                 )
@@ -285,6 +297,57 @@ class TelegramHandlers:
         
         # Обновляем информацию о акции
         await self._show_stock_data(query, user_id, ticker)
+    
+    async def _handle_gpt_analysis(self, query, user_id: int, ticker: str):
+        """Обработка запроса GPT анализа"""
+        await query.edit_message_text("🤖 GPT анализирует свечи...")
+        
+        try:
+            # Получаем данные акции
+            stock_data = await self.stock_service.get_stock_data(ticker)
+            
+            if not stock_data or not stock_data.is_valid():
+                await query.edit_message_text(
+                    self.formatter.format_error_message("no_data")
+                )
+                return
+            
+            # Получаем свечи для анализа
+            candles_data = await self.stock_service.moex_client.get_historical_candles(ticker)
+            
+            if not candles_data:
+                await query.edit_message_text(
+                    self.formatter.format_error_message("no_data")
+                )
+                return
+            
+            # Запрашиваем GPT анализ
+            gpt_analysis = await gpt_analyst.analyze_stock(stock_data, candles_data)
+            
+            if not gpt_analysis:
+                await query.edit_message_text(
+                    "❌ Не удалось получить анализ от GPT. Попробуйте позже."
+                )
+                return
+            
+            # Формируем и отправляем сообщение
+            message = self.formatter.format_gpt_analysis_message(stock_data, gpt_analysis)
+            
+            # Кнопка назад
+            keyboard = [[InlineKeyboardButton("◀️ Назад к акции", callback_data=f"stock:{ticker}")]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await query.edit_message_text(
+                message,
+                parse_mode='HTML',
+                reply_markup=reply_markup
+            )
+            
+        except Exception as e:
+            logger.error(f"Error in GPT analysis for {ticker}: {e}")
+            await query.edit_message_text(
+                "❌ Произошла ошибка при анализе. Попробуйте позже."
+            )
     
     async def error_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработчик ошибок"""
