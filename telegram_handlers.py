@@ -40,12 +40,25 @@ class TelegramHandlers:
         user_id = update.effective_user.id
         keyboard = []
         
-        # Создаем кнопки для каждой акции с иконкой подписки
+        # Создаем кнопки для каждой акции с иконками
         for ticker, info in SUPPORTED_STOCKS.items():
             is_subscribed = await db.is_subscribed(user_id, ticker)
-            icon = "🔔 " if is_subscribed else ""
+            
+            # Получаем данные для проверки условий входа
+            stock_data = await self.stock_service.get_stock_data(ticker)
+            buy_ready = False
+            if stock_data and stock_data.is_valid():
+                buy_ready = stock_data.technical.adx > 25 and stock_data.technical.di_plus > 25
+            
+            # Формируем иконки
+            icons = ""
+            if is_subscribed:
+                icons += "⭐ "
+            if buy_ready:
+                icons += "🔥 "
+            
             button = InlineKeyboardButton(
-                text=f"{icon}{info['emoji']} {ticker} - {info['name']}",
+                text=f"{icons}{info['emoji']} {ticker} - {info['name']}",
                 callback_data=f"stock:{ticker}"
             )
             keyboard.append([button])
@@ -134,12 +147,25 @@ class TelegramHandlers:
         """Показать список акций"""
         keyboard = []
         
-        # Создаем кнопки для каждой акции с иконкой подписки
+        # Создаем кнопки для каждой акции с иконками
         for ticker, info in SUPPORTED_STOCKS.items():
             is_subscribed = await db.is_subscribed(user_id, ticker)
-            icon = "🔔 " if is_subscribed else ""
+            
+            # Получаем данные для проверки условий входа
+            stock_data = await self.stock_service.get_stock_data(ticker)
+            buy_ready = False
+            if stock_data and stock_data.is_valid():
+                buy_ready = stock_data.technical.adx > 25 and stock_data.technical.di_plus > 25
+            
+            # Формируем иконки
+            icons = ""
+            if is_subscribed:
+                icons += "⭐ "
+            if buy_ready:
+                icons += "🔥 "
+            
             button = InlineKeyboardButton(
-                text=f"{icon}{info['emoji']} {ticker} - {info['name']}",
+                text=f"{icons}{info['emoji']} {ticker} - {info['name']}",
                 callback_data=f"stock:{ticker}"
             )
             keyboard.append([button])
@@ -208,14 +234,14 @@ class TelegramHandlers:
             if is_subscribed:
                 keyboard.append([
                     InlineKeyboardButton(
-                        text="🔕 Отписаться",
+                        text="✖️ Отписаться",
                         callback_data=f"unsubscribe:{ticker}"
                     )
                 ])
             else:
                 keyboard.append([
                     InlineKeyboardButton(
-                        text="🔔 Подписаться",
+                        text="⭐ Подписаться",
                         callback_data=f"subscribe:{ticker}"
                     )
                 ])
@@ -257,7 +283,7 @@ class TelegramHandlers:
         name = stock_info.get('name', ticker)
         
         if success:
-            message = f"✅ Вы подписались на {emoji} {ticker} - {name}\n\nВы будете получать уведомления о сигналах!"
+            message = f"⭐ Вы подписались на {emoji} {ticker} - {name}\n\nВы будете получать уведомления о сигналах!"
         else:
             message = "ℹ️ Вы уже подписаны на эту акцию."
         
@@ -275,7 +301,7 @@ class TelegramHandlers:
         name = stock_info.get('name', ticker)
         
         if success:
-            message = f"🔕 Вы отписались от {emoji} {ticker} - {name}"
+            message = f"✖️ Вы отписались от {emoji} {ticker} - {name}"
         else:
             message = "ℹ️ Вы не подписаны на эту акцию."
         
