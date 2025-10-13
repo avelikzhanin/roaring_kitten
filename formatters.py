@@ -105,24 +105,6 @@ class MessageFormatter:
         return "📈 Выберите акцию для анализа:\n\n🔔 - подписка активна"
     
     @staticmethod
-    def format_subscriptions_list(subscriptions: List[str]) -> str:
-        """Список подписок пользователя"""
-        if not subscriptions:
-            return """📭 У вас нет активных подписок.
-
-Используйте /stocks для подписки на акции."""
-        
-        message = "🔔 <b>Ваши подписки:</b>\n\n"
-        for ticker in subscriptions:
-            stock_info = SUPPORTED_STOCKS.get(ticker, {})
-            emoji = stock_info.get('emoji', '📊')
-            name = stock_info.get('name', ticker)
-            message += f"{emoji} <b>{ticker}</b> - {name}\n"
-        
-        message += "\n💡 Нажмите на акцию в /stocks чтобы отписаться"
-        return message
-    
-    @staticmethod
     def format_positions_list(
         open_positions: List[Dict[str, Any]], 
         closed_positions: List[Dict[str, Any]],
@@ -131,9 +113,7 @@ class MessageFormatter:
         """Список позиций пользователя"""
         
         if not open_positions and not closed_positions:
-            return """📊 У вас нет позиций.
-
-Подпишитесь на акции через /stocks и получайте сигналы для открытия позиций!"""
+            return "📊 У вас нет позиций."
         
         message = ""
         
@@ -188,30 +168,12 @@ class MessageFormatter:
         return message
     
     @staticmethod
-    def format_subscription_added(ticker: str) -> str:
-        """Сообщение о добавлении подписки"""
-        stock_info = SUPPORTED_STOCKS.get(ticker, {})
-        emoji = stock_info.get('emoji', '📊')
-        name = stock_info.get('name', ticker)
-        return f"✅ Вы подписались на {emoji} <b>{ticker} - {name}</b>\n\nВы будете получать уведомления о сигналах!"
-    
-    @staticmethod
-    def format_subscription_removed(ticker: str) -> str:
-        """Сообщение об удалении подписки"""
-        stock_info = SUPPORTED_STOCKS.get(ticker, {})
-        emoji = stock_info.get('emoji', '📊')
-        name = stock_info.get('name', ticker)
-        return f"🔕 Вы отписались от {emoji} <b>{ticker} - {name}</b>"
-    
-    @staticmethod
     def format_error_message(error_type: str = "general") -> str:
         """Сообщения об ошибках"""
         error_messages = {
             "no_data": "❌ Не удалось получить данные. Попробуйте позже.",
             "insufficient_data": "❌ Недостаточно данных для расчета индикаторов. Попробуйте позже.",
-            "general": "❌ Произошла ошибка при получении данных.",
-            "already_subscribed": "ℹ️ Вы уже подписаны на эту акцию.",
-            "not_subscribed": "ℹ️ Вы не подписаны на эту акцию."
+            "general": "❌ Произошла ошибка при получении данных."
         }
         return error_messages.get(error_type, error_messages["general"])
     
