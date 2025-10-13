@@ -7,8 +7,14 @@ load_dotenv()
 # Telegram
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 
+# PostgreSQL
+DATABASE_URL = os.getenv('DATABASE_URL')
+
 if not TELEGRAM_TOKEN:
     raise ValueError("Missing TELEGRAM_TOKEN environment variable")
+
+if not DATABASE_URL:
+    raise ValueError("Missing DATABASE_URL environment variable")
 
 # MOEX API настройки
 MOEX_BASE_URL = "https://iss.moex.com/iss"
@@ -21,7 +27,11 @@ HISTORY_DAYS = 10
 MAX_CANDLES = 50
 
 # Пороговые значения для сигналов
-ADX_STRONG_TREND_THRESHOLD = 25
+ADX_THRESHOLD = 25
+DI_PLUS_THRESHOLD = 25
+
+# Мониторинг
+MONITOR_INTERVAL_MINUTES = 20
 
 # Поддерживаемые акции
 SUPPORTED_STOCKS = {
