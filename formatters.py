@@ -204,6 +204,10 @@ class MessageFormatter:
     @staticmethod
     def format_gpt_analysis_message(stock_data: StockData, gpt_analysis: str) -> str:
         """Форматирование сообщения с GPT анализом"""
+        # Экранируем HTML спецсимволы в GPT ответе
+        import html
+        gpt_analysis_escaped = html.escape(gpt_analysis)
+        
         return f"""🤖 <b>GPT АНАЛИЗ</b>
 
 {stock_data.info.emoji} <b>{stock_data.info.ticker} - {stock_data.info.name}</b>
@@ -218,4 +222,4 @@ class MessageFormatter:
 
 ━━━━━━━━━━━━━━━━
 
-{gpt_analysis}"""
+{gpt_analysis_escaped}"""
