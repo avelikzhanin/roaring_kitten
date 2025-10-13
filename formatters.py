@@ -200,3 +200,22 @@ class MessageFormatter:
         if ticker:
             return f"⏳ Получаю данные {ticker}..."
         return "⏳ Получаю данные..."
+    
+    @staticmethod
+    def format_gpt_analysis_message(stock_data: StockData, gpt_analysis: str) -> str:
+        """Форматирование сообщения с GPT анализом"""
+        return f"""🤖 <b>GPT АНАЛИЗ</b>
+
+{stock_data.info.emoji} <b>{stock_data.info.ticker} - {stock_data.info.name}</b>
+
+💰 <b>Цена:</b> {stock_data.price.current_price:.2f} ₽
+📊 <b>EMA20:</b> {stock_data.technical.ema20:.2f} ₽
+
+📈 <b>Индикаторы:</b>
+• ADX: {stock_data.technical.adx:.2f}
+• DI+: {stock_data.technical.di_plus:.2f}
+• DI-: {stock_data.technical.di_minus:.2f}
+
+━━━━━━━━━━━━━━━━
+
+{gpt_analysis}"""
