@@ -47,7 +47,7 @@ class GPTAnalyst:
                         "content": prompt
                     }
                 ],
-                max_tokens=GPT_MAX_TOKENS,
+                max_completion_tokens=GPT_MAX_TOKENS,
                 temperature=GPT_TEMPERATURE
             )
             
