@@ -28,9 +28,8 @@ class TelegramHandlers:
         
         # Создаем главное меню
         keyboard = [
-            [InlineKeyboardButton("📊 Акции", callback_data="menu_stocks")],
-            [InlineKeyboardButton("🔔 Мои подписки", callback_data="menu_subscriptions")],
-            [InlineKeyboardButton("💼 Мои позиции", callback_data="menu_positions")]
+            [InlineKeyboardButton("📊 Получить сигнал", callback_data="menu_stocks")],
+            [InlineKeyboardButton("💼 Открытые позиции", callback_data="menu_positions")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
@@ -38,12 +37,15 @@ class TelegramHandlers:
     
     async def stocks_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработчик команды /stocks - показываем inline кнопки с акциями"""
+        user_id = update.effective_user.id
         keyboard = []
         
-        # Создаем кнопки для каждой акции
+        # Создаем кнопки для каждой акции с иконкой подписки
         for ticker, info in SUPPORTED_STOCKS.items():
+            is_subscribed = await db.is_subscribed(user_id, ticker)
+            icon = "🔔 " if is_subscribed else ""
             button = InlineKeyboardButton(
-                text=f"{info['emoji']} {ticker} - {info['name']}",
+                text=f"{icon}{info['emoji']} {ticker} - {info['name']}",
                 callback_data=f"stock:{ticker}"
             )
             keyboard.append([button])
@@ -55,19 +57,6 @@ class TelegramHandlers:
         
         message = self.formatter.format_stocks_selection()
         await update.message.reply_text(message, reply_markup=reply_markup, parse_mode='HTML')
-    
-    async def subscriptions_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Обработчик команды /subscriptions - показать подписки"""
-        user_id = update.effective_user.id
-        
-        subscriptions = await db.get_user_subscriptions(user_id)
-        message = self.formatter.format_subscriptions_list(subscriptions)
-        
-        # Добавляем кнопку "Главное меню"
-        keyboard = [[InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        await update.message.reply_text(message, parse_mode='HTML', reply_markup=reply_markup)
     
     async def positions_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработчик команды /positions - показать позиции"""
@@ -118,16 +107,13 @@ class TelegramHandlers:
             await self._handle_unsubscribe(query, user_id, ticker)
         
         elif query.data == "back_to_stocks":
-            await self._show_stocks_list(query)
+            await self._show_stocks_list(query, user_id)
         
         elif query.data == "main_menu":
             await self._show_main_menu(query)
         
         elif query.data == "menu_stocks":
-            await self._show_stocks_list(query)
-        
-        elif query.data == "menu_subscriptions":
-            await self._show_subscriptions(query, user_id)
+            await self._show_stocks_list(query, user_id)
         
         elif query.data == "menu_positions":
             await self._show_positions(query, user_id)
@@ -137,22 +123,23 @@ class TelegramHandlers:
         welcome_message = self.formatter.format_welcome_message()
         
         keyboard = [
-            [InlineKeyboardButton("📊 Акции", callback_data="menu_stocks")],
-            [InlineKeyboardButton("🔔 Мои подписки", callback_data="menu_subscriptions")],
-            [InlineKeyboardButton("💼 Мои позиции", callback_data="menu_positions")]
+            [InlineKeyboardButton("📊 Получить сигнал", callback_data="menu_stocks")],
+            [InlineKeyboardButton("💼 Открытые позиции", callback_data="menu_positions")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         await query.edit_message_text(welcome_message, parse_mode='HTML', reply_markup=reply_markup)
     
-    async def _show_stocks_list(self, query):
+    async def _show_stocks_list(self, query, user_id: int):
         """Показать список акций"""
         keyboard = []
         
-        # Создаем кнопки для каждой акции
+        # Создаем кнопки для каждой акции с иконкой подписки
         for ticker, info in SUPPORTED_STOCKS.items():
+            is_subscribed = await db.is_subscribed(user_id, ticker)
+            icon = "🔔 " if is_subscribed else ""
             button = InlineKeyboardButton(
-                text=f"{info['emoji']} {ticker} - {info['name']}",
+                text=f"{icon}{info['emoji']} {ticker} - {info['name']}",
                 callback_data=f"stock:{ticker}"
             )
             keyboard.append([button])
@@ -164,16 +151,6 @@ class TelegramHandlers:
         
         message = self.formatter.format_stocks_selection()
         await query.edit_message_text(message, reply_markup=reply_markup, parse_mode='HTML')
-    
-    async def _show_subscriptions(self, query, user_id: int):
-        """Показать подписки"""
-        subscriptions = await db.get_user_subscriptions(user_id)
-        message = self.formatter.format_subscriptions_list(subscriptions)
-        
-        keyboard = [[InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        await query.edit_message_text(message, parse_mode='HTML', reply_markup=reply_markup)
     
     async def _show_positions(self, query, user_id: int):
         """Показать позиции"""
@@ -275,10 +252,14 @@ class TelegramHandlers:
         """Обработка подписки"""
         success = await db.add_subscription(user_id, ticker)
         
+        stock_info = SUPPORTED_STOCKS.get(ticker, {})
+        emoji = stock_info.get('emoji', '📊')
+        name = stock_info.get('name', ticker)
+        
         if success:
-            message = self.formatter.format_subscription_added(ticker)
+            message = f"✅ Вы подписались на {emoji} {ticker} - {name}\n\nВы будете получать уведомления о сигналах!"
         else:
-            message = self.formatter.format_error_message("already_subscribed")
+            message = "ℹ️ Вы уже подписаны на эту акцию."
         
         await query.answer(message, show_alert=True)
         
@@ -289,10 +270,14 @@ class TelegramHandlers:
         """Обработка отписки"""
         success = await db.remove_subscription(user_id, ticker)
         
+        stock_info = SUPPORTED_STOCKS.get(ticker, {})
+        emoji = stock_info.get('emoji', '📊')
+        name = stock_info.get('name', ticker)
+        
         if success:
-            message = self.formatter.format_subscription_removed(ticker)
+            message = f"🔕 Вы отписались от {emoji} {ticker} - {name}"
         else:
-            message = self.formatter.format_error_message("not_subscribed")
+            message = "ℹ️ Вы не подписаны на эту акцию."
         
         await query.answer(message, show_alert=True)
         
@@ -308,7 +293,6 @@ class TelegramHandlers:
         return [
             CommandHandler("start", self.start_command),
             CommandHandler("stocks", self.stocks_command),
-            CommandHandler("subscriptions", self.subscriptions_command),
             CommandHandler("positions", self.positions_command),
             CallbackQueryHandler(self.button_callback),
         ]
