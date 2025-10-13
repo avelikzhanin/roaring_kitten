@@ -47,7 +47,8 @@ class GPTAnalyst:
                         "content": prompt
                     }
                 ],
-                max_completion_tokens=GPT_MAX_TOKENS
+                max_completion_tokens=GPT_MAX_TOKENS,
+                reasoning_effort="minimal"  # Минимальное reasoning для экономии токенов
             )
             
             # Логируем структуру ответа для отладки
