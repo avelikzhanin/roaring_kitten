@@ -47,8 +47,7 @@ class GPTAnalyst:
                         "content": prompt
                     }
                 ],
-                max_completion_tokens=GPT_MAX_TOKENS,
-                temperature=GPT_TEMPERATURE
+                max_completion_tokens=GPT_MAX_TOKENS
             )
             
             analysis = response.choices[0].message.content.strip()
