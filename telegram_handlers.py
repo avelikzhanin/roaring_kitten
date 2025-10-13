@@ -135,25 +135,13 @@ class TelegramHandlers:
         """Показать список акций"""
         keyboard = []
         
-        # Создаем кнопки для каждой акции с иконками
+        # Создаем кнопки для каждой акции с иконками подписки
         for ticker, info in SUPPORTED_STOCKS.items():
             is_subscribed = await db.is_subscribed(user_id, ticker)
-            
-            # Получаем данные для проверки условий входа
-            stock_data = await self.stock_service.get_stock_data(ticker)
-            buy_ready = False
-            if stock_data and stock_data.is_valid():
-                buy_ready = stock_data.technical.adx > 25 and stock_data.technical.di_plus > 25
-            
-            # Формируем иконки
-            icons = ""
-            if is_subscribed:
-                icons += "⭐ "
-            if buy_ready:
-                icons += "🔥 "
+            icon = "⭐ " if is_subscribed else ""
             
             button = InlineKeyboardButton(
-                text=f"{icons}{info['emoji']} {ticker} - {info['name']}",
+                text=f"{icon}{info['emoji']} {ticker} - {info['name']}",
                 callback_data=f"stock:{ticker}"
             )
             keyboard.append([button])
