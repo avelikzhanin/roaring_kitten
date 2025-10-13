@@ -34,6 +34,17 @@ class Database:
     async def _init_schema(self):
         """Инициализация схемы БД"""
         async with self.pool.acquire() as conn:
+            # ВРЕМЕННО: Удаляем старые таблицы для пересоздания
+            # После первого успешного запуска можно удалить эти строки
+            try:
+                await conn.execute("DROP TABLE IF EXISTS signal_states CASCADE")
+                await conn.execute("DROP TABLE IF EXISTS positions CASCADE")
+                await conn.execute("DROP TABLE IF EXISTS subscriptions CASCADE")
+                await conn.execute("DROP TABLE IF EXISTS users CASCADE")
+                logger.info("🗑️ Old tables dropped")
+            except Exception as e:
+                logger.warning(f"Could not drop tables: {e}")
+            
             # Создаем таблицы по порядку
             
             # 1. Таблица пользователей
