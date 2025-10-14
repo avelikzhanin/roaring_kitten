@@ -85,7 +85,7 @@ class SignalMonitor:
             
             # Обрабатываем переход SELL/NONE → BUY
             if self.signal_detector.is_sell_to_buy_transition(previous_signal, current_signal.signal_type):
-                await self._handle_buy_signal(ticker, current_signal, subscribers, bot)
+                await self._handle_buy_signal(ticker, current_signal, stock_data, subscribers, bot)
             
             # Обрабатываем переход BUY → SELL
             elif self.signal_detector.is_buy_to_sell_transition(previous_signal, current_signal.signal_type):
@@ -104,7 +104,7 @@ class SignalMonitor:
         except Exception as e:
             logger.error(f"Error checking signal for {ticker}: {e}", exc_info=True)
     
-    async def _handle_buy_signal(self, ticker: str, signal, subscribers: list, bot: Bot):
+    async def _handle_buy_signal(self, ticker: str, signal, stock_data, subscribers: list, bot: Bot):
         """Обработка BUY сигнала"""
         logger.info(f"🟢 BUY signal for {ticker}")
         
@@ -112,9 +112,26 @@ class SignalMonitor:
         stock_name = stock_info.get('name', ticker)
         stock_emoji = stock_info.get('emoji', '📊')
         
-        # Формируем сообщение
+        # Получаем GPT анализ
+        gpt_analysis = None
+        try:
+            logger.info(f"🤖 Получаем GPT анализ для BUY сигнала {ticker}...")
+            # Получаем свечи
+            candles_data = await self.stock_service.moex_client.get_historical_candles(ticker)
+            if candles_data:
+                gpt_analysis = await gpt_analyst.analyze_stock(stock_data, candles_data)
+                if gpt_analysis:
+                    logger.info(f"✅ GPT анализ получен для BUY сигнала {ticker}")
+                else:
+                    logger.warning(f"⚠️ GPT вернул пустой анализ для {ticker}")
+            else:
+                logger.warning(f"⚠️ Не удалось получить свечи для GPT анализа {ticker}")
+        except Exception as e:
+            logger.error(f"❌ Ошибка получения GPT анализа для {ticker}: {e}")
+        
+        # Формируем сообщение с GPT анализом
         message = self.formatter.format_buy_signal_notification(
-            signal, stock_name, stock_emoji
+            signal, stock_name, stock_emoji, gpt_analysis
         )
         
         # Отправляем уведомления всем подписчикам
