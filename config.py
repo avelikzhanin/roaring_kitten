@@ -41,8 +41,16 @@ MONITOR_INTERVAL_MINUTES = 20
 
 # OpenAI GPT настройки
 GPT_MODEL = "gpt-5-mini"
-GPT_MAX_TOKENS = 2000  # Увеличено для reasoning
+GPT_MAX_TOKENS = 2000
 GPT_TEMPERATURE = 0.7
+
+# Reasoning effort для o1 моделей
+# Варианты: "minimal", "low", "medium", "high"
+# minimal - быстро, дешево (3-5 сек)
+# low - баланс (5-10 сек)
+# medium - глубже (10-20 сек)
+# high - максимум анализа (15-30 сек, дорого)
+GPT_REASONING_EFFORT = "minimal"  # <- МЕНЯЙ ЗДЕСЬ ДЛЯ СРАВНЕНИЯ
 
 # Поддерживаемые акции
 SUPPORTED_STOCKS = {
