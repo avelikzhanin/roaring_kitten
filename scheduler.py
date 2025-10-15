@@ -89,7 +89,7 @@ class SignalMonitor:
             
             # Обрабатываем переход BUY → SELL
             elif self.signal_detector.is_buy_to_sell_transition(previous_signal, current_signal.signal_type):
-                await self._handle_sell_signal(ticker, current_signal, subscribers, bot)
+                await self._handle_sell_signal(ticker, current_signal, stock_data, subscribers, bot)
             
             # Обновляем состояние сигнала
             await db.update_signal_state(
@@ -163,13 +163,30 @@ class SignalMonitor:
             except Exception as e:
                 logger.error(f"Error sending BUY notification to user {user_id}: {e}")
     
-    async def _handle_sell_signal(self, ticker: str, signal, subscribers: list, bot: Bot):
+    async def _handle_sell_signal(self, ticker: str, signal, stock_data, subscribers: list, bot: Bot):
         """Обработка SELL сигнала"""
         logger.info(f"🔴 SELL signal for {ticker}")
         
         stock_info = SUPPORTED_STOCKS.get(ticker, {})
         stock_name = stock_info.get('name', ticker)
         stock_emoji = stock_info.get('emoji', '📊')
+        
+        # Получаем GPT анализ
+        gpt_analysis = None
+        try:
+            logger.info(f"🤖 Получаем GPT анализ для SELL сигнала {ticker}...")
+            # Получаем свечи
+            candles_data = await self.stock_service.moex_client.get_historical_candles(ticker)
+            if candles_data:
+                gpt_analysis = await gpt_analyst.analyze_stock(stock_data, candles_data)
+                if gpt_analysis:
+                    logger.info(f"✅ GPT анализ получен для SELL сигнала {ticker}")
+                else:
+                    logger.warning(f"⚠️ GPT вернул пустой анализ для {ticker}")
+            else:
+                logger.warning(f"⚠️ Не удалось получить свечи для GPT анализа {ticker}")
+        except Exception as e:
+            logger.error(f"❌ Ошибка получения GPT анализа для {ticker}: {e}")
         
         # Отправляем уведомления всем подписчикам
         for user_id in subscribers:
@@ -191,7 +208,7 @@ class SignalMonitor:
                         
                         # Формируем и отправляем сообщение
                         message = self.formatter.format_sell_signal_notification(
-                            signal, stock_name, stock_emoji, entry_price, profit_percent
+                            signal, stock_name, stock_emoji, entry_price, profit_percent, gpt_analysis
                         )
                         
                         await bot.send_message(
