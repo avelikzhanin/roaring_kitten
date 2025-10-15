@@ -1,14 +1,4 @@
-async def _show_positions_inline(self, query, user_id: int):
-        """Показать позиции (для inline callback)"""
-        open_positions = await db.get_open_positions(user_id)
-        closed_positions = await db.get_closed_positions(user_id, limit=5)
-        
-        # Получаем текущие цены для открытых позиций
-        current_prices = {}
-        if open_positions:
-            for pos in open_positions:
-                ticker = pos['ticker']
-                stock_data = await self.stock_service.import logging
+import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
 from telegram.ext import ContextTypes, CommandHandler, CallbackQueryHandler, MessageHandler, filters
 
@@ -165,28 +155,6 @@ class TelegramHandlers:
         
         message = self.formatter.format_stocks_selection()
         await query.edit_message_text(message, reply_markup=reply_markup, parse_mode='HTML')
-    
-    async def _show_positions_inline(self, query, user_id: int):
-        """Показать позиции (для inline callback)"""
-        open_positions = await db.get_open_positions(user_id)
-        closed_positions = await db.get_closed_positions(user_id, limit=5)
-        
-        # Получаем текущие цены для открытых позиций
-        current_prices = {}
-        if open_positions:
-            for pos in open_positions:
-                ticker = pos['ticker']
-                stock_data = await self.stock_service.get_stock_data(ticker)
-                if stock_data:
-                    current_prices[ticker] = stock_data.price.current_price
-        
-        message = self.formatter.format_positions_list(
-            open_positions, 
-            closed_positions,
-            current_prices
-        )
-        
-        await query.edit_message_text(message, parse_mode='HTML')
     
     async def _show_stock_data(self, query, user_id: int, ticker: str):
         """Показать данные акции с кнопками подписки"""
