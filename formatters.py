@@ -67,9 +67,11 @@ class MessageFormatter:
 • DI+: {signal.di_plus:.2f}
 • DI-: {signal.di_minus:.2f}"""
 
-        # Добавляем GPT анализ если есть
+        # Добавляем GPT анализ если есть (с экранированием HTML)
         if gpt_analysis:
-            message += f"\n\n🤖 <b>GPT АНАЛИЗ:</b>\n{gpt_analysis}"
+            import html
+            gpt_analysis_escaped = html.escape(gpt_analysis)
+            message += f"\n\n🤖 <b>GPT АНАЛИЗ:</b>\n{gpt_analysis_escaped}"
         
         message += "\n\n✅ Позиция открыта! Ждём сигнала на продажу."
         
@@ -81,13 +83,14 @@ class MessageFormatter:
         stock_name: str, 
         stock_emoji: str,
         entry_price: float,
-        profit_percent: float
+        profit_percent: float,
+        gpt_analysis: str = None
     ) -> str:
         """Уведомление о сигнале на продажу"""
         profit_emoji = "📈" if profit_percent > 0 else "📉"
         profit_sign = "+" if profit_percent > 0 else ""
         
-        return f"""🔴 <b>СИГНАЛ НА ПРОДАЖУ!</b>
+        message = f"""🔴 <b>СИГНАЛ НА ПРОДАЖУ!</b>
 
 {stock_emoji} <b>{signal.ticker} - {stock_name}</b>
 
@@ -99,9 +102,17 @@ class MessageFormatter:
 📈 <b>Индикаторы:</b>
 • ADX: {signal.adx:.2f}
 • DI+: {signal.di_plus:.2f}
-• DI-: {signal.di_minus:.2f}
+• DI-: {signal.di_minus:.2f}"""
 
-✅ Позиция закрыта!"""
+        # Добавляем GPT анализ если есть (с экранированием HTML)
+        if gpt_analysis:
+            import html
+            gpt_analysis_escaped = html.escape(gpt_analysis)
+            message += f"\n\n🤖 <b>GPT АНАЛИЗ:</b>\n{gpt_analysis_escaped}"
+        
+        message += "\n\n✅ Позиция закрыта!"
+        
+        return message
     
     @staticmethod
     def format_welcome_message() -> str:
