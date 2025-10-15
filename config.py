@@ -50,7 +50,7 @@ GPT_TEMPERATURE = 0.7
 # low - баланс (5-10 сек)
 # medium - глубже (10-20 сек)
 # high - максимум анализа (15-30 сек, дорого)
-GPT_REASONING_EFFORT = "minimal"  # <- МЕНЯЙ ЗДЕСЬ ДЛЯ СРАВНЕНИЯ
+GPT_REASONING_EFFORT = "high"  # <- МЕНЯЙ ЗДЕСЬ ДЛЯ СРАВНЕНИЯ
 
 # Поддерживаемые акции
 SUPPORTED_STOCKS = {
