@@ -1,4 +1,14 @@
-import logging
+async def _show_positions_inline(self, query, user_id: int):
+        """Показать позиции (для inline callback)"""
+        open_positions = await db.get_open_positions(user_id)
+        closed_positions = await db.get_closed_positions(user_id, limit=5)
+        
+        # Получаем текущие цены для открытых позиций
+        current_prices = {}
+        if open_positions:
+            for pos in open_positions:
+                ticker = pos['ticker']
+                stock_data = await self.stock_service.import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
 from telegram.ext import ContextTypes, CommandHandler, CallbackQueryHandler, MessageHandler, filters
 
@@ -72,9 +82,6 @@ class TelegramHandlers:
             )
             keyboard.append([button])
         
-        # Добавляем кнопку "Главное меню"
-        keyboard.append([InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")])
-        
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         message = self.formatter.format_stocks_selection()
@@ -100,10 +107,7 @@ class TelegramHandlers:
             current_prices
         )
         
-        keyboard = [[InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        await update.message.reply_text(message, parse_mode='HTML', reply_markup=reply_markup)
+        await update.message.reply_text(message, parse_mode='HTML')
     
     async def stocks_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработчик команды /stocks - показываем inline кнопки с акциями"""
@@ -141,21 +145,6 @@ class TelegramHandlers:
         
         elif query.data == "back_to_stocks":
             await self._show_stocks_list_inline(query, user_id)
-        
-        elif query.data == "main_menu":
-            await self._show_main_menu(query)
-        
-        elif query.data == "menu_stocks":
-            await self._show_stocks_list_inline(query, user_id)
-        
-        elif query.data == "menu_positions":
-            await self._show_positions_inline(query, user_id)
-    
-    async def _show_main_menu(self, query):
-        """Показать главное меню"""
-        welcome_message = self.formatter.format_welcome_message()
-        
-        await query.edit_message_text(welcome_message, parse_mode='HTML')
     
     async def _show_stocks_list_inline(self, query, user_id: int):
         """Показать список акций (для inline callback)"""
@@ -171,9 +160,6 @@ class TelegramHandlers:
                 callback_data=f"stock:{ticker}"
             )
             keyboard.append([button])
-        
-        # Добавляем кнопку "Главное меню"
-        keyboard.append([InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")])
         
         reply_markup = InlineKeyboardMarkup(keyboard)
         
@@ -200,10 +186,7 @@ class TelegramHandlers:
             current_prices
         )
         
-        keyboard = [[InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        await query.edit_message_text(message, parse_mode='HTML', reply_markup=reply_markup)
+        await query.edit_message_text(message, parse_mode='HTML')
     
     async def _show_stock_data(self, query, user_id: int, ticker: str):
         """Показать данные акции с кнопками подписки"""
