@@ -196,6 +196,37 @@ class MessageFormatter:
         return message
     
     @staticmethod
+    def format_monthly_statistics(stats: Dict[str, Any], year: int, month: int) -> str:
+        """Форматирование статистики за месяц"""
+        # Название месяца на русском
+        month_names = {
+            1: "январь", 2: "февраль", 3: "март", 4: "апрель",
+            5: "май", 6: "июнь", 7: "июль", 8: "август",
+            9: "сентябрь", 10: "октябрь", 11: "ноябрь", 12: "декабрь"
+        }
+        month_name = month_names.get(month, "").capitalize()
+        
+        if stats['total_trades'] == 0:
+            return f"📊 <b>СТАТИСТИКА</b>\n\nПока нет сделок за {month_name} {year}"
+        
+        # Процент прибыльных
+        profitable_percent = (stats['profitable'] / stats['total_trades']) * 100 if stats['total_trades'] > 0 else 0
+        unprofitable_percent = (stats['unprofitable'] / stats['total_trades']) * 100 if stats['total_trades'] > 0 else 0
+        
+        # Эмодзи для общего результата
+        result_emoji = "📈" if stats['total_profit'] > 0 else "📉"
+        result_sign = "+" if stats['total_profit'] > 0 else ""
+        
+        message = f"""📊 <b>СТАТИСТИКА ЗА {month_name.upper()} {year}:</b>
+
+• Закрыто сделок: {stats['total_trades']}
+• Прибыльных: {stats['profitable']} ({profitable_percent:.1f}%)
+• Убыточных: {stats['unprofitable']} ({unprofitable_percent:.1f}%)
+• Общий результат: {result_emoji} <b>{result_sign}{stats['total_profit']:.2f}%</b>"""
+        
+        return message
+    
+    @staticmethod
     def format_error_message(error_type: str = "general") -> str:
         """Сообщения об ошибках"""
         error_messages = {
