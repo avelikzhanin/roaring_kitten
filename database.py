@@ -280,6 +280,43 @@ class Database:
                 """,
                 ticker, signal, adx, di_plus, di_minus, price, datetime.now()
             )
+    
+    # ========== STATISTICS ==========
+    
+    async def get_monthly_statistics(self, user_id: int, year: int, month: int) -> Dict[str, Any]:
+        """Получение статистики за месяц"""
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT profit_percent
+                FROM positions
+                WHERE user_id = $1 
+                  AND is_open = FALSE
+                  AND EXTRACT(YEAR FROM exit_time) = $2
+                  AND EXTRACT(MONTH FROM exit_time) = $3
+                ORDER BY exit_time DESC
+                """,
+                user_id, year, month
+            )
+            
+            if not rows:
+                return {
+                    'total_trades': 0,
+                    'profitable': 0,
+                    'unprofitable': 0,
+                    'total_profit': 0.0
+                }
+            
+            profits = [float(row['profit_percent']) for row in rows]
+            profitable = [p for p in profits if p > 0]
+            unprofitable = [p for p in profits if p <= 0]
+            
+            return {
+                'total_trades': len(profits),
+                'profitable': len(profitable),
+                'unprofitable': len(unprofitable),
+                'total_profit': sum(profits)
+            }
 
 
 # Глобальный экземпляр базы данных
