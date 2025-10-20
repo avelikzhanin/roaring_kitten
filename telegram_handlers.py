@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
 from telegram.ext import ContextTypes, CommandHandler, CallbackQueryHandler, MessageHandler, filters
 
@@ -108,6 +109,23 @@ class TelegramHandlers:
         """Обработчик команды /positions - показать позиции"""
         user_id = update.effective_user.id
         await self._send_positions(update, user_id)
+    
+    async def stats_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработчик команды /stats - показать статистику за месяц"""
+        user_id = update.effective_user.id
+        
+        # Получаем текущий год и месяц
+        now = datetime.now()
+        year = now.year
+        month = now.month
+        
+        # Получаем статистику из БД
+        stats = await db.get_monthly_statistics(user_id, year, month)
+        
+        # Форматируем сообщение
+        message = self.formatter.format_monthly_statistics(stats, year, month)
+        
+        await update.message.reply_text(message, parse_mode='HTML')
     
     async def button_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработчик нажатий на inline кнопки"""
@@ -331,6 +349,7 @@ class TelegramHandlers:
             CommandHandler("start", self.start_command),
             CommandHandler("stocks", self.stocks_command),
             CommandHandler("positions", self.positions_command),
+            CommandHandler("stats", self.stats_command),
             MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_text_message),
             CallbackQueryHandler(self.button_callback),
         ]
