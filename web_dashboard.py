@@ -19,6 +19,12 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Revushiy Kotenok Dashboard")
 
+# Фильтр по пользователю
+TARGET_USERNAME = 'matve1ch'
+
+# Дата начала торговли
+TRADING_START_DATE = datetime(2024, 10, 1)
+
 # Подключаем статические файлы и шаблоны
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
@@ -49,13 +55,13 @@ async def dashboard(request: Request, year: Optional[int] = None, month: Optiona
         month = now.month
     
     try:
-        # Получаем данные из БД
-        monthly_stats = await db.get_global_monthly_statistics(year, month)
-        open_positions = await db.get_all_open_positions_web()
-        closed_positions = await db.get_all_closed_positions_web(limit=50)
-        ticker_stats = await db.get_statistics_by_ticker()
-        best_worst = await db.get_best_and_worst_trades()
-        avg_duration = await db.get_average_trade_duration()
+        # Получаем данные из БД с фильтром по username
+        monthly_stats = await db.get_global_monthly_statistics(year, month, username=TARGET_USERNAME)
+        open_positions = await db.get_all_open_positions_web(username=TARGET_USERNAME)
+        closed_positions = await db.get_all_closed_positions_web(limit=50, username=TARGET_USERNAME)
+        ticker_stats = await db.get_statistics_by_ticker(username=TARGET_USERNAME)
+        best_worst = await db.get_best_and_worst_trades(username=TARGET_USERNAME)
+        avg_duration = await db.get_average_trade_duration(username=TARGET_USERNAME)
         
         # Форматируем средюю продолжительность
         if avg_duration:
@@ -100,23 +106,25 @@ async def dashboard(request: Request, year: Optional[int] = None, month: Optiona
             best_worst['worst']['stock_name'] = SUPPORTED_STOCKS.get(ticker, {}).get('name', ticker)
             best_worst['worst']['stock_emoji'] = SUPPORTED_STOCKS.get(ticker, {}).get('emoji', '📊')
         
-        # Формируем список месяцев для селектора (последние 12 месяцев)
+        # Формируем список месяцев (с октября 2024 до текущего месяца)
         months_list = []
         current_date = datetime.now()
-        for i in range(12):
-            date = datetime(current_date.year, current_date.month, 1)
-            # Вычитаем i месяцев
-            month_num = date.month - i
-            year_num = date.year
-            while month_num <= 0:
-                month_num += 12
-                year_num -= 1
-            
+        
+        # Начинаем с текущего месяца и идём назад до октября 2024
+        temp_date = datetime(current_date.year, current_date.month, 1)
+        
+        while temp_date >= TRADING_START_DATE:
             months_list.append({
-                'year': year_num,
-                'month': month_num,
-                'label': datetime(year_num, month_num, 1).strftime("%B %Y")
+                'year': temp_date.year,
+                'month': temp_date.month,
+                'label': temp_date.strftime("%B %Y")
             })
+            
+            # Переходим к предыдущему месяцу
+            if temp_date.month == 1:
+                temp_date = datetime(temp_date.year - 1, 12, 1)
+            else:
+                temp_date = datetime(temp_date.year, temp_date.month - 1, 1)
         
         return templates.TemplateResponse(
             "dashboard.html",
