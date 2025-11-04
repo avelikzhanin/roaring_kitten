@@ -10,6 +10,7 @@ import uvicorn
 
 from database import db
 from config import SUPPORTED_STOCKS
+from stock_service import StockService
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -23,7 +24,10 @@ app = FastAPI(title="Revushiy Kotenok Dashboard")
 TARGET_USERNAME = 'matve1ch'
 
 # Дата начала торговли
-TRADING_START_DATE = datetime(2024, 10, 1)
+TRADING_START_DATE = datetime(2025, 10, 1)
+
+# Сервис для получения данных акций
+stock_service = StockService()
 
 # Подключаем статические файлы и шаблоны
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -77,6 +81,23 @@ async def dashboard(request: Request, year: Optional[int] = None, month: Optiona
             ticker = pos['ticker']
             pos['stock_name'] = SUPPORTED_STOCKS.get(ticker, {}).get('name', ticker)
             pos['stock_emoji'] = SUPPORTED_STOCKS.get(ticker, {}).get('emoji', '📊')
+            
+            # Получаем текущую цену
+            try:
+                stock_data = await stock_service.get_stock_data(ticker)
+                if stock_data:
+                    pos['current_price'] = stock_data.price.current_price
+                    # Рассчитываем текущую прибыль
+                    entry_price = float(pos['entry_price'])
+                    current_profit = ((pos['current_price'] - entry_price) / entry_price) * 100
+                    pos['current_profit'] = current_profit
+                else:
+                    pos['current_price'] = None
+                    pos['current_profit'] = None
+            except Exception as e:
+                logger.error(f"Error getting current price for {ticker}: {e}")
+                pos['current_price'] = None
+                pos['current_profit'] = None
         
         for pos in closed_positions:
             ticker = pos['ticker']
@@ -159,6 +180,42 @@ async def dashboard(request: Request, year: Optional[int] = None, month: Optiona
 async def health_check():
     """Health check endpoint для Railway"""
     return {"status": "ok"}
+
+
+@app.get("/top-trades", response_class=HTMLResponse)
+async def top_trades(request: Request, type: str = "best"):
+    """Страница топ-10 лучших или худших сделок"""
+    try:
+        is_best = type == "best"
+        trades = await db.get_top_trades(username=TARGET_USERNAME, limit=10, best=is_best)
+        
+        # Добавляем имена и эмодзи
+        for trade in trades:
+            ticker = trade['ticker']
+            trade['stock_name'] = SUPPORTED_STOCKS.get(ticker, {}).get('name', ticker)
+            trade['stock_emoji'] = SUPPORTED_STOCKS.get(ticker, {}).get('emoji', '📊')
+        
+        title = "🏆 Топ-10 лучших сделок" if is_best else "📉 Топ-10 худших сделок"
+        
+        return templates.TemplateResponse(
+            "top_trades.html",
+            {
+                "request": request,
+                "title": title,
+                "trades": trades,
+                "is_best": is_best
+            }
+        )
+    
+    except Exception as e:
+        logger.error(f"Error loading top trades: {e}", exc_info=True)
+        return templates.TemplateResponse(
+            "error.html",
+            {
+                "request": request,
+                "error": str(e)
+            }
+        )
 
 
 if __name__ == "__main__":
