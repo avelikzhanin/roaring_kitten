@@ -317,6 +317,165 @@ class Database:
                 'unprofitable': len(unprofitable),
                 'total_profit': sum(profits)
             }
+    
+    # ========== WEB DASHBOARD STATISTICS ==========
+    
+    async def get_all_open_positions_web(self) -> List[Dict[str, Any]]:
+        """Получение всех открытых позиций для веб-дашборда"""
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT 
+                    p.user_id,
+                    u.username,
+                    u.first_name,
+                    p.ticker,
+                    p.entry_price,
+                    p.entry_time
+                FROM positions p
+                JOIN users u ON p.user_id = u.user_id
+                WHERE p.is_open = TRUE
+                ORDER BY p.entry_time DESC
+                """
+            )
+            return [dict(row) for row in rows]
+    
+    async def get_all_closed_positions_web(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """Получение всех закрытых позиций для веб-дашборда (лента сделок)"""
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT 
+                    p.user_id,
+                    u.username,
+                    u.first_name,
+                    p.ticker,
+                    p.entry_price,
+                    p.exit_price,
+                    p.profit_percent,
+                    p.entry_time,
+                    p.exit_time
+                FROM positions p
+                JOIN users u ON p.user_id = u.user_id
+                WHERE p.is_open = FALSE
+                ORDER BY p.exit_time DESC
+                LIMIT $1
+                """,
+                limit
+            )
+            return [dict(row) for row in rows]
+    
+    async def get_global_monthly_statistics(self, year: int, month: int) -> Dict[str, Any]:
+        """Получение глобальной статистики за месяц (все пользователи)"""
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT profit_percent
+                FROM positions
+                WHERE is_open = FALSE
+                  AND EXTRACT(YEAR FROM exit_time) = $1
+                  AND EXTRACT(MONTH FROM exit_time) = $2
+                ORDER BY exit_time DESC
+                """,
+                year, month
+            )
+            
+            if not rows:
+                return {
+                    'total_trades': 0,
+                    'profitable': 0,
+                    'unprofitable': 0,
+                    'total_profit': 0.0,
+                    'winrate': 0.0
+                }
+            
+            profits = [float(row['profit_percent']) for row in rows]
+            profitable = [p for p in profits if p > 0]
+            unprofitable = [p for p in profits if p <= 0]
+            
+            return {
+                'total_trades': len(profits),
+                'profitable': len(profitable),
+                'unprofitable': len(unprofitable),
+                'total_profit': sum(profits),
+                'winrate': (len(profitable) / len(profits) * 100) if profits else 0.0
+            }
+    
+    async def get_statistics_by_ticker(self) -> List[Dict[str, Any]]:
+        """Получение статистики по каждой акции (за все время)"""
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT 
+                    ticker,
+                    COUNT(*) as total_trades,
+                    SUM(CASE WHEN profit_percent > 0 THEN 1 ELSE 0 END) as profitable,
+                    ROUND(
+                        (SUM(CASE WHEN profit_percent > 0 THEN 1 ELSE 0 END)::numeric / COUNT(*)::numeric * 100), 
+                        2
+                    ) as winrate,
+                    ROUND(SUM(profit_percent)::numeric, 2) as total_profit
+                FROM positions
+                WHERE is_open = FALSE
+                GROUP BY ticker
+                ORDER BY total_profit DESC
+                """
+            )
+            return [dict(row) for row in rows]
+    
+    async def get_best_and_worst_trades(self) -> Dict[str, Any]:
+        """Получение лучшей и худшей сделки"""
+        async with self.pool.acquire() as conn:
+            # Лучшая сделка
+            best_row = await conn.fetchrow(
+                """
+                SELECT 
+                    p.ticker,
+                    p.profit_percent,
+                    p.exit_time,
+                    u.username,
+                    u.first_name
+                FROM positions p
+                JOIN users u ON p.user_id = u.user_id
+                WHERE p.is_open = FALSE
+                ORDER BY p.profit_percent DESC
+                LIMIT 1
+                """
+            )
+            
+            # Худшая сделка
+            worst_row = await conn.fetchrow(
+                """
+                SELECT 
+                    p.ticker,
+                    p.profit_percent,
+                    p.exit_time,
+                    u.username,
+                    u.first_name
+                FROM positions p
+                JOIN users u ON p.user_id = u.user_id
+                WHERE p.is_open = FALSE
+                ORDER BY p.profit_percent ASC
+                LIMIT 1
+                """
+            )
+            
+            return {
+                'best': dict(best_row) if best_row else None,
+                'worst': dict(worst_row) if worst_row else None
+            }
+    
+    async def get_average_trade_duration(self) -> Optional[float]:
+        """Получение средней продолжительности сделки в часах"""
+        async with self.pool.acquire() as conn:
+            result = await conn.fetchval(
+                """
+                SELECT AVG(EXTRACT(EPOCH FROM (exit_time - entry_time)) / 3600)
+                FROM positions
+                WHERE is_open = FALSE
+                """
+            )
+            return float(result) if result else None
 
 
 # Глобальный экземпляр базы данных
