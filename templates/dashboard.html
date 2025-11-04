@@ -11,7 +11,6 @@
         <!-- Шапка -->
         <header>
             <h1>🐱 Ревущий котёнок - Статистика</h1>
-            <p class="subtitle">Трейдинг бот на основе ADX + DI+</p>
         </header>
 
         <!-- Блок: Статистика за месяц -->
@@ -65,7 +64,6 @@
                 <table>
                     <thead>
                         <tr>
-                            <th>Пользователь</th>
                             <th>Акция</th>
                             <th>Цена входа</th>
                             <th>Дата входа</th>
@@ -74,7 +72,6 @@
                     <tbody>
                         {% for pos in open_positions %}
                         <tr>
-                            <td>{{ pos.first_name or pos.username or pos.user_id }}</td>
                             <td>{{ pos.stock_emoji }} {{ pos.ticker }} - {{ pos.stock_name }}</td>
                             <td>{{ "%.2f"|format(pos.entry_price) }} ₽</td>
                             <td>{{ pos.entry_time.strftime("%d.%m.%Y %H:%M") }}</td>
@@ -127,7 +124,6 @@
                     <div class="card-content">
                         <div class="card-main">{{ best_trade.stock_emoji }} {{ best_trade.ticker }}</div>
                         <div class="card-profit positive">+{{ "%.2f"|format(best_trade.profit_percent) }}%</div>
-                        <div class="card-user">{{ best_trade.first_name or best_trade.username }}</div>
                         <div class="card-date">{{ best_trade.exit_time.strftime("%d.%m.%Y") }}</div>
                     </div>
                 </div>
@@ -139,7 +135,6 @@
                     <div class="card-content">
                         <div class="card-main">{{ worst_trade.stock_emoji }} {{ worst_trade.ticker }}</div>
                         <div class="card-profit negative">{{ "%.2f"|format(worst_trade.profit_percent) }}%</div>
-                        <div class="card-user">{{ worst_trade.first_name or worst_trade.username }}</div>
                         <div class="card-date">{{ worst_trade.exit_time.strftime("%d.%m.%Y") }}</div>
                     </div>
                 </div>
@@ -163,7 +158,6 @@
                     <thead>
                         <tr>
                             <th>Дата закрытия</th>
-                            <th>Пользователь</th>
                             <th>Акция</th>
                             <th>Прибыль</th>
                             <th>Продолжительность</th>
@@ -173,7 +167,6 @@
                         {% for pos in closed_positions %}
                         <tr>
                             <td>{{ pos.exit_time.strftime("%d.%m.%Y %H:%M") }}</td>
-                            <td>{{ pos.first_name or pos.username or pos.user_id }}</td>
                             <td>{{ pos.stock_emoji }} {{ pos.ticker }} - {{ pos.stock_name }}</td>
                             <td class="{% if pos.profit_percent > 0 %}positive{% else %}negative{% endif %}">
                                 {% if pos.profit_percent > 0 %}+{% endif %}{{ "%.2f"|format(pos.profit_percent) }}%
