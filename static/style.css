@@ -180,18 +180,67 @@ tbody tr:last-child td {
     gap: 20px;
 }
 
+.card-link {
+    text-decoration: none;
+    color: inherit;
+}
+
 .additional-card {
     background: white;
     border: 2px solid #eee;
     border-radius: 15px;
     padding: 20px;
     box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
-    transition: transform 0.3s ease;
+    transition: transform 0.3s ease, border-color 0.3s ease;
 }
 
 .additional-card:hover {
     transform: translateY(-5px);
     border-color: #667eea;
+}
+
+.additional-card.clickable {
+    cursor: pointer;
+}
+
+.additional-card.clickable:hover {
+    border-color: #667eea;
+    box-shadow: 0 6px 20px rgba(102, 126, 234, 0.3);
+}
+
+.card-hint {
+    text-align: center;
+    font-size: 0.85em;
+    color: #667eea;
+    margin-top: 15px;
+    font-weight: 600;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+
+.additional-card.clickable:hover .card-hint {
+    opacity: 1;
+}
+
+.back-button {
+    display: inline-block;
+    padding: 10px 20px;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    text-decoration: none;
+    border-radius: 8px;
+    font-weight: 600;
+    margin-top: 10px;
+    transition: transform 0.2s ease;
+}
+
+.back-button:hover {
+    transform: scale(1.05);
+}
+
+.large-profit {
+    font-size: 1.2em;
+    font-weight: bold;
 }
 
 .card-title {
