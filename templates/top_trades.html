@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ title }} - Ревущий котёнок</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>{{ title }}</h1>
+            <a href="/" class="back-button">◀️ Назад к дашборду</a>
+        </header>
+
+        <section class="top-trades">
+            <div class="table-wrapper">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Место</th>
+                            <th>Акция</th>
+                            <th>Прибыль</th>
+                            <th>Дата закрытия</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for trade in trades %}
+                        <tr>
+                            <td><strong>{{ loop.index }}</strong></td>
+                            <td>{{ trade.stock_emoji }} {{ trade.ticker }} - {{ trade.stock_name }}</td>
+                            <td class="{% if trade.profit_percent > 0 %}positive{% else %}negative{% endif %} large-profit">
+                                {% if trade.profit_percent > 0 %}+{% endif %}{{ "%.2f"|format(trade.profit_percent) }}%
+                            </td>
+                            <td>{{ trade.exit_time.strftime("%d.%m.%Y %H:%M") }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            {% if not trades %}
+            <p class="no-data">Нет сделок для отображения</p>
+            {% endif %}
+        </section>
+
+        <footer>
+            <p>© 2025 Ревущий котёнок 🐱</p>
+        </footer>
+    </div>
+</body>
+</html>
