@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ревущий котёнок 🐱 Статистика</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Шапка -->
+        <header>
+            <h1>🐱 Ревущий котёнок - Статистика</h1>
+            <p class="subtitle">Трейдинг бот на основе ADX + DI+</p>
+        </header>
+
+        <!-- Блок: Статистика за месяц -->
+        <section class="month-stats">
+            <div class="section-header">
+                <h2>📊 Статистика за {{ month_name }}</h2>
+                <div class="month-selector">
+                    <label for="month-select">Выбрать месяц:</label>
+                    <select id="month-select" onchange="changeMonth(this.value)">
+                        {% for m in months_list %}
+                        <option value="{{ m.year }}-{{ m.month }}" 
+                                {% if m.year == year and m.month == month %}selected{% endif %}>
+                            {{ m.label }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+            
+            <div class="stats-cards">
+                <div class="stat-card">
+                    <div class="stat-value">{{ monthly_stats.total_trades }}</div>
+                    <div class="stat-label">Всего сделок</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">{{ monthly_stats.profitable }}</div>
+                    <div class="stat-label">Прибыльных</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">{{ monthly_stats.unprofitable }}</div>
+                    <div class="stat-label">Убыточных</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">{{ "%.2f"|format(monthly_stats.winrate) }}%</div>
+                    <div class="stat-label">Винрейт</div>
+                </div>
+                <div class="stat-card {% if monthly_stats.total_profit > 0 %}positive{% else %}negative{% endif %}">
+                    <div class="stat-value">
+                        {% if monthly_stats.total_profit > 0 %}+{% endif %}{{ "%.2f"|format(monthly_stats.total_profit) }}%
+                    </div>
+                    <div class="stat-label">Общая прибыль</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Блок: Открытые позиции -->
+        {% if open_positions %}
+        <section class="open-positions">
+            <h2>🟢 Открытые позиции</h2>
+            <div class="table-wrapper">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Пользователь</th>
+                            <th>Акция</th>
+                            <th>Цена входа</th>
+                            <th>Дата входа</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for pos in open_positions %}
+                        <tr>
+                            <td>{{ pos.first_name or pos.username or pos.user_id }}</td>
+                            <td>{{ pos.stock_emoji }} {{ pos.ticker }} - {{ pos.stock_name }}</td>
+                            <td>{{ "%.2f"|format(pos.entry_price) }} ₽</td>
+                            <td>{{ pos.entry_time.strftime("%d.%m.%Y %H:%M") }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </section>
+        {% endif %}
+
+        <!-- Блок: Статистика по акциям -->
+        {% if ticker_stats %}
+        <section class="ticker-stats">
+            <h2>📈 Статистика по акциям (за всё время)</h2>
+            <div class="table-wrapper">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Акция</th>
+                            <th>Сделок</th>
+                            <th>Винрейт</th>
+                            <th>Общая прибыль</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for stat in ticker_stats %}
+                        <tr>
+                            <td>{{ stat.stock_emoji }} {{ stat.ticker }} - {{ stat.stock_name }}</td>
+                            <td>{{ stat.total_trades }}</td>
+                            <td>{{ "%.2f"|format(stat.winrate) }}%</td>
+                            <td class="{% if stat.total_profit > 0 %}positive{% else %}negative{% endif %}">
+                                {% if stat.total_profit > 0 %}+{% endif %}{{ "%.2f"|format(stat.total_profit) }}%
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </section>
+        {% endif %}
+
+        <!-- Блок: Дополнительно -->
+        <section class="additional-stats">
+            <h2>💎 Дополнительно (за всё время)</h2>
+            <div class="additional-cards">
+                {% if best_trade %}
+                <div class="additional-card">
+                    <div class="card-title">🏆 Лучшая сделка</div>
+                    <div class="card-content">
+                        <div class="card-main">{{ best_trade.stock_emoji }} {{ best_trade.ticker }}</div>
+                        <div class="card-profit positive">+{{ "%.2f"|format(best_trade.profit_percent) }}%</div>
+                        <div class="card-user">{{ best_trade.first_name or best_trade.username }}</div>
+                        <div class="card-date">{{ best_trade.exit_time.strftime("%d.%m.%Y") }}</div>
+                    </div>
+                </div>
+                {% endif %}
+
+                {% if worst_trade %}
+                <div class="additional-card">
+                    <div class="card-title">📉 Худшая сделка</div>
+                    <div class="card-content">
+                        <div class="card-main">{{ worst_trade.stock_emoji }} {{ worst_trade.ticker }}</div>
+                        <div class="card-profit negative">{{ "%.2f"|format(worst_trade.profit_percent) }}%</div>
+                        <div class="card-user">{{ worst_trade.first_name or worst_trade.username }}</div>
+                        <div class="card-date">{{ worst_trade.exit_time.strftime("%d.%m.%Y") }}</div>
+                    </div>
+                </div>
+                {% endif %}
+
+                <div class="additional-card">
+                    <div class="card-title">⏱️ Средняя продолжительность</div>
+                    <div class="card-content">
+                        <div class="card-main-large">{{ avg_duration }}</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Блок: Лента всех сделок -->
+        {% if closed_positions %}
+        <section class="trades-feed">
+            <h2>📜 Лента сделок (последние {{ closed_positions|length }})</h2>
+            <div class="table-wrapper">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Дата закрытия</th>
+                            <th>Пользователь</th>
+                            <th>Акция</th>
+                            <th>Прибыль</th>
+                            <th>Продолжительность</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for pos in closed_positions %}
+                        <tr>
+                            <td>{{ pos.exit_time.strftime("%d.%m.%Y %H:%M") }}</td>
+                            <td>{{ pos.first_name or pos.username or pos.user_id }}</td>
+                            <td>{{ pos.stock_emoji }} {{ pos.ticker }} - {{ pos.stock_name }}</td>
+                            <td class="{% if pos.profit_percent > 0 %}positive{% else %}negative{% endif %}">
+                                {% if pos.profit_percent > 0 %}+{% endif %}{{ "%.2f"|format(pos.profit_percent) }}%
+                            </td>
+                            <td>{{ pos.duration_str }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </section>
+        {% else %}
+        <section class="trades-feed">
+            <h2>📜 Лента сделок</h2>
+            <p class="no-data">Пока нет закрытых сделок</p>
+        </section>
+        {% endif %}
+
+        <footer>
+            <p>© 2025 Ревущий котёнок 🐱 | Данные обновляются в реальном времени</p>
+        </footer>
+    </div>
+
+    <script>
+        function changeMonth(value) {
+            const [year, month] = value.split('-');
+            window.location.href = `/?year=${year}&month=${month}`;
+        }
+    </script>
+</body>
+</html>
