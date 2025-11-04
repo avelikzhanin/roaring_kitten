@@ -600,6 +600,48 @@ class Database:
                     """
                 )
             return float(result) if result else None
+    
+    async def get_top_trades(self, username: str = None, limit: int = 10, best: bool = True) -> List[Dict[str, Any]]:
+        """Получение топ лучших или худших сделок"""
+        async with self.pool.acquire() as conn:
+            order = "DESC" if best else "ASC"
+            
+            if username:
+                rows = await conn.fetch(
+                    f"""
+                    SELECT 
+                        p.ticker,
+                        p.profit_percent,
+                        p.exit_time,
+                        u.username,
+                        u.first_name
+                    FROM positions p
+                    JOIN users u ON p.user_id = u.user_id
+                    WHERE p.is_open = FALSE AND u.username = $1
+                    ORDER BY p.profit_percent {order}
+                    LIMIT $2
+                    """,
+                    username, limit
+                )
+            else:
+                rows = await conn.fetch(
+                    f"""
+                    SELECT 
+                        p.ticker,
+                        p.profit_percent,
+                        p.exit_time,
+                        u.username,
+                        u.first_name
+                    FROM positions p
+                    JOIN users u ON p.user_id = u.user_id
+                    WHERE p.is_open = FALSE
+                    ORDER BY p.profit_percent {order}
+                    LIMIT $1
+                    """,
+                    limit
+                )
+            
+            return [dict(row) for row in rows]
 
 
 # Глобальный экземпляр базы данных
