@@ -66,6 +66,8 @@
                         <tr>
                             <th>Акция</th>
                             <th>Цена входа</th>
+                            <th>Текущая цена</th>
+                            <th>Прибыль</th>
                             <th>Дата входа</th>
                         </tr>
                     </thead>
@@ -74,6 +76,22 @@
                         <tr>
                             <td>{{ pos.stock_emoji }} {{ pos.ticker }} - {{ pos.stock_name }}</td>
                             <td>{{ "%.2f"|format(pos.entry_price) }} ₽</td>
+                            <td>
+                                {% if pos.current_price %}
+                                    {{ "%.2f"|format(pos.current_price) }} ₽
+                                {% else %}
+                                    <span style="color: #999;">—</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if pos.current_profit is not none %}
+                                    <span class="{% if pos.current_profit > 0 %}positive{% else %}negative{% endif %}">
+                                        {% if pos.current_profit > 0 %}+{% endif %}{{ "%.2f"|format(pos.current_profit) }}%
+                                    </span>
+                                {% else %}
+                                    <span style="color: #999;">—</span>
+                                {% endif %}
+                            </td>
                             <td>{{ pos.entry_time.strftime("%d.%m.%Y %H:%M") }}</td>
                         </tr>
                         {% endfor %}
@@ -119,25 +137,31 @@
             <h2>💎 Дополнительно (за всё время)</h2>
             <div class="additional-cards">
                 {% if best_trade %}
-                <div class="additional-card">
-                    <div class="card-title">🏆 Лучшая сделка</div>
-                    <div class="card-content">
-                        <div class="card-main">{{ best_trade.stock_emoji }} {{ best_trade.ticker }}</div>
-                        <div class="card-profit positive">+{{ "%.2f"|format(best_trade.profit_percent) }}%</div>
-                        <div class="card-date">{{ best_trade.exit_time.strftime("%d.%m.%Y") }}</div>
+                <a href="/top-trades?type=best" class="card-link">
+                    <div class="additional-card clickable">
+                        <div class="card-title">🏆 Лучшая сделка</div>
+                        <div class="card-content">
+                            <div class="card-main">{{ best_trade.stock_emoji }} {{ best_trade.ticker }}</div>
+                            <div class="card-profit positive">+{{ "%.2f"|format(best_trade.profit_percent) }}%</div>
+                            <div class="card-date">{{ best_trade.exit_time.strftime("%d.%m.%Y") }}</div>
+                        </div>
+                        <div class="card-hint">Нажмите для топ-10 →</div>
                     </div>
-                </div>
+                </a>
                 {% endif %}
 
                 {% if worst_trade %}
-                <div class="additional-card">
-                    <div class="card-title">📉 Худшая сделка</div>
-                    <div class="card-content">
-                        <div class="card-main">{{ worst_trade.stock_emoji }} {{ worst_trade.ticker }}</div>
-                        <div class="card-profit negative">{{ "%.2f"|format(worst_trade.profit_percent) }}%</div>
-                        <div class="card-date">{{ worst_trade.exit_time.strftime("%d.%m.%Y") }}</div>
+                <a href="/top-trades?type=worst" class="card-link">
+                    <div class="additional-card clickable">
+                        <div class="card-title">📉 Худшая сделка</div>
+                        <div class="card-content">
+                            <div class="card-main">{{ worst_trade.stock_emoji }} {{ worst_trade.ticker }}</div>
+                            <div class="card-profit negative">{{ "%.2f"|format(worst_trade.profit_percent) }}%</div>
+                            <div class="card-date">{{ worst_trade.exit_time.strftime("%d.%m.%Y") }}</div>
+                        </div>
+                        <div class="card-hint">Нажмите для топ-10 →</div>
                     </div>
-                </div>
+                </a>
                 {% endif %}
 
                 <div class="additional-card">
