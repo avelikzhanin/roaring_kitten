@@ -60,21 +60,38 @@ async def dashboard(request: Request, year: Optional[int] = None, month: Optiona
     
     try:
         # Получаем данные из БД с фильтром по username
-        monthly_stats = await db.get_global_monthly_statistics(year, month, username=TARGET_USERNAME)
+        monthly_stats_all = await db.get_global_monthly_statistics(year, month, username=TARGET_USERNAME)
+        monthly_stats_long = await db.get_global_monthly_statistics(year, month, username=TARGET_USERNAME, position_type='LONG')
+        monthly_stats_short = await db.get_global_monthly_statistics(year, month, username=TARGET_USERNAME, position_type='SHORT')
+        
         open_positions = await db.get_all_open_positions_web(username=TARGET_USERNAME)
         closed_positions = await db.get_all_closed_positions_web(limit=50, username=TARGET_USERNAME)
-        ticker_stats = await db.get_statistics_by_ticker(username=TARGET_USERNAME)
-        best_worst = await db.get_best_and_worst_trades(username=TARGET_USERNAME)
-        avg_duration = await db.get_average_trade_duration(username=TARGET_USERNAME)
+        
+        ticker_stats_all = await db.get_statistics_by_ticker(username=TARGET_USERNAME)
+        ticker_stats_long = await db.get_statistics_by_ticker(username=TARGET_USERNAME, position_type='LONG')
+        ticker_stats_short = await db.get_statistics_by_ticker(username=TARGET_USERNAME, position_type='SHORT')
+        
+        best_worst_all = await db.get_best_and_worst_trades(username=TARGET_USERNAME)
+        best_worst_long = await db.get_best_and_worst_trades(username=TARGET_USERNAME, position_type='LONG')
+        best_worst_short = await db.get_best_and_worst_trades(username=TARGET_USERNAME, position_type='SHORT')
+        
+        avg_duration_all = await db.get_average_trade_duration(username=TARGET_USERNAME)
+        avg_duration_long = await db.get_average_trade_duration(username=TARGET_USERNAME, position_type='LONG')
+        avg_duration_short = await db.get_average_trade_duration(username=TARGET_USERNAME, position_type='SHORT')
         
         # Форматируем средюю продолжительность
-        if avg_duration:
-            if avg_duration < 24:
-                avg_duration_str = f"{avg_duration:.1f} часов"
+        def format_duration(avg_duration):
+            if avg_duration:
+                if avg_duration < 24:
+                    return f"{avg_duration:.1f} часов"
+                else:
+                    return f"{avg_duration / 24:.1f} дней"
             else:
-                avg_duration_str = f"{avg_duration / 24:.1f} дней"
-        else:
-            avg_duration_str = "Н/Д"
+                return "Н/Д"
+        
+        avg_duration_str_all = format_duration(avg_duration_all)
+        avg_duration_str_long = format_duration(avg_duration_long)
+        avg_duration_str_short = format_duration(avg_duration_short)
         
         # Добавляем имена и эмодзи к акциям
         for pos in open_positions:
@@ -87,9 +104,15 @@ async def dashboard(request: Request, year: Optional[int] = None, month: Optiona
                 stock_data = await stock_service.get_stock_data(ticker)
                 if stock_data:
                     pos['current_price'] = stock_data.price.current_price
-                    # Рассчитываем текущую прибыль
+                    # Рассчитываем текущую прибыль с учетом типа позиции
                     entry_price = float(pos['entry_price'])
-                    current_profit = ((pos['current_price'] - entry_price) / entry_price) * 100
+                    position_type = pos['position_type']
+                    
+                    if position_type == 'LONG':
+                        current_profit = ((pos['current_price'] - entry_price) / entry_price) * 100
+                    else:  # SHORT
+                        current_profit = ((entry_price - pos['current_price']) / entry_price) * 100
+                    
                     pos['current_profit'] = current_profit
                 else:
                     pos['current_price'] = None
@@ -111,21 +134,32 @@ async def dashboard(request: Request, year: Optional[int] = None, month: Optiona
             else:
                 pos['duration_str'] = f"{duration_hours / 24:.1f}д"
         
-        for stat in ticker_stats:
+        for stat in ticker_stats_all:
+            ticker = stat['ticker']
+            stat['stock_name'] = SUPPORTED_STOCKS.get(ticker, {}).get('name', ticker)
+            stat['stock_emoji'] = SUPPORTED_STOCKS.get(ticker, {}).get('emoji', '📊')
+        
+        for stat in ticker_stats_long:
+            ticker = stat['ticker']
+            stat['stock_name'] = SUPPORTED_STOCKS.get(ticker, {}).get('name', ticker)
+            stat['stock_emoji'] = SUPPORTED_STOCKS.get(ticker, {}).get('emoji', '📊')
+        
+        for stat in ticker_stats_short:
             ticker = stat['ticker']
             stat['stock_name'] = SUPPORTED_STOCKS.get(ticker, {}).get('name', ticker)
             stat['stock_emoji'] = SUPPORTED_STOCKS.get(ticker, {}).get('emoji', '📊')
         
         # Добавляем имена к лучшей/худшей сделке
-        if best_worst['best']:
-            ticker = best_worst['best']['ticker']
-            best_worst['best']['stock_name'] = SUPPORTED_STOCKS.get(ticker, {}).get('name', ticker)
-            best_worst['best']['stock_emoji'] = SUPPORTED_STOCKS.get(ticker, {}).get('emoji', '📊')
-        
-        if best_worst['worst']:
-            ticker = best_worst['worst']['ticker']
-            best_worst['worst']['stock_name'] = SUPPORTED_STOCKS.get(ticker, {}).get('name', ticker)
-            best_worst['worst']['stock_emoji'] = SUPPORTED_STOCKS.get(ticker, {}).get('emoji', '📊')
+        for best_worst in [best_worst_all, best_worst_long, best_worst_short]:
+            if best_worst['best']:
+                ticker = best_worst['best']['ticker']
+                best_worst['best']['stock_name'] = SUPPORTED_STOCKS.get(ticker, {}).get('name', ticker)
+                best_worst['best']['stock_emoji'] = SUPPORTED_STOCKS.get(ticker, {}).get('emoji', '📊')
+            
+            if best_worst['worst']:
+                ticker = best_worst['worst']['ticker']
+                best_worst['worst']['stock_name'] = SUPPORTED_STOCKS.get(ticker, {}).get('name', ticker)
+                best_worst['worst']['stock_emoji'] = SUPPORTED_STOCKS.get(ticker, {}).get('emoji', '📊')
         
         # Формируем список месяцев (с октября 2024 до текущего месяца)
         months_list = []
@@ -155,13 +189,23 @@ async def dashboard(request: Request, year: Optional[int] = None, month: Optiona
                 "month": month,
                 "month_name": datetime(year, month, 1).strftime("%B %Y"),
                 "months_list": months_list,
-                "monthly_stats": monthly_stats,
+                "monthly_stats_all": monthly_stats_all,
+                "monthly_stats_long": monthly_stats_long,
+                "monthly_stats_short": monthly_stats_short,
                 "open_positions": open_positions,
                 "closed_positions": closed_positions,
-                "ticker_stats": ticker_stats,
-                "best_trade": best_worst['best'],
-                "worst_trade": best_worst['worst'],
-                "avg_duration": avg_duration_str
+                "ticker_stats_all": ticker_stats_all,
+                "ticker_stats_long": ticker_stats_long,
+                "ticker_stats_short": ticker_stats_short,
+                "best_trade_all": best_worst_all['best'],
+                "worst_trade_all": best_worst_all['worst'],
+                "best_trade_long": best_worst_long['best'],
+                "worst_trade_long": best_worst_long['worst'],
+                "best_trade_short": best_worst_short['best'],
+                "worst_trade_short": best_worst_short['worst'],
+                "avg_duration_all": avg_duration_str_all,
+                "avg_duration_long": avg_duration_str_long,
+                "avg_duration_short": avg_duration_str_short
             }
         )
     
@@ -183,11 +227,11 @@ async def health_check():
 
 
 @app.get("/top-trades", response_class=HTMLResponse)
-async def top_trades(request: Request, type: str = "best"):
+async def top_trades(request: Request, type: str = "best", position_type: str = None):
     """Страница топ-10 лучших или худших сделок"""
     try:
         is_best = type == "best"
-        trades = await db.get_top_trades(username=TARGET_USERNAME, limit=10, best=is_best)
+        trades = await db.get_top_trades(username=TARGET_USERNAME, limit=10, best=is_best, position_type=position_type)
         
         # Добавляем имена и эмодзи
         for trade in trades:
@@ -195,7 +239,15 @@ async def top_trades(request: Request, type: str = "best"):
             trade['stock_name'] = SUPPORTED_STOCKS.get(ticker, {}).get('name', ticker)
             trade['stock_emoji'] = SUPPORTED_STOCKS.get(ticker, {}).get('emoji', '📊')
         
-        title = "🏆 Топ-10 лучших сделок" if is_best else "📉 Топ-10 худших сделок"
+        # Формируем заголовок
+        if position_type == 'LONG':
+            title_suffix = " (LONG)"
+        elif position_type == 'SHORT':
+            title_suffix = " (SHORT)"
+        else:
+            title_suffix = ""
+        
+        title = f"🏆 Топ-10 лучших сделок{title_suffix}" if is_best else f"📉 Топ-10 худших сделок{title_suffix}"
         
         return templates.TemplateResponse(
             "top_trades.html",
