@@ -25,15 +25,22 @@ class MessageFormatter:
             trend_emoji = "📉"
             trend_text = f"Цена ниже EMA20 ({price_vs_ema_percent:+.2f}%)"
         
-        # Проверяем условия для входа
-        buy_conditions_met = data.technical.adx > ADX_THRESHOLD and data.technical.di_plus > ADX_THRESHOLD
+        # Проверяем условия для входа в LONG и SHORT
+        long_conditions_met = data.technical.adx > ADX_THRESHOLD and data.technical.di_plus > ADX_THRESHOLD
+        short_conditions_met = data.technical.adx > ADX_THRESHOLD and data.technical.di_minus > ADX_THRESHOLD
         
-        if buy_conditions_met:
-            signal_emoji = "🔥"
-            signal_text = "✅ Условия для входа выполнены!\nПри подписке получите уведомление"
+        signal_text = ""
+        if long_conditions_met:
+            signal_text += f"✅ LONG: Условия выполнены!\n"
         else:
-            signal_emoji = "❌"
-            signal_text = f"❌ Условия для входа не выполнены\n(Нужно: ADX > {ADX_THRESHOLD} AND DI+ > {ADX_THRESHOLD})"
+            signal_text += f"❌ LONG: ADX > {ADX_THRESHOLD} AND DI+ > {ADX_THRESHOLD}\n"
+        
+        if short_conditions_met:
+            signal_text += f"✅ SHORT: Условия выполнены!\n"
+        else:
+            signal_text += f"❌ SHORT: ADX > {ADX_THRESHOLD} AND DI- > {ADX_THRESHOLD}\n"
+        
+        signal_text += "\nПри подписке получите уведомление"
         
         subscription_status = "⭐ Подписка активна" if is_subscribed else ""
         
@@ -54,9 +61,9 @@ class MessageFormatter:
         return message
     
     @staticmethod
-    def format_buy_signal_notification(signal: Signal, stock_name: str, stock_emoji: str, gpt_analysis: str = None) -> str:
-        """Уведомление о сигнале на покупку"""
-        message = f"""🔥 <b>СИГНАЛ НА ПОКУПКУ!</b>
+    def format_long_buy_signal_notification(signal: Signal, stock_name: str, stock_emoji: str, gpt_analysis: str = None) -> str:
+        """Уведомление о сигнале на покупку (LONG)"""
+        message = f"""🔥 <b>СИГНАЛ НА ПОКУПКУ (LONG)!</b>
 
 {stock_emoji} <b>{signal.ticker} - {stock_name}</b>
 
@@ -67,18 +74,17 @@ class MessageFormatter:
 • DI+: {signal.di_plus:.2f}
 • DI-: {signal.di_minus:.2f}"""
 
-        # Добавляем GPT анализ если есть (с экранированием HTML)
         if gpt_analysis:
             import html
             gpt_analysis_escaped = html.escape(gpt_analysis)
             message += f"\n\n🤖 <b>GPT АНАЛИЗ:</b>\n{gpt_analysis_escaped}"
         
-        message += "\n\n✅ Позиция открыта! Ждём сигнала на продажу."
+        message += "\n\n✅ LONG позиция открыта! Ждём сигнала на продажу."
         
         return message
     
     @staticmethod
-    def format_sell_signal_notification(
+    def format_long_sell_signal_notification(
         signal: Signal, 
         stock_name: str, 
         stock_emoji: str,
@@ -86,11 +92,11 @@ class MessageFormatter:
         profit_percent: float,
         gpt_analysis: str = None
     ) -> str:
-        """Уведомление о сигнале на продажу"""
+        """Уведомление о сигнале на продажу (закрытие LONG)"""
         profit_emoji = "📈" if profit_percent > 0 else "📉"
         profit_sign = "+" if profit_percent > 0 else ""
         
-        message = f"""🔴 <b>СИГНАЛ НА ПРОДАЖУ!</b>
+        message = f"""🔴 <b>СИГНАЛ НА ПРОДАЖУ (LONG)!</b>
 
 {stock_emoji} <b>{signal.ticker} - {stock_name}</b>
 
@@ -104,13 +110,71 @@ class MessageFormatter:
 • DI+: {signal.di_plus:.2f}
 • DI-: {signal.di_minus:.2f}"""
 
-        # Добавляем GPT анализ если есть (с экранированием HTML)
         if gpt_analysis:
             import html
             gpt_analysis_escaped = html.escape(gpt_analysis)
             message += f"\n\n🤖 <b>GPT АНАЛИЗ:</b>\n{gpt_analysis_escaped}"
         
-        message += "\n\n✅ Позиция закрыта!"
+        message += "\n\n✅ LONG позиция закрыта!"
+        
+        return message
+    
+    @staticmethod
+    def format_short_open_signal_notification(signal: Signal, stock_name: str, stock_emoji: str, gpt_analysis: str = None) -> str:
+        """Уведомление о сигнале на открытие SHORT"""
+        message = f"""🔻 <b>СИГНАЛ НА SHORT!</b>
+
+{stock_emoji} <b>{signal.ticker} - {stock_name}</b>
+
+💰 <b>Цена входа:</b> {signal.price:.2f} ₽
+
+📉 <b>Индикаторы:</b>
+• ADX: {signal.adx:.2f}
+• DI+: {signal.di_plus:.2f}
+• DI-: {signal.di_minus:.2f}"""
+
+        if gpt_analysis:
+            import html
+            gpt_analysis_escaped = html.escape(gpt_analysis)
+            message += f"\n\n🤖 <b>GPT АНАЛИЗ:</b>\n{gpt_analysis_escaped}"
+        
+        message += "\n\n✅ SHORT позиция открыта! Ждём сигнала на закрытие."
+        
+        return message
+    
+    @staticmethod
+    def format_short_close_signal_notification(
+        signal: Signal, 
+        stock_name: str, 
+        stock_emoji: str,
+        entry_price: float,
+        profit_percent: float,
+        gpt_analysis: str = None
+    ) -> str:
+        """Уведомление о сигнале на закрытие SHORT"""
+        profit_emoji = "📈" if profit_percent > 0 else "📉"
+        profit_sign = "+" if profit_percent > 0 else ""
+        
+        message = f"""🟢 <b>ЗАКРЫТИЕ SHORT!</b>
+
+{stock_emoji} <b>{signal.ticker} - {stock_name}</b>
+
+💰 <b>Цена закрытия:</b> {signal.price:.2f} ₽
+💵 <b>Цена входа:</b> {entry_price:.2f} ₽
+
+{profit_emoji} <b>Прибыль:</b> {profit_sign}{profit_percent:.2f}%
+
+📉 <b>Индикаторы:</b>
+• ADX: {signal.adx:.2f}
+• DI+: {signal.di_plus:.2f}
+• DI-: {signal.di_minus:.2f}"""
+
+        if gpt_analysis:
+            import html
+            gpt_analysis_escaped = html.escape(gpt_analysis)
+            message += f"\n\n🤖 <b>GPT АНАЛИЗ:</b>\n{gpt_analysis_escaped}"
+        
+        message += "\n\n✅ SHORT позиция закрыта!"
         
         return message
     
@@ -122,7 +186,7 @@ class MessageFormatter:
 💡 <b>Как это работает:</b>
 • Выбери акции для анализа
 • Подпишись на уведомления (⭐)
-• Получай автоматические сигналы на вход/выход
+• Получай автоматические сигналы на вход/выход (LONG и SHORT)
 • Отслеживай прибыль по сделкам
 
 Выбери действие из меню ниже 👇"""
@@ -150,16 +214,24 @@ class MessageFormatter:
             message += "🟢 <b>Открытые позиции:</b>\n\n"
             for pos in open_positions:
                 ticker = pos['ticker']
+                position_type = pos['position_type']
                 stock_info = SUPPORTED_STOCKS.get(ticker, {})
                 emoji = stock_info.get('emoji', '📊')
                 name = stock_info.get('name', ticker)
+                
+                # Определяем эмодзи типа позиции
+                type_emoji = "↗️" if position_type == 'LONG' else "↘️"
                 
                 entry_price = float(pos['entry_price'])
                 current_price = current_prices.get(ticker) if current_prices else None
                 
                 profit_text = ""
                 if current_price:
-                    profit = ((current_price - entry_price) / entry_price) * 100
+                    if position_type == 'LONG':
+                        profit = ((current_price - entry_price) / entry_price) * 100
+                    else:  # SHORT
+                        profit = ((entry_price - current_price) / entry_price) * 100
+                    
                     profit_emoji = "📈" if profit > 0 else "📉"
                     profit_sign = "+" if profit > 0 else ""
                     profit_text = f"\n  💰 Текущая: {current_price:.2f} ₽ ({profit_emoji} {profit_sign}{profit:.2f}%)"
@@ -167,6 +239,7 @@ class MessageFormatter:
                 entry_time = pos['entry_time'].strftime("%d.%m.%Y %H:%M")
                 
                 message += f"{emoji} <b>{ticker}</b> - {name}\n"
+                message += f"  {type_emoji} <b>{position_type}</b>\n"
                 message += f"  📅 {entry_time}\n"
                 message += f"  💵 Вход: {entry_price:.2f} ₽{profit_text}\n\n"
         
@@ -175,9 +248,13 @@ class MessageFormatter:
             message += "\n🔴 <b>Последние закрытые позиции:</b>\n\n"
             for pos in closed_positions:
                 ticker = pos['ticker']
+                position_type = pos['position_type']
                 stock_info = SUPPORTED_STOCKS.get(ticker, {})
                 emoji = stock_info.get('emoji', '📊')
                 name = stock_info.get('name', ticker)
+                
+                # Определяем эмодзи типа позиции
+                type_emoji = "↗️" if position_type == 'LONG' else "↘️"
                 
                 entry_price = float(pos['entry_price'])
                 exit_price = float(pos['exit_price'])
@@ -189,6 +266,7 @@ class MessageFormatter:
                 exit_time = pos['exit_time'].strftime("%d.%m.%Y %H:%M")
                 
                 message += f"{emoji} <b>{ticker}</b> - {name}\n"
+                message += f"  {type_emoji} <b>{position_type}</b>\n"
                 message += f"  📅 {exit_time}\n"
                 message += f"  💵 {entry_price:.2f} ₽ → {exit_price:.2f} ₽\n"
                 message += f"  {profit_emoji} <b>{profit_sign}{profit_percent:.2f}%</b>\n\n"
