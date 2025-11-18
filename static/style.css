@@ -53,6 +53,11 @@ section h2 {
     border-bottom: 2px solid #eee;
 }
 
+section h3 {
+    font-size: 1.4em;
+    margin-bottom: 15px;
+}
+
 /* Статистика за месяц */
 .month-stats .section-header {
     display: flex;
@@ -114,6 +119,16 @@ section h2 {
     background: linear-gradient(135deg, #ee0979 0%, #ff6a00 100%);
 }
 
+/* LONG карточки - зеленый градиент */
+.stat-card.long-card {
+    background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+}
+
+/* SHORT карточки - красный градиент */
+.stat-card.short-card {
+    background: linear-gradient(135deg, #ee0979 0%, #ff6a00 100%);
+}
+
 .stat-value {
     font-size: 2.5em;
     font-weight: bold;
@@ -163,6 +178,43 @@ tbody tr:last-child td {
     border-bottom: none;
 }
 
+/* Цветовая индикация LONG/SHORT в таблицах */
+.position-long {
+    border-left: 4px solid #11998e;
+}
+
+.position-short {
+    border-left: 4px solid #ee0979;
+}
+
+.position-long-subtle {
+    background: linear-gradient(to right, rgba(17, 153, 142, 0.05), transparent);
+}
+
+.position-short-subtle {
+    background: linear-gradient(to right, rgba(238, 9, 121, 0.05), transparent);
+}
+
+/* Бейджи типов позиций */
+.type-badge {
+    display: inline-block;
+    padding: 4px 12px;
+    border-radius: 12px;
+    font-size: 0.85em;
+    font-weight: 600;
+    text-align: center;
+}
+
+.long-badge {
+    background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+    color: white;
+}
+
+.short-badge {
+    background: linear-gradient(135deg, #ee0979 0%, #ff6a00 100%);
+    color: white;
+}
+
 .positive {
     color: #11998e;
     font-weight: bold;
@@ -196,7 +248,6 @@ tbody tr:last-child td {
 
 .additional-card:hover {
     transform: translateY(-5px);
-    border-color: #667eea;
 }
 
 .additional-card.clickable {
@@ -206,6 +257,25 @@ tbody tr:last-child td {
 .additional-card.clickable:hover {
     border-color: #667eea;
     box-shadow: 0 6px 20px rgba(102, 126, 234, 0.3);
+}
+
+/* Рамки для LONG/SHORT карточек */
+.long-card-border {
+    border-color: #11998e;
+}
+
+.long-card-border:hover {
+    border-color: #11998e;
+    box-shadow: 0 6px 20px rgba(17, 153, 142, 0.3);
+}
+
+.short-card-border {
+    border-color: #ee0979;
+}
+
+.short-card-border:hover {
+    border-color: #ee0979;
+    box-shadow: 0 6px 20px rgba(238, 9, 121, 0.3);
 }
 
 .card-hint {
