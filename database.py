@@ -471,53 +471,99 @@ class Database:
                 )
             return [dict(row) for row in rows]
     
-    async def get_all_closed_positions_web(self, limit: int = 50, username: str = None) -> List[Dict[str, Any]]:
+    async def get_all_closed_positions_web(self, limit: int = 50, username: str = None, position_type: str = None) -> List[Dict[str, Any]]:
         """Получение всех закрытых позиций для веб-дашборда (лента сделок)"""
         async with self.pool.acquire() as conn:
             if username:
-                rows = await conn.fetch(
-                    """
-                    SELECT 
-                        p.user_id,
-                        u.username,
-                        u.first_name,
-                        p.ticker,
-                        p.position_type,
-                        p.entry_price,
-                        p.exit_price,
-                        p.profit_percent,
-                        p.entry_time,
-                        p.exit_time
-                    FROM positions p
-                    JOIN users u ON p.user_id = u.user_id
-                    WHERE p.is_open = FALSE AND u.username = $1
-                    ORDER BY p.exit_time DESC
-                    LIMIT $2
-                    """,
-                    username, limit
-                )
+                if position_type:
+                    rows = await conn.fetch(
+                        """
+                        SELECT 
+                            p.user_id,
+                            u.username,
+                            u.first_name,
+                            p.ticker,
+                            p.position_type,
+                            p.entry_price,
+                            p.exit_price,
+                            p.profit_percent,
+                            p.entry_time,
+                            p.exit_time
+                        FROM positions p
+                        JOIN users u ON p.user_id = u.user_id
+                        WHERE p.is_open = FALSE AND u.username = $1 AND p.position_type = $3
+                        ORDER BY p.exit_time DESC
+                        LIMIT $2
+                        """,
+                        username, limit, position_type
+                    )
+                else:
+                    rows = await conn.fetch(
+                        """
+                        SELECT 
+                            p.user_id,
+                            u.username,
+                            u.first_name,
+                            p.ticker,
+                            p.position_type,
+                            p.entry_price,
+                            p.exit_price,
+                            p.profit_percent,
+                            p.entry_time,
+                            p.exit_time
+                        FROM positions p
+                        JOIN users u ON p.user_id = u.user_id
+                        WHERE p.is_open = FALSE AND u.username = $1
+                        ORDER BY p.exit_time DESC
+                        LIMIT $2
+                        """,
+                        username, limit
+                    )
             else:
-                rows = await conn.fetch(
-                    """
-                    SELECT 
-                        p.user_id,
-                        u.username,
-                        u.first_name,
-                        p.ticker,
-                        p.position_type,
-                        p.entry_price,
-                        p.exit_price,
-                        p.profit_percent,
-                        p.entry_time,
-                        p.exit_time
-                    FROM positions p
-                    JOIN users u ON p.user_id = u.user_id
-                    WHERE p.is_open = FALSE
-                    ORDER BY p.exit_time DESC
-                    LIMIT $1
-                    """,
-                    limit
-                )
+                if position_type:
+                    rows = await conn.fetch(
+                        """
+                        SELECT 
+                            p.user_id,
+                            u.username,
+                            u.first_name,
+                            p.ticker,
+                            p.position_type,
+                            p.entry_price,
+                            p.exit_price,
+                            p.profit_percent,
+                            p.entry_time,
+                            p.exit_time
+                        FROM positions p
+                        JOIN users u ON p.user_id = u.user_id
+                        WHERE p.is_open = FALSE AND p.position_type = $2
+                        ORDER BY p.exit_time DESC
+                        LIMIT $1
+                        """,
+                        limit, position_type
+                    )
+                else:
+                    rows = await conn.fetch(
+                        """
+                        SELECT 
+                            p.user_id,
+                            u.username,
+                            u.first_name,
+                            p.ticker,
+                            p.position_type,
+                            p.entry_price,
+                            p.exit_price,
+                            p.profit_percent,
+                            p.entry_time,
+                            p.exit_time
+                        FROM positions p
+                        JOIN users u ON p.user_id = u.user_id
+                        WHERE p.is_open = FALSE
+                        ORDER BY p.exit_time DESC
+                        LIMIT $1
+                        """,
+                        limit
+                    )
             return [dict(row) for row in rows]
     
     async def get_global_monthly_statistics(self, year: int, month: int, username: str = None, position_type: str = None) -> Dict[str, Any]:
@@ -747,6 +793,115 @@ class Database:
             
             rows = await conn.fetch(query, *params)
             
+            return [dict(row) for row in rows]
+    
+    async def get_statistics_by_ticker_filtered(self, username: str = None, year: int = None, month: int = None, position_type: str = None) -> List[Dict[str, Any]]:
+        """Получение статистики по каждой акции за конкретный месяц"""
+        async with self.pool.acquire() as conn:
+            # Формируем WHERE условия
+            where_conditions = ["p.is_open = FALSE"]
+            params = []
+            param_idx = 1
+            
+            if username:
+                where_conditions.append(f"u.username = ${param_idx}")
+                params.append(username)
+                param_idx += 1
+            
+            if year and month:
+                where_conditions.append(f"EXTRACT(YEAR FROM p.exit_time) = ${param_idx}")
+                params.append(year)
+                param_idx += 1
+                where_conditions.append(f"EXTRACT(MONTH FROM p.exit_time) = ${param_idx}")
+                params.append(month)
+                param_idx += 1
+            
+            if position_type:
+                where_conditions.append(f"p.position_type = ${param_idx}")
+                params.append(position_type)
+                param_idx += 1
+            
+            where_clause = " AND ".join(where_conditions)
+            
+            query = f"""
+                SELECT 
+                    p.ticker,
+                    COUNT(*) as total_trades,
+                    SUM(CASE WHEN p.profit_percent > 0 THEN 1 ELSE 0 END) as profitable,
+                    ROUND(
+                        (SUM(CASE WHEN p.profit_percent > 0 THEN 1 ELSE 0 END)::numeric / COUNT(*)::numeric * 100), 
+                        2
+                    ) as winrate,
+                    ROUND(SUM(p.profit_percent)::numeric, 2) as total_profit
+                FROM positions p
+                JOIN users u ON p.user_id = u.user_id
+                WHERE {where_clause}
+                GROUP BY p.ticker
+                ORDER BY total_profit DESC
+            """
+            
+            rows = await conn.fetch(query, *params)
+            return [dict(row) for row in rows]
+    
+    async def get_closed_positions_filtered(
+        self, 
+        username: str = None, 
+        year: int = None, 
+        month: int = None, 
+        position_type: str = None, 
+        limit: int = 50
+    ) -> List[Dict[str, Any]]:
+        """Получение закрытых позиций с фильтрами по месяцу и типу"""
+        async with self.pool.acquire() as conn:
+            # Формируем WHERE условия
+            where_conditions = ["p.is_open = FALSE"]
+            params = []
+            param_idx = 1
+            
+            if username:
+                where_conditions.append(f"u.username = ${param_idx}")
+                params.append(username)
+                param_idx += 1
+            
+            if year and month:
+                where_conditions.append(f"EXTRACT(YEAR FROM p.exit_time) = ${param_idx}")
+                params.append(year)
+                param_idx += 1
+                where_conditions.append(f"EXTRACT(MONTH FROM p.exit_time) = ${param_idx}")
+                params.append(month)
+                param_idx += 1
+            
+            if position_type and position_type != 'all':
+                where_conditions.append(f"p.position_type = ${param_idx}")
+                params.append(position_type)
+                param_idx += 1
+            
+            # Добавляем limit
+            params.append(limit)
+            limit_param = f"${len(params)}"
+            
+            where_clause = " AND ".join(where_conditions)
+            
+            query = f"""
+                SELECT 
+                    p.user_id,
+                    u.username,
+                    u.first_name,
+                    p.ticker,
+                    p.position_type,
+                    p.entry_price,
+                    p.exit_price,
+                    p.profit_percent,
+                    p.entry_time,
+                    p.exit_time
+                FROM positions p
+                JOIN users u ON p.user_id = u.user_id
+                WHERE {where_clause}
+                ORDER BY p.exit_time DESC
+                LIMIT {limit_param}
+            """
+            
+            rows = await conn.fetch(query, *params)
             return [dict(row) for row in rows]
 
 
