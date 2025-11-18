@@ -63,10 +63,12 @@ class Database:
                     id SERIAL PRIMARY KEY,
                     user_id BIGINT NOT NULL,
                     ticker VARCHAR(10) NOT NULL,
+                    position_type VARCHAR(10) DEFAULT 'LONG',
                     entry_price DECIMAL(10, 2) NOT NULL,
                     entry_time TIMESTAMP NOT NULL,
                     entry_adx DECIMAL(5, 2),
                     entry_di_plus DECIMAL(5, 2),
+                    entry_di_minus DECIMAL(5, 2),
                     exit_price DECIMAL(10, 2),
                     exit_time TIMESTAMP,
                     profit_percent DECIMAL(10, 2),
@@ -75,24 +77,97 @@ class Database:
                 )
             """)
             
-            # 4. Таблица состояний сигналов
+            # Миграция: добавляем position_type если его нет
+            try:
+                await conn.execute("""
+                    ALTER TABLE positions 
+                    ADD COLUMN IF NOT EXISTS position_type VARCHAR(10) DEFAULT 'LONG'
+                """)
+                logger.info("✅ Migration: position_type column added/verified")
+            except Exception as e:
+                logger.warning(f"Migration warning: {e}")
+            
+            # Миграция: добавляем entry_di_minus если его нет
+            try:
+                await conn.execute("""
+                    ALTER TABLE positions 
+                    ADD COLUMN IF NOT EXISTS entry_di_minus DECIMAL(5, 2)
+                """)
+                logger.info("✅ Migration: entry_di_minus column added/verified")
+            except Exception as e:
+                logger.warning(f"Migration warning: {e}")
+            
+            # 4. Таблица состояний сигналов (теперь отдельно для LONG и SHORT)
             await conn.execute("""
                 CREATE TABLE IF NOT EXISTS signal_states (
-                    ticker VARCHAR(10) PRIMARY KEY,
+                    ticker VARCHAR(10) NOT NULL,
+                    signal_type VARCHAR(10) NOT NULL,
                     last_signal VARCHAR(10) NOT NULL,
                     last_adx DECIMAL(5, 2),
                     last_di_plus DECIMAL(5, 2),
                     last_di_minus DECIMAL(5, 2),
                     last_price DECIMAL(10, 2),
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (ticker, signal_type)
                 )
             """)
+            
+            # Миграция: добавляем signal_type в signal_states
+            try:
+                # Проверяем структуру таблицы
+                columns = await conn.fetch("""
+                    SELECT column_name 
+                    FROM information_schema.columns 
+                    WHERE table_name = 'signal_states'
+                """)
+                column_names = [col['column_name'] for col in columns]
+                
+                if 'signal_type' not in column_names:
+                    # Старая структура - нужна миграция
+                    logger.info("🔄 Migrating signal_states table...")
+                    
+                    # Создаем новую таблицу
+                    await conn.execute("""
+                        CREATE TABLE signal_states_new (
+                            ticker VARCHAR(10) NOT NULL,
+                            signal_type VARCHAR(10) NOT NULL,
+                            last_signal VARCHAR(10) NOT NULL,
+                            last_adx DECIMAL(5, 2),
+                            last_di_plus DECIMAL(5, 2),
+                            last_di_minus DECIMAL(5, 2),
+                            last_price DECIMAL(10, 2),
+                            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            PRIMARY KEY (ticker, signal_type)
+                        )
+                    """)
+                    
+                    # Копируем данные из старой таблицы (для LONG)
+                    await conn.execute("""
+                        INSERT INTO signal_states_new 
+                        (ticker, signal_type, last_signal, last_adx, last_di_plus, last_di_minus, last_price, updated_at)
+                        SELECT ticker, 'LONG', last_signal, last_adx, last_di_plus, last_di_minus, last_price, updated_at
+                        FROM signal_states
+                    """)
+                    
+                    # Удаляем старую таблицу
+                    await conn.execute("DROP TABLE signal_states")
+                    
+                    # Переименовываем новую таблицу
+                    await conn.execute("ALTER TABLE signal_states_new RENAME TO signal_states")
+                    
+                    logger.info("✅ Migration: signal_states migrated successfully")
+                else:
+                    logger.info("✅ signal_states already has correct structure")
+                    
+            except Exception as e:
+                logger.warning(f"Migration warning for signal_states: {e}")
             
             # 5. Создаем индексы
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_subscriptions_user_id ON subscriptions(user_id)")
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_subscriptions_ticker ON subscriptions(ticker)")
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_positions_user_id ON positions(user_id)")
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_positions_is_open ON positions(is_open)")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_positions_position_type ON positions(position_type)")
             
             logger.info("✅ Database schema initialized")
     
@@ -174,36 +249,48 @@ class Database:
     async def open_position(
         self, 
         user_id: int, 
-        ticker: str, 
+        ticker: str,
+        position_type: str,
         entry_price: float,
         entry_adx: float,
-        entry_di_plus: float
+        entry_di_plus: float,
+        entry_di_minus: float
     ) -> int:
         """Открытие позиции. Возвращает ID позиции"""
         async with self.pool.acquire() as conn:
             position_id = await conn.fetchval(
                 """
-                INSERT INTO positions (user_id, ticker, entry_price, entry_time, entry_adx, entry_di_plus)
-                VALUES ($1, $2, $3, $4, $5, $6)
+                INSERT INTO positions 
+                (user_id, ticker, position_type, entry_price, entry_time, entry_adx, entry_di_plus, entry_di_minus)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
                 RETURNING id
                 """,
-                user_id, ticker, entry_price, datetime.now(), entry_adx, entry_di_plus
+                user_id, ticker, position_type, entry_price, datetime.now(), entry_adx, entry_di_plus, entry_di_minus
             )
             return position_id
     
-    async def close_position(self, user_id: int, ticker: str, exit_price: float):
+    async def close_position(self, user_id: int, ticker: str, position_type: str, exit_price: float):
         """Закрытие позиции"""
         async with self.pool.acquire() as conn:
-            await conn.execute(
-                """
+            # Для LONG: (exit - entry) / entry * 100
+            # Для SHORT: (entry - exit) / entry * 100
+            if position_type == 'LONG':
+                profit_formula = "(($3 - entry_price) / entry_price * 100)"
+            else:  # SHORT
+                profit_formula = "((entry_price - $3) / entry_price * 100)"
+            
+            query = f"""
                 UPDATE positions
                 SET exit_price = $3,
                     exit_time = $4,
-                    profit_percent = ROUND((($3 - entry_price) / entry_price * 100)::numeric, 2),
+                    profit_percent = ROUND({profit_formula}::numeric, 2),
                     is_open = FALSE
-                WHERE user_id = $1 AND ticker = $2 AND is_open = TRUE
-                """,
-                user_id, ticker, exit_price, datetime.now()
+                WHERE user_id = $1 AND ticker = $2 AND position_type = $5 AND is_open = TRUE
+            """
+            
+            await conn.execute(
+                query,
+                user_id, ticker, exit_price, datetime.now(), position_type
             )
     
     async def get_open_positions(self, user_id: int) -> List[Dict[str, Any]]:
@@ -211,7 +298,7 @@ class Database:
         async with self.pool.acquire() as conn:
             rows = await conn.fetch(
                 """
-                SELECT id, ticker, entry_price, entry_time, entry_adx, entry_di_plus
+                SELECT id, ticker, position_type, entry_price, entry_time, entry_adx, entry_di_plus, entry_di_minus
                 FROM positions
                 WHERE user_id = $1 AND is_open = TRUE
                 ORDER BY entry_time DESC
@@ -225,7 +312,7 @@ class Database:
         async with self.pool.acquire() as conn:
             rows = await conn.fetch(
                 """
-                SELECT ticker, entry_price, exit_price, profit_percent, entry_time, exit_time
+                SELECT ticker, position_type, entry_price, exit_price, profit_percent, entry_time, exit_time
                 FROM positions
                 WHERE user_id = $1 AND is_open = FALSE
                 ORDER BY exit_time DESC
@@ -235,29 +322,37 @@ class Database:
             )
             return [dict(row) for row in rows]
     
-    async def has_open_position(self, user_id: int, ticker: str) -> bool:
-        """Проверка наличия открытой позиции"""
+    async def has_open_position(self, user_id: int, ticker: str, position_type: str = None) -> bool:
+        """Проверка наличия открытой позиции (любого типа или конкретного)"""
         async with self.pool.acquire() as conn:
-            result = await conn.fetchval(
-                "SELECT EXISTS(SELECT 1 FROM positions WHERE user_id = $1 AND ticker = $2 AND is_open = TRUE)",
-                user_id, ticker
-            )
+            if position_type:
+                result = await conn.fetchval(
+                    "SELECT EXISTS(SELECT 1 FROM positions WHERE user_id = $1 AND ticker = $2 AND position_type = $3 AND is_open = TRUE)",
+                    user_id, ticker, position_type
+                )
+            else:
+                # Проверяем наличие любой открытой позиции (LONG или SHORT)
+                result = await conn.fetchval(
+                    "SELECT EXISTS(SELECT 1 FROM positions WHERE user_id = $1 AND ticker = $2 AND is_open = TRUE)",
+                    user_id, ticker
+                )
             return result
     
     # ========== SIGNAL STATES ==========
     
-    async def get_signal_state(self, ticker: str) -> Optional[Dict[str, Any]]:
-        """Получение последнего состояния сигнала"""
+    async def get_signal_state(self, ticker: str, signal_type: str) -> Optional[Dict[str, Any]]:
+        """Получение последнего состояния сигнала для конкретного типа (LONG/SHORT)"""
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow(
-                "SELECT * FROM signal_states WHERE ticker = $1",
-                ticker
+                "SELECT * FROM signal_states WHERE ticker = $1 AND signal_type = $2",
+                ticker, signal_type
             )
             return dict(row) if row else None
     
     async def update_signal_state(
         self,
         ticker: str,
+        signal_type: str,
         signal: str,
         adx: float,
         di_plus: float,
@@ -268,36 +363,52 @@ class Database:
         async with self.pool.acquire() as conn:
             await conn.execute(
                 """
-                INSERT INTO signal_states (ticker, last_signal, last_adx, last_di_plus, last_di_minus, last_price, updated_at)
-                VALUES ($1, $2, $3, $4, $5, $6, $7)
-                ON CONFLICT (ticker) DO UPDATE
-                SET last_signal = $2,
-                    last_adx = $3,
-                    last_di_plus = $4,
-                    last_di_minus = $5,
-                    last_price = $6,
-                    updated_at = $7
+                INSERT INTO signal_states 
+                (ticker, signal_type, last_signal, last_adx, last_di_plus, last_di_minus, last_price, updated_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                ON CONFLICT (ticker, signal_type) DO UPDATE
+                SET last_signal = $3,
+                    last_adx = $4,
+                    last_di_plus = $5,
+                    last_di_minus = $6,
+                    last_price = $7,
+                    updated_at = $8
                 """,
-                ticker, signal, adx, di_plus, di_minus, price, datetime.now()
+                ticker, signal_type, signal, adx, di_plus, di_minus, price, datetime.now()
             )
     
     # ========== STATISTICS ==========
     
-    async def get_monthly_statistics(self, user_id: int, year: int, month: int) -> Dict[str, Any]:
-        """Получение статистики за месяц"""
+    async def get_monthly_statistics(self, user_id: int, year: int, month: int, position_type: str = None) -> Dict[str, Any]:
+        """Получение статистики за месяц (с фильтром по типу позиции)"""
         async with self.pool.acquire() as conn:
-            rows = await conn.fetch(
-                """
-                SELECT profit_percent
-                FROM positions
-                WHERE user_id = $1 
-                  AND is_open = FALSE
-                  AND EXTRACT(YEAR FROM exit_time) = $2
-                  AND EXTRACT(MONTH FROM exit_time) = $3
-                ORDER BY exit_time DESC
-                """,
-                user_id, year, month
-            )
+            if position_type:
+                rows = await conn.fetch(
+                    """
+                    SELECT profit_percent
+                    FROM positions
+                    WHERE user_id = $1 
+                      AND is_open = FALSE
+                      AND position_type = $4
+                      AND EXTRACT(YEAR FROM exit_time) = $2
+                      AND EXTRACT(MONTH FROM exit_time) = $3
+                    ORDER BY exit_time DESC
+                    """,
+                    user_id, year, month, position_type
+                )
+            else:
+                rows = await conn.fetch(
+                    """
+                    SELECT profit_percent
+                    FROM positions
+                    WHERE user_id = $1 
+                      AND is_open = FALSE
+                      AND EXTRACT(YEAR FROM exit_time) = $2
+                      AND EXTRACT(MONTH FROM exit_time) = $3
+                    ORDER BY exit_time DESC
+                    """,
+                    user_id, year, month
+                )
             
             if not rows:
                 return {
@@ -331,6 +442,7 @@ class Database:
                         u.username,
                         u.first_name,
                         p.ticker,
+                        p.position_type,
                         p.entry_price,
                         p.entry_time
                     FROM positions p
@@ -348,6 +460,7 @@ class Database:
                         u.username,
                         u.first_name,
                         p.ticker,
+                        p.position_type,
                         p.entry_price,
                         p.entry_time
                     FROM positions p
@@ -369,6 +482,7 @@ class Database:
                         u.username,
                         u.first_name,
                         p.ticker,
+                        p.position_type,
                         p.entry_price,
                         p.exit_price,
                         p.profit_percent,
@@ -390,6 +504,7 @@ class Database:
                         u.username,
                         u.first_name,
                         p.ticker,
+                        p.position_type,
                         p.entry_price,
                         p.exit_price,
                         p.profit_percent,
@@ -405,35 +520,37 @@ class Database:
                 )
             return [dict(row) for row in rows]
     
-    async def get_global_monthly_statistics(self, year: int, month: int, username: str = None) -> Dict[str, Any]:
-        """Получение глобальной статистики за месяц (все пользователи или конкретный)"""
+    async def get_global_monthly_statistics(self, year: int, month: int, username: str = None, position_type: str = None) -> Dict[str, Any]:
+        """Получение глобальной статистики за месяц (все пользователи или конкретный, с фильтром по типу)"""
         async with self.pool.acquire() as conn:
+            # Формируем WHERE условия
+            where_conditions = ["p.is_open = FALSE"]
+            params = [year, month]
+            param_idx = 3
+            
             if username:
-                rows = await conn.fetch(
-                    """
-                    SELECT profit_percent
-                    FROM positions p
-                    JOIN users u ON p.user_id = u.user_id
-                    WHERE p.is_open = FALSE
-                      AND EXTRACT(YEAR FROM p.exit_time) = $1
-                      AND EXTRACT(MONTH FROM p.exit_time) = $2
-                      AND u.username = $3
-                    ORDER BY p.exit_time DESC
-                    """,
-                    year, month, username
-                )
-            else:
-                rows = await conn.fetch(
-                    """
-                    SELECT profit_percent
-                    FROM positions
-                    WHERE is_open = FALSE
-                      AND EXTRACT(YEAR FROM exit_time) = $1
-                      AND EXTRACT(MONTH FROM exit_time) = $2
-                    ORDER BY exit_time DESC
-                    """,
-                    year, month
-                )
+                where_conditions.append(f"u.username = ${param_idx}")
+                params.append(username)
+                param_idx += 1
+            
+            if position_type:
+                where_conditions.append(f"p.position_type = ${param_idx}")
+                params.append(position_type)
+                param_idx += 1
+            
+            where_clause = " AND ".join(where_conditions)
+            
+            query = f"""
+                SELECT profit_percent
+                FROM positions p
+                JOIN users u ON p.user_id = u.user_id
+                WHERE {where_clause}
+                  AND EXTRACT(YEAR FROM p.exit_time) = $1
+                  AND EXTRACT(MONTH FROM p.exit_time) = $2
+                ORDER BY p.exit_time DESC
+            """
+            
+            rows = await conn.fetch(query, *params)
             
             if not rows:
                 return {
@@ -456,190 +573,179 @@ class Database:
                 'winrate': (len(profitable) / len(profits) * 100) if profits else 0.0
             }
     
-    async def get_statistics_by_ticker(self, username: str = None) -> List[Dict[str, Any]]:
-        """Получение статистики по каждой акции (за все время)"""
+    async def get_statistics_by_ticker(self, username: str = None, position_type: str = None) -> List[Dict[str, Any]]:
+        """Получение статистики по каждой акции (за все время, с фильтром по типу)"""
         async with self.pool.acquire() as conn:
+            # Формируем WHERE условия
+            where_conditions = ["p.is_open = FALSE"]
+            params = []
+            param_idx = 1
+            
             if username:
-                rows = await conn.fetch(
-                    """
-                    SELECT 
-                        p.ticker,
-                        COUNT(*) as total_trades,
-                        SUM(CASE WHEN p.profit_percent > 0 THEN 1 ELSE 0 END) as profitable,
-                        ROUND(
-                            (SUM(CASE WHEN p.profit_percent > 0 THEN 1 ELSE 0 END)::numeric / COUNT(*)::numeric * 100), 
-                            2
-                        ) as winrate,
-                        ROUND(SUM(p.profit_percent)::numeric, 2) as total_profit
-                    FROM positions p
-                    JOIN users u ON p.user_id = u.user_id
-                    WHERE p.is_open = FALSE AND u.username = $1
-                    GROUP BY p.ticker
-                    ORDER BY total_profit DESC
-                    """,
-                    username
-                )
-            else:
-                rows = await conn.fetch(
-                    """
-                    SELECT 
-                        ticker,
-                        COUNT(*) as total_trades,
-                        SUM(CASE WHEN profit_percent > 0 THEN 1 ELSE 0 END) as profitable,
-                        ROUND(
-                            (SUM(CASE WHEN profit_percent > 0 THEN 1 ELSE 0 END)::numeric / COUNT(*)::numeric * 100), 
-                            2
-                        ) as winrate,
-                        ROUND(SUM(profit_percent)::numeric, 2) as total_profit
-                    FROM positions
-                    WHERE is_open = FALSE
-                    GROUP BY ticker
-                    ORDER BY total_profit DESC
-                    """
-                )
+                where_conditions.append(f"u.username = ${param_idx}")
+                params.append(username)
+                param_idx += 1
+            
+            if position_type:
+                where_conditions.append(f"p.position_type = ${param_idx}")
+                params.append(position_type)
+                param_idx += 1
+            
+            where_clause = " AND ".join(where_conditions)
+            
+            query = f"""
+                SELECT 
+                    p.ticker,
+                    COUNT(*) as total_trades,
+                    SUM(CASE WHEN p.profit_percent > 0 THEN 1 ELSE 0 END) as profitable,
+                    ROUND(
+                        (SUM(CASE WHEN p.profit_percent > 0 THEN 1 ELSE 0 END)::numeric / COUNT(*)::numeric * 100), 
+                        2
+                    ) as winrate,
+                    ROUND(SUM(p.profit_percent)::numeric, 2) as total_profit
+                FROM positions p
+                JOIN users u ON p.user_id = u.user_id
+                WHERE {where_clause}
+                GROUP BY p.ticker
+                ORDER BY total_profit DESC
+            """
+            
+            rows = await conn.fetch(query, *params)
             return [dict(row) for row in rows]
     
-    async def get_best_and_worst_trades(self, username: str = None) -> Dict[str, Any]:
-        """Получение лучшей и худшей сделки"""
+    async def get_best_and_worst_trades(self, username: str = None, position_type: str = None) -> Dict[str, Any]:
+        """Получение лучшей и худшей сделки (с фильтром по типу)"""
         async with self.pool.acquire() as conn:
+            # Формируем WHERE условия
+            where_conditions = ["p.is_open = FALSE"]
+            params = []
+            param_idx = 1
+            
             if username:
-                # Лучшая сделка
-                best_row = await conn.fetchrow(
-                    """
-                    SELECT 
-                        p.ticker,
-                        p.profit_percent,
-                        p.exit_time,
-                        u.username,
-                        u.first_name
-                    FROM positions p
-                    JOIN users u ON p.user_id = u.user_id
-                    WHERE p.is_open = FALSE AND u.username = $1
-                    ORDER BY p.profit_percent DESC
-                    LIMIT 1
-                    """,
-                    username
-                )
-                
-                # Худшая сделка
-                worst_row = await conn.fetchrow(
-                    """
-                    SELECT 
-                        p.ticker,
-                        p.profit_percent,
-                        p.exit_time,
-                        u.username,
-                        u.first_name
-                    FROM positions p
-                    JOIN users u ON p.user_id = u.user_id
-                    WHERE p.is_open = FALSE AND u.username = $1
-                    ORDER BY p.profit_percent ASC
-                    LIMIT 1
-                    """,
-                    username
-                )
-            else:
-                # Лучшая сделка
-                best_row = await conn.fetchrow(
-                    """
-                    SELECT 
-                        p.ticker,
-                        p.profit_percent,
-                        p.exit_time,
-                        u.username,
-                        u.first_name
-                    FROM positions p
-                    JOIN users u ON p.user_id = u.user_id
-                    WHERE p.is_open = FALSE
-                    ORDER BY p.profit_percent DESC
-                    LIMIT 1
-                    """
-                )
-                
-                # Худшая сделка
-                worst_row = await conn.fetchrow(
-                    """
-                    SELECT 
-                        p.ticker,
-                        p.profit_percent,
-                        p.exit_time,
-                        u.username,
-                        u.first_name
-                    FROM positions p
-                    JOIN users u ON p.user_id = u.user_id
-                    WHERE p.is_open = FALSE
-                    ORDER BY p.profit_percent ASC
-                    LIMIT 1
-                    """
-                )
+                where_conditions.append(f"u.username = ${param_idx}")
+                params.append(username)
+                param_idx += 1
+            
+            if position_type:
+                where_conditions.append(f"p.position_type = ${param_idx}")
+                params.append(position_type)
+                param_idx += 1
+            
+            where_clause = " AND ".join(where_conditions)
+            
+            # Лучшая сделка
+            best_query = f"""
+                SELECT 
+                    p.ticker,
+                    p.position_type,
+                    p.profit_percent,
+                    p.exit_time,
+                    u.username,
+                    u.first_name
+                FROM positions p
+                JOIN users u ON p.user_id = u.user_id
+                WHERE {where_clause}
+                ORDER BY p.profit_percent DESC
+                LIMIT 1
+            """
+            
+            best_row = await conn.fetchrow(best_query, *params)
+            
+            # Худшая сделка
+            worst_query = f"""
+                SELECT 
+                    p.ticker,
+                    p.position_type,
+                    p.profit_percent,
+                    p.exit_time,
+                    u.username,
+                    u.first_name
+                FROM positions p
+                JOIN users u ON p.user_id = u.user_id
+                WHERE {where_clause}
+                ORDER BY p.profit_percent ASC
+                LIMIT 1
+            """
+            
+            worst_row = await conn.fetchrow(worst_query, *params)
             
             return {
                 'best': dict(best_row) if best_row else None,
                 'worst': dict(worst_row) if worst_row else None
             }
     
-    async def get_average_trade_duration(self, username: str = None) -> Optional[float]:
-        """Получение средней продолжительности сделки в часах"""
+    async def get_average_trade_duration(self, username: str = None, position_type: str = None) -> Optional[float]:
+        """Получение средней продолжительности сделки в часах (с фильтром по типу)"""
         async with self.pool.acquire() as conn:
+            # Формируем WHERE условия
+            where_conditions = ["p.is_open = FALSE"]
+            params = []
+            param_idx = 1
+            
             if username:
-                result = await conn.fetchval(
-                    """
-                    SELECT AVG(EXTRACT(EPOCH FROM (p.exit_time - p.entry_time)) / 3600)
-                    FROM positions p
-                    JOIN users u ON p.user_id = u.user_id
-                    WHERE p.is_open = FALSE AND u.username = $1
-                    """,
-                    username
-                )
-            else:
-                result = await conn.fetchval(
-                    """
-                    SELECT AVG(EXTRACT(EPOCH FROM (exit_time - entry_time)) / 3600)
-                    FROM positions
-                    WHERE is_open = FALSE
-                    """
-                )
+                where_conditions.append(f"u.username = ${param_idx}")
+                params.append(username)
+                param_idx += 1
+            
+            if position_type:
+                where_conditions.append(f"p.position_type = ${param_idx}")
+                params.append(position_type)
+                param_idx += 1
+            
+            where_clause = " AND ".join(where_conditions)
+            
+            query = f"""
+                SELECT AVG(EXTRACT(EPOCH FROM (p.exit_time - p.entry_time)) / 3600)
+                FROM positions p
+                JOIN users u ON p.user_id = u.user_id
+                WHERE {where_clause}
+            """
+            
+            result = await conn.fetchval(query, *params)
             return float(result) if result else None
     
-    async def get_top_trades(self, username: str = None, limit: int = 10, best: bool = True) -> List[Dict[str, Any]]:
-        """Получение топ лучших или худших сделок"""
+    async def get_top_trades(self, username: str = None, limit: int = 10, best: bool = True, position_type: str = None) -> List[Dict[str, Any]]:
+        """Получение топ лучших или худших сделок (с фильтром по типу)"""
         async with self.pool.acquire() as conn:
             order = "DESC" if best else "ASC"
             
+            # Формируем WHERE условия
+            where_conditions = ["p.is_open = FALSE"]
+            params = []
+            param_idx = 1
+            
             if username:
-                rows = await conn.fetch(
-                    f"""
-                    SELECT 
-                        p.ticker,
-                        p.profit_percent,
-                        p.exit_time,
-                        u.username,
-                        u.first_name
-                    FROM positions p
-                    JOIN users u ON p.user_id = u.user_id
-                    WHERE p.is_open = FALSE AND u.username = $1
-                    ORDER BY p.profit_percent {order}
-                    LIMIT $2
-                    """,
-                    username, limit
-                )
-            else:
-                rows = await conn.fetch(
-                    f"""
-                    SELECT 
-                        p.ticker,
-                        p.profit_percent,
-                        p.exit_time,
-                        u.username,
-                        u.first_name
-                    FROM positions p
-                    JOIN users u ON p.user_id = u.user_id
-                    WHERE p.is_open = FALSE
-                    ORDER BY p.profit_percent {order}
-                    LIMIT $1
-                    """,
-                    limit
-                )
+                where_conditions.append(f"u.username = ${param_idx}")
+                params.append(username)
+                param_idx += 1
+            
+            if position_type:
+                where_conditions.append(f"p.position_type = ${param_idx}")
+                params.append(position_type)
+                param_idx += 1
+            
+            # Добавляем limit
+            params.append(limit)
+            limit_param = f"${len(params)}"
+            
+            where_clause = " AND ".join(where_conditions)
+            
+            query = f"""
+                SELECT 
+                    p.ticker,
+                    p.position_type,
+                    p.profit_percent,
+                    p.exit_time,
+                    u.username,
+                    u.first_name
+                FROM positions p
+                JOIN users u ON p.user_id = u.user_id
+                WHERE {where_clause}
+                ORDER BY p.profit_percent {order}
+                LIMIT {limit_param}
+            """
+            
+            rows = await conn.fetch(query, *params)
             
             return [dict(row) for row in rows]
 
