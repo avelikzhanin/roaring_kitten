@@ -261,7 +261,7 @@ class TelegramHandlers:
         name = stock_info.get('name', ticker)
         
         if success:
-            message = f"⭐ Вы подписались на {emoji} {ticker} - {name}\n\nВы будете получать уведомления о сигналах!"
+            message = f"⭐ Вы подписались на {emoji} {ticker} - {name}\n\nВы будете получать уведомления о сигналах (LONG и SHORT)!"
         else:
             message = "ℹ️ Вы уже подписаны на эту акцию."
         
