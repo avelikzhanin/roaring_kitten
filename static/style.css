@@ -167,11 +167,13 @@ section h3 {
     font-size: 2.5em;
     font-weight: bold;
     margin-bottom: 10px;
+    color: white;
 }
 
 .stat-label {
     font-size: 1em;
     opacity: 0.9;
+    color: white;
 }
 
 /* Таблицы */
