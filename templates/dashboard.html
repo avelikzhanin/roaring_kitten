@@ -13,10 +13,10 @@
             <h1>🐱 Ревущий котёнок - Статистика</h1>
         </header>
 
-        <!-- Блок: Статистика за месяц - Общая -->
+        <!-- Блок: Статистика за месяц -->
         <section class="month-stats">
             <div class="section-header">
-                <h2>📊 Статистика за {{ month_name }} (Все)</h2>
+                <h2>📊 Статистика за {{ month_name }}</h2>
                 <div class="month-selector">
                     <label for="month-select">Выбрать месяц:</label>
                     <select id="month-select" onchange="changeMonth(this.value)">
@@ -52,56 +52,6 @@
                         {% if monthly_stats_all.total_profit > 0 %}+{% endif %}{{ "%.2f"|format(monthly_stats_all.total_profit) }}%
                     </div>
                     <div class="stat-label">Общая прибыль</div>
-                </div>
-            </div>
-        </section>
-
-        <!-- Блок: Статистика LONG -->
-        <section class="month-stats">
-            <h2>↗️ Статистика LONG за {{ month_name }}</h2>
-            <div class="stats-cards">
-                <div class="stat-card long-card">
-                    <div class="stat-value">{{ monthly_stats_long.total_trades }}</div>
-                    <div class="stat-label">Всего LONG</div>
-                </div>
-                <div class="stat-card long-card">
-                    <div class="stat-value">{{ monthly_stats_long.profitable }}</div>
-                    <div class="stat-label">Прибыльных</div>
-                </div>
-                <div class="stat-card long-card">
-                    <div class="stat-value">{{ "%.2f"|format(monthly_stats_long.winrate) }}%</div>
-                    <div class="stat-label">Винрейт LONG</div>
-                </div>
-                <div class="stat-card long-card {% if monthly_stats_long.total_profit > 0 %}positive{% else %}negative{% endif %}">
-                    <div class="stat-value">
-                        {% if monthly_stats_long.total_profit > 0 %}+{% endif %}{{ "%.2f"|format(monthly_stats_long.total_profit) }}%
-                    </div>
-                    <div class="stat-label">Прибыль LONG</div>
-                </div>
-            </div>
-        </section>
-
-        <!-- Блок: Статистика SHORT -->
-        <section class="month-stats">
-            <h2>↘️ Статистика SHORT за {{ month_name }}</h2>
-            <div class="stats-cards">
-                <div class="stat-card short-card">
-                    <div class="stat-value">{{ monthly_stats_short.total_trades }}</div>
-                    <div class="stat-label">Всего SHORT</div>
-                </div>
-                <div class="stat-card short-card">
-                    <div class="stat-value">{{ monthly_stats_short.profitable }}</div>
-                    <div class="stat-label">Прибыльных</div>
-                </div>
-                <div class="stat-card short-card">
-                    <div class="stat-value">{{ "%.2f"|format(monthly_stats_short.winrate) }}%</div>
-                    <div class="stat-label">Винрейт SHORT</div>
-                </div>
-                <div class="stat-card short-card {% if monthly_stats_short.total_profit > 0 %}positive{% else %}negative{% endif %}">
-                    <div class="stat-value">
-                        {% if monthly_stats_short.total_profit > 0 %}+{% endif %}{{ "%.2f"|format(monthly_stats_short.total_profit) }}%
-                    </div>
-                    <div class="stat-label">Прибыль SHORT</div>
                 </div>
             </div>
         </section>
@@ -159,10 +109,24 @@
         </section>
         {% endif %}
 
-        <!-- Блок: Статистика по акциям - Все -->
+        <!-- Блок: Статистика по акциям с фильтром -->
         {% if ticker_stats_all %}
         <section class="ticker-stats">
-            <h2>📈 Статистика по акциям (Все, за всё время)</h2>
+            <div class="section-header">
+                <h2>📈 Статистика по акциям ({{ ticker_filter_label }})</h2>
+                <div class="month-selector">
+                    <label for="ticker-month-select">Фильтр по месяцу:</label>
+                    <select id="ticker-month-select" onchange="changeTickerFilter(this.value)">
+                        <option value="all" {% if not ticker_year %}selected{% endif %}>за всё время</option>
+                        {% for m in months_list %}
+                        <option value="{{ m.year }}-{{ m.month }}" 
+                                {% if ticker_year == m.year and ticker_month == m.month %}selected{% endif %}>
+                            {{ m.label }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
             <div class="table-wrapper">
                 <table>
                     <thead>
@@ -190,73 +154,9 @@
         </section>
         {% endif %}
 
-        <!-- Блок: Статистика по акциям - LONG -->
-        {% if ticker_stats_long %}
-        <section class="ticker-stats">
-            <h2>↗️ Статистика по акциям (LONG, за всё время)</h2>
-            <div class="table-wrapper">
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Акция</th>
-                            <th>Сделок</th>
-                            <th>Винрейт</th>
-                            <th>Общая прибыль</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for stat in ticker_stats_long %}
-                        <tr class="position-long-subtle">
-                            <td>{{ stat.stock_emoji }} {{ stat.ticker }} - {{ stat.stock_name }}</td>
-                            <td>{{ stat.total_trades }}</td>
-                            <td>{{ "%.2f"|format(stat.winrate) }}%</td>
-                            <td class="{% if stat.total_profit > 0 %}positive{% else %}negative{% endif %}">
-                                {% if stat.total_profit > 0 %}+{% endif %}{{ "%.2f"|format(stat.total_profit) }}%
-                            </td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
-        </section>
-        {% endif %}
-
-        <!-- Блок: Статистика по акциям - SHORT -->
-        {% if ticker_stats_short %}
-        <section class="ticker-stats">
-            <h2>↘️ Статистика по акциям (SHORT, за всё время)</h2>
-            <div class="table-wrapper">
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Акция</th>
-                            <th>Сделок</th>
-                            <th>Винрейт</th>
-                            <th>Общая прибыль</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for stat in ticker_stats_short %}
-                        <tr class="position-short-subtle">
-                            <td>{{ stat.stock_emoji }} {{ stat.ticker }} - {{ stat.stock_name }}</td>
-                            <td>{{ stat.total_trades }}</td>
-                            <td>{{ "%.2f"|format(stat.winrate) }}%</td>
-                            <td class="{% if stat.total_profit > 0 %}positive{% else %}negative{% endif %}">
-                                {% if stat.total_profit > 0 %}+{% endif %}{{ "%.2f"|format(stat.total_profit) }}%
-                            </td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
-        </section>
-        {% endif %}
-
-        <!-- Блок: Дополнительно - Все типы -->
+        <!-- Блок: Дополнительно -->
         <section class="additional-stats">
             <h2>💎 Дополнительно (за всё время)</h2>
-            
-            <h3 style="margin-top: 20px; color: #667eea;">Все сделки</h3>
             <div class="additional-cards">
                 {% if best_trade_all %}
                 <a href="/top-trades?type=best" class="card-link">
@@ -299,88 +199,36 @@
                     </div>
                 </div>
             </div>
-
-            <h3 style="margin-top: 30px; color: #11998e;">LONG сделки</h3>
-            <div class="additional-cards">
-                {% if best_trade_long %}
-                <a href="/top-trades?type=best&position_type=LONG" class="card-link">
-                    <div class="additional-card clickable long-card-border">
-                        <div class="card-title">🏆 Лучшая LONG</div>
-                        <div class="card-content">
-                            <div class="card-main">{{ best_trade_long.stock_emoji }} {{ best_trade_long.ticker }}</div>
-                            <div class="card-profit positive">+{{ "%.2f"|format(best_trade_long.profit_percent) }}%</div>
-                            <div class="card-date">{{ best_trade_long.exit_time.strftime("%d.%m.%Y") }}</div>
-                        </div>
-                        <div class="card-hint">Нажмите для топ-10 LONG →</div>
-                    </div>
-                </a>
-                {% endif %}
-
-                {% if worst_trade_long %}
-                <a href="/top-trades?type=worst&position_type=LONG" class="card-link">
-                    <div class="additional-card clickable long-card-border">
-                        <div class="card-title">📉 Худшая LONG</div>
-                        <div class="card-content">
-                            <div class="card-main">{{ worst_trade_long.stock_emoji }} {{ worst_trade_long.ticker }}</div>
-                            <div class="card-profit negative">{{ "%.2f"|format(worst_trade_long.profit_percent) }}%</div>
-                            <div class="card-date">{{ worst_trade_long.exit_time.strftime("%d.%m.%Y") }}</div>
-                        </div>
-                        <div class="card-hint">Нажмите для топ-10 LONG →</div>
-                    </div>
-                </a>
-                {% endif %}
-
-                <div class="additional-card long-card-border">
-                    <div class="card-title">⏱️ Средняя LONG</div>
-                    <div class="card-content">
-                        <div class="card-main-large">{{ avg_duration_long }}</div>
-                    </div>
-                </div>
-            </div>
-
-            <h3 style="margin-top: 30px; color: #ee0979;">SHORT сделки</h3>
-            <div class="additional-cards">
-                {% if best_trade_short %}
-                <a href="/top-trades?type=best&position_type=SHORT" class="card-link">
-                    <div class="additional-card clickable short-card-border">
-                        <div class="card-title">🏆 Лучшая SHORT</div>
-                        <div class="card-content">
-                            <div class="card-main">{{ best_trade_short.stock_emoji }} {{ best_trade_short.ticker }}</div>
-                            <div class="card-profit positive">+{{ "%.2f"|format(best_trade_short.profit_percent) }}%</div>
-                            <div class="card-date">{{ best_trade_short.exit_time.strftime("%d.%m.%Y") }}</div>
-                        </div>
-                        <div class="card-hint">Нажмите для топ-10 SHORT →</div>
-                    </div>
-                </a>
-                {% endif %}
-
-                {% if worst_trade_short %}
-                <a href="/top-trades?type=worst&position_type=SHORT" class="card-link">
-                    <div class="additional-card clickable short-card-border">
-                        <div class="card-title">📉 Худшая SHORT</div>
-                        <div class="card-content">
-                            <div class="card-main">{{ worst_trade_short.stock_emoji }} {{ worst_trade_short.ticker }}</div>
-                            <div class="card-profit negative">{{ "%.2f"|format(worst_trade_short.profit_percent) }}%</div>
-                            <div class="card-date">{{ worst_trade_short.exit_time.strftime("%d.%m.%Y") }}</div>
-                        </div>
-                        <div class="card-hint">Нажмите для топ-10 SHORT →</div>
-                    </div>
-                </a>
-                {% endif %}
-
-                <div class="additional-card short-card-border">
-                    <div class="card-title">⏱️ Средняя SHORT</div>
-                    <div class="card-content">
-                        <div class="card-main-large">{{ avg_duration_short }}</div>
-                    </div>
-                </div>
-            </div>
         </section>
 
-        <!-- Блок: Лента всех сделок -->
+        <!-- Блок: Лента сделок с фильтрами -->
         {% if closed_positions %}
         <section class="trades-feed">
-            <h2>📜 Лента сделок (последние {{ closed_positions|length }})</h2>
+            <div class="section-header">
+                <h2>📜 Лента сделок ({{ feed_filter_label }}, последние {{ closed_positions|length }})</h2>
+                <div class="feed-filters">
+                    <div class="filter-group">
+                        <label for="feed-month-select">Месяц:</label>
+                        <select id="feed-month-select" onchange="changeFeedFilters()">
+                            <option value="all" {% if not feed_year %}selected{% endif %}>за всё время</option>
+                            {% for m in months_list %}
+                            <option value="{{ m.year }}-{{ m.month }}" 
+                                    {% if feed_year == m.year and feed_month == m.month %}selected{% endif %}>
+                                {{ m.label }}
+                            </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label for="feed-type-select">Тип:</label>
+                        <select id="feed-type-select" onchange="changeFeedFilters()">
+                            <option value="all" {% if feed_type == 'all' %}selected{% endif %}>Все</option>
+                            <option value="LONG" {% if feed_type == 'LONG' %}selected{% endif %}>LONG</option>
+                            <option value="SHORT" {% if feed_type == 'SHORT' %}selected{% endif %}>SHORT</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
             <div class="table-wrapper">
                 <table>
                     <thead>
@@ -416,8 +264,29 @@
         </section>
         {% else %}
         <section class="trades-feed">
-            <h2>📜 Лента сделок</h2>
-            <p class="no-data">Пока нет закрытых сделок</p>
+            <div class="section-header">
+                <h2>📜 Лента сделок</h2>
+                <div class="feed-filters">
+                    <div class="filter-group">
+                        <label for="feed-month-select">Месяц:</label>
+                        <select id="feed-month-select" onchange="changeFeedFilters()">
+                            <option value="all" selected>за всё время</option>
+                            {% for m in months_list %}
+                            <option value="{{ m.year }}-{{ m.month }}">{{ m.label }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label for="feed-type-select">Тип:</label>
+                        <select id="feed-type-select" onchange="changeFeedFilters()">
+                            <option value="all" selected>Все</option>
+                            <option value="LONG">LONG</option>
+                            <option value="SHORT">SHORT</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+            <p class="no-data">Нет сделок для выбранных фильтров</p>
         </section>
         {% endif %}
 
@@ -429,7 +298,49 @@
     <script>
         function changeMonth(value) {
             const [year, month] = value.split('-');
-            window.location.href = `/?year=${year}&month=${month}`;
+            const url = new URL(window.location);
+            url.searchParams.set('year', year);
+            url.searchParams.set('month', month);
+            window.location.href = url.toString();
+        }
+
+        function changeTickerFilter(value) {
+            const url = new URL(window.location);
+            if (value === 'all') {
+                url.searchParams.delete('ticker_year');
+                url.searchParams.delete('ticker_month');
+            } else {
+                const [year, month] = value.split('-');
+                url.searchParams.set('ticker_year', year);
+                url.searchParams.set('ticker_month', month);
+            }
+            window.location.href = url.toString();
+        }
+
+        function changeFeedFilters() {
+            const monthSelect = document.getElementById('feed-month-select');
+            const typeSelect = document.getElementById('feed-type-select');
+            
+            const url = new URL(window.location);
+            
+            // Фильтр по месяцу
+            if (monthSelect.value === 'all') {
+                url.searchParams.delete('feed_year');
+                url.searchParams.delete('feed_month');
+            } else {
+                const [year, month] = monthSelect.value.split('-');
+                url.searchParams.set('feed_year', year);
+                url.searchParams.set('feed_month', month);
+            }
+            
+            // Фильтр по типу
+            if (typeSelect.value === 'all') {
+                url.searchParams.delete('feed_type');
+            } else {
+                url.searchParams.set('feed_type', typeSelect.value);
+            }
+            
+            window.location.href = url.toString();
         }
     </script>
 </body>
