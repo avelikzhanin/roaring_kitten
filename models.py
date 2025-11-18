@@ -10,7 +10,15 @@ class SignalType(Enum):
     """Типы сигналов"""
     BUY = "BUY"
     SELL = "SELL"
+    SHORT = "SHORT"
+    COVER = "COVER"
     NONE = "NONE"
+
+
+class PositionType(Enum):
+    """Типы позиций"""
+    LONG = "LONG"
+    SHORT = "SHORT"
 
 
 @dataclass
@@ -67,12 +75,20 @@ class Signal:
     timestamp: datetime
     
     def is_buy_signal(self) -> bool:
-        """Проверка на сигнал покупки"""
+        """Проверка на сигнал покупки (LONG)"""
         return self.signal_type == SignalType.BUY
     
     def is_sell_signal(self) -> bool:
-        """Проверка на сигнал продажи"""
+        """Проверка на сигнал продажи (закрытие LONG)"""
         return self.signal_type == SignalType.SELL
+    
+    def is_short_signal(self) -> bool:
+        """Проверка на сигнал SHORT"""
+        return self.signal_type == SignalType.SHORT
+    
+    def is_cover_signal(self) -> bool:
+        """Проверка на сигнал закрытия SHORT"""
+        return self.signal_type == SignalType.COVER
 
 
 @dataclass
@@ -81,17 +97,24 @@ class Position:
     id: int
     user_id: int
     ticker: str
+    position_type: PositionType
     entry_price: float
     entry_time: datetime
     entry_adx: float
     entry_di_plus: float
+    entry_di_minus: float
     exit_price: Optional[float] = None
     exit_time: Optional[datetime] = None
     profit_percent: Optional[float] = None
     is_open: bool = True
     
     def calculate_profit_percent(self, current_price: float) -> float:
-        """Расчет текущей прибыли в процентах"""
+        """Расчет текущей прибыли в процентах с учетом типа позиции"""
         if self.is_open:
-            return ((current_price - self.entry_price) / self.entry_price) * 100
+            if self.position_type == PositionType.LONG:
+                # LONG: прибыль при росте цены
+                return ((current_price - self.entry_price) / self.entry_price) * 100
+            else:
+                # SHORT: прибыль при падении цены
+                return ((self.entry_price - current_price) / self.entry_price) * 100
         return self.profit_percent or 0.0
