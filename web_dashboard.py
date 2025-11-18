@@ -49,7 +49,16 @@ async def shutdown():
 
 
 @app.get("/", response_class=HTMLResponse)
-async def dashboard(request: Request, year: Optional[int] = None, month: Optional[int] = None):
+async def dashboard(
+    request: Request, 
+    year: Optional[int] = None, 
+    month: Optional[int] = None,
+    ticker_year: Optional[int] = None,
+    ticker_month: Optional[int] = None,
+    feed_year: Optional[int] = None,
+    feed_month: Optional[int] = None,
+    feed_type: Optional[str] = None
+):
     """Главная страница дашборда"""
     
     # Если месяц не указан, берем текущий
@@ -59,27 +68,51 @@ async def dashboard(request: Request, year: Optional[int] = None, month: Optiona
         month = now.month
     
     try:
-        # Получаем данные из БД с фильтром по username
+        # Получаем общую статистику за месяц (без фильтра по типу)
         monthly_stats_all = await db.get_global_monthly_statistics(year, month, username=TARGET_USERNAME)
-        monthly_stats_long = await db.get_global_monthly_statistics(year, month, username=TARGET_USERNAME, position_type='LONG')
-        monthly_stats_short = await db.get_global_monthly_statistics(year, month, username=TARGET_USERNAME, position_type='SHORT')
         
         open_positions = await db.get_all_open_positions_web(username=TARGET_USERNAME)
-        closed_positions = await db.get_all_closed_positions_web(limit=50, username=TARGET_USERNAME)
         
-        ticker_stats_all = await db.get_statistics_by_ticker(username=TARGET_USERNAME)
-        ticker_stats_long = await db.get_statistics_by_ticker(username=TARGET_USERNAME, position_type='LONG')
-        ticker_stats_short = await db.get_statistics_by_ticker(username=TARGET_USERNAME, position_type='SHORT')
+        # Статистика по акциям с фильтром по месяцу
+        if ticker_year and ticker_month:
+            ticker_stats_all = await db.get_statistics_by_ticker_filtered(
+                username=TARGET_USERNAME, 
+                year=ticker_year, 
+                month=ticker_month
+            )
+            ticker_filter_label = datetime(ticker_year, ticker_month, 1).strftime("%B %Y")
+        else:
+            ticker_stats_all = await db.get_statistics_by_ticker(username=TARGET_USERNAME)
+            ticker_filter_label = "за всё время"
+        
+        # Лента сделок с фильтрами
+        if feed_year and feed_month:
+            closed_positions = await db.get_closed_positions_filtered(
+                username=TARGET_USERNAME,
+                year=feed_year,
+                month=feed_month,
+                position_type=feed_type,
+                limit=50
+            )
+            feed_filter_label = datetime(feed_year, feed_month, 1).strftime("%B %Y")
+        else:
+            if feed_type and feed_type != 'all':
+                closed_positions = await db.get_all_closed_positions_web(
+                    limit=50, 
+                    username=TARGET_USERNAME,
+                    position_type=feed_type
+                )
+            else:
+                closed_positions = await db.get_all_closed_positions_web(
+                    limit=50, 
+                    username=TARGET_USERNAME
+                )
+            feed_filter_label = "за всё время"
         
         best_worst_all = await db.get_best_and_worst_trades(username=TARGET_USERNAME)
-        best_worst_long = await db.get_best_and_worst_trades(username=TARGET_USERNAME, position_type='LONG')
-        best_worst_short = await db.get_best_and_worst_trades(username=TARGET_USERNAME, position_type='SHORT')
-        
         avg_duration_all = await db.get_average_trade_duration(username=TARGET_USERNAME)
-        avg_duration_long = await db.get_average_trade_duration(username=TARGET_USERNAME, position_type='LONG')
-        avg_duration_short = await db.get_average_trade_duration(username=TARGET_USERNAME, position_type='SHORT')
         
-        # Форматируем средюю продолжительность
+        # Форматируем среднюю продолжительность
         def format_duration(avg_duration):
             if avg_duration:
                 if avg_duration < 24:
@@ -90,8 +123,6 @@ async def dashboard(request: Request, year: Optional[int] = None, month: Optiona
                 return "Н/Д"
         
         avg_duration_str_all = format_duration(avg_duration_all)
-        avg_duration_str_long = format_duration(avg_duration_long)
-        avg_duration_str_short = format_duration(avg_duration_short)
         
         # Добавляем имена и эмодзи к акциям
         for pos in open_positions:
@@ -139,33 +170,22 @@ async def dashboard(request: Request, year: Optional[int] = None, month: Optiona
             stat['stock_name'] = SUPPORTED_STOCKS.get(ticker, {}).get('name', ticker)
             stat['stock_emoji'] = SUPPORTED_STOCKS.get(ticker, {}).get('emoji', '📊')
         
-        for stat in ticker_stats_long:
-            ticker = stat['ticker']
-            stat['stock_name'] = SUPPORTED_STOCKS.get(ticker, {}).get('name', ticker)
-            stat['stock_emoji'] = SUPPORTED_STOCKS.get(ticker, {}).get('emoji', '📊')
-        
-        for stat in ticker_stats_short:
-            ticker = stat['ticker']
-            stat['stock_name'] = SUPPORTED_STOCKS.get(ticker, {}).get('name', ticker)
-            stat['stock_emoji'] = SUPPORTED_STOCKS.get(ticker, {}).get('emoji', '📊')
-        
         # Добавляем имена к лучшей/худшей сделке
-        for best_worst in [best_worst_all, best_worst_long, best_worst_short]:
-            if best_worst['best']:
-                ticker = best_worst['best']['ticker']
-                best_worst['best']['stock_name'] = SUPPORTED_STOCKS.get(ticker, {}).get('name', ticker)
-                best_worst['best']['stock_emoji'] = SUPPORTED_STOCKS.get(ticker, {}).get('emoji', '📊')
-            
-            if best_worst['worst']:
-                ticker = best_worst['worst']['ticker']
-                best_worst['worst']['stock_name'] = SUPPORTED_STOCKS.get(ticker, {}).get('name', ticker)
-                best_worst['worst']['stock_emoji'] = SUPPORTED_STOCKS.get(ticker, {}).get('emoji', '📊')
+        if best_worst_all['best']:
+            ticker = best_worst_all['best']['ticker']
+            best_worst_all['best']['stock_name'] = SUPPORTED_STOCKS.get(ticker, {}).get('name', ticker)
+            best_worst_all['best']['stock_emoji'] = SUPPORTED_STOCKS.get(ticker, {}).get('emoji', '📊')
         
-        # Формируем список месяцев (с октября 2024 до текущего месяца)
+        if best_worst_all['worst']:
+            ticker = best_worst_all['worst']['ticker']
+            best_worst_all['worst']['stock_name'] = SUPPORTED_STOCKS.get(ticker, {}).get('name', ticker)
+            best_worst_all['worst']['stock_emoji'] = SUPPORTED_STOCKS.get(ticker, {}).get('emoji', '📊')
+        
+        # Формируем список месяцев (с октября 2025 до текущего месяца)
         months_list = []
         current_date = datetime.now()
         
-        # Начинаем с текущего месяца и идём назад до октября 2024
+        # Начинаем с текущего месяца и идём назад до октября 2025
         temp_date = datetime(current_date.year, current_date.month, 1)
         
         while temp_date >= TRADING_START_DATE:
@@ -190,22 +210,19 @@ async def dashboard(request: Request, year: Optional[int] = None, month: Optiona
                 "month_name": datetime(year, month, 1).strftime("%B %Y"),
                 "months_list": months_list,
                 "monthly_stats_all": monthly_stats_all,
-                "monthly_stats_long": monthly_stats_long,
-                "monthly_stats_short": monthly_stats_short,
                 "open_positions": open_positions,
                 "closed_positions": closed_positions,
                 "ticker_stats_all": ticker_stats_all,
-                "ticker_stats_long": ticker_stats_long,
-                "ticker_stats_short": ticker_stats_short,
+                "ticker_filter_label": ticker_filter_label,
+                "ticker_year": ticker_year,
+                "ticker_month": ticker_month,
+                "feed_filter_label": feed_filter_label,
+                "feed_year": feed_year,
+                "feed_month": feed_month,
+                "feed_type": feed_type or 'all',
                 "best_trade_all": best_worst_all['best'],
                 "worst_trade_all": best_worst_all['worst'],
-                "best_trade_long": best_worst_long['best'],
-                "worst_trade_long": best_worst_long['worst'],
-                "best_trade_short": best_worst_short['best'],
-                "worst_trade_short": best_worst_short['worst'],
-                "avg_duration_all": avg_duration_str_all,
-                "avg_duration_long": avg_duration_str_long,
-                "avg_duration_short": avg_duration_str_short
+                "avg_duration_all": avg_duration_str_all
             }
         )
     
