@@ -201,27 +201,15 @@
             </div>
         </section>
 
-        <!-- Блок: Лента сделок с фильтрами -->
+        <!-- Блок: Последние 50 сделок с фильтром по типу -->
         {% if closed_positions %}
         <section class="trades-feed">
             <div class="section-header">
-                <h2>📜 Лента сделок ({{ feed_filter_label }}, последние {{ closed_positions|length }})</h2>
+                <h2>📜 Последние 50 сделок</h2>
                 <div class="feed-filters">
                     <div class="filter-group">
-                        <label for="feed-month-select">Месяц:</label>
-                        <select id="feed-month-select" onchange="changeFeedFilters()">
-                            <option value="all" {% if not feed_year %}selected{% endif %}>за всё время</option>
-                            {% for m in months_list %}
-                            <option value="{{ m.year }}-{{ m.month }}" 
-                                    {% if feed_year == m.year and feed_month == m.month %}selected{% endif %}>
-                                {{ m.label }}
-                            </option>
-                            {% endfor %}
-                        </select>
-                    </div>
-                    <div class="filter-group">
                         <label for="feed-type-select">Тип:</label>
-                        <select id="feed-type-select" onchange="changeFeedFilters()">
+                        <select id="feed-type-select" onchange="changeFeedType()">
                             <option value="all" {% if feed_type == 'all' %}selected{% endif %}>Все</option>
                             <option value="LONG" {% if feed_type == 'LONG' %}selected{% endif %}>LONG</option>
                             <option value="SHORT" {% if feed_type == 'SHORT' %}selected{% endif %}>SHORT</option>
@@ -265,20 +253,11 @@
         {% else %}
         <section class="trades-feed">
             <div class="section-header">
-                <h2>📜 Лента сделок</h2>
+                <h2>📜 Последние 50 сделок</h2>
                 <div class="feed-filters">
                     <div class="filter-group">
-                        <label for="feed-month-select">Месяц:</label>
-                        <select id="feed-month-select" onchange="changeFeedFilters()">
-                            <option value="all" selected>за всё время</option>
-                            {% for m in months_list %}
-                            <option value="{{ m.year }}-{{ m.month }}">{{ m.label }}</option>
-                            {% endfor %}
-                        </select>
-                    </div>
-                    <div class="filter-group">
                         <label for="feed-type-select">Тип:</label>
-                        <select id="feed-type-select" onchange="changeFeedFilters()">
+                        <select id="feed-type-select" onchange="changeFeedType()">
                             <option value="all" selected>Все</option>
                             <option value="LONG">LONG</option>
                             <option value="SHORT">SHORT</option>
@@ -286,7 +265,7 @@
                     </div>
                 </div>
             </div>
-            <p class="no-data">Нет сделок для выбранных фильтров</p>
+            <p class="no-data">Нет сделок для выбранного фильтра</p>
         </section>
         {% endif %}
 
@@ -317,21 +296,9 @@
             window.location.href = url.toString();
         }
 
-        function changeFeedFilters() {
-            const monthSelect = document.getElementById('feed-month-select');
+        function changeFeedType() {
             const typeSelect = document.getElementById('feed-type-select');
-            
             const url = new URL(window.location);
-            
-            // Фильтр по месяцу
-            if (monthSelect.value === 'all') {
-                url.searchParams.delete('feed_year');
-                url.searchParams.delete('feed_month');
-            } else {
-                const [year, month] = monthSelect.value.split('-');
-                url.searchParams.set('feed_year', year);
-                url.searchParams.set('feed_month', month);
-            }
             
             // Фильтр по типу
             if (typeSelect.value === 'all') {
