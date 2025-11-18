@@ -1,5 +1,6 @@
 import logging
 from datetime import datetime
+from typing import Dict
 
 from models import Signal, SignalType, StockData
 from config import ADX_THRESHOLD, DI_PLUS_THRESHOLD
@@ -11,29 +12,55 @@ class SignalDetector:
     """Класс для определения торговых сигналов"""
     
     @staticmethod
-    def detect_signal(stock_data: StockData) -> Signal:
+    def detect_signals(stock_data: StockData) -> Dict[str, Signal]:
         """
-        Определение сигнала на основе данных акции
+        Определение сигналов на основе данных акции
         
-        BUY:  ADX > 25 AND DI+ > 25
-        SELL: ADX ≤ 25 OR DI+ ≤ 25
+        LONG:
+        - BUY:  ADX > 25 AND DI+ > 25
+        - SELL: ADX ≤ 25 OR DI+ ≤ 25
+        
+        SHORT:
+        - SHORT: ADX > 25 AND DI- > 25
+        - COVER: ADX ≤ 25 OR DI- ≤ 25
+        
+        Returns:
+            Dict с ключами 'LONG' и 'SHORT', содержащими соответствующие Signal объекты
         """
         adx = stock_data.technical.adx
         di_plus = stock_data.technical.di_plus
         di_minus = stock_data.technical.di_minus
         price = stock_data.price.current_price
         
-        # Определяем тип сигнала
+        # LONG сигнал
         if adx > ADX_THRESHOLD and di_plus > DI_PLUS_THRESHOLD:
-            signal_type = SignalType.BUY
+            long_signal_type = SignalType.BUY
         elif adx <= ADX_THRESHOLD or di_plus <= DI_PLUS_THRESHOLD:
-            signal_type = SignalType.SELL
+            long_signal_type = SignalType.SELL
         else:
-            signal_type = SignalType.NONE
+            long_signal_type = SignalType.NONE
         
-        signal = Signal(
+        long_signal = Signal(
             ticker=stock_data.info.ticker,
-            signal_type=signal_type,
+            signal_type=long_signal_type,
+            adx=adx,
+            di_plus=di_plus,
+            di_minus=di_minus,
+            price=price,
+            timestamp=datetime.now()
+        )
+        
+        # SHORT сигнал
+        if adx > ADX_THRESHOLD and di_minus > DI_PLUS_THRESHOLD:
+            short_signal_type = SignalType.SHORT
+        elif adx <= ADX_THRESHOLD or di_minus <= DI_PLUS_THRESHOLD:
+            short_signal_type = SignalType.COVER
+        else:
+            short_signal_type = SignalType.NONE
+        
+        short_signal = Signal(
+            ticker=stock_data.info.ticker,
+            signal_type=short_signal_type,
             adx=adx,
             di_plus=di_plus,
             di_minus=di_minus,
@@ -42,11 +69,15 @@ class SignalDetector:
         )
         
         logger.info(
-            f"🎯 {stock_data.info.ticker} | Signal: {signal_type.value} | "
+            f"🎯 {stock_data.info.ticker} | "
+            f"LONG: {long_signal_type.value} | SHORT: {short_signal_type.value} | "
             f"ADX: {adx:.2f}, DI+: {di_plus:.2f}, DI-: {di_minus:.2f}, Price: {price:.2f}"
         )
         
-        return signal
+        return {
+            'LONG': long_signal,
+            'SHORT': short_signal
+        }
     
     @staticmethod
     def has_signal_changed(old_signal: str, new_signal: SignalType) -> bool:
@@ -58,13 +89,26 @@ class SignalDetector:
     
     @staticmethod
     def is_buy_to_sell_transition(old_signal: str, new_signal: SignalType) -> bool:
-        """Проверка перехода BUY → SELL"""
+        """Проверка перехода BUY → SELL (закрытие LONG)"""
         return old_signal == SignalType.BUY.value and new_signal == SignalType.SELL
     
     @staticmethod
     def is_sell_to_buy_transition(old_signal: str, new_signal: SignalType) -> bool:
-        """Проверка перехода SELL → BUY или NONE → BUY"""
+        """Проверка перехода SELL → BUY или NONE → BUY (открытие LONG)"""
         return (
             (old_signal == SignalType.SELL.value or old_signal == SignalType.NONE.value) 
             and new_signal == SignalType.BUY
+        )
+    
+    @staticmethod
+    def is_short_to_cover_transition(old_signal: str, new_signal: SignalType) -> bool:
+        """Проверка перехода SHORT → COVER (закрытие SHORT)"""
+        return old_signal == SignalType.SHORT.value and new_signal == SignalType.COVER
+    
+    @staticmethod
+    def is_cover_to_short_transition(old_signal: str, new_signal: SignalType) -> bool:
+        """Проверка перехода COVER → SHORT или NONE → SHORT (открытие SHORT)"""
+        return (
+            (old_signal == SignalType.COVER.value or old_signal == SignalType.NONE.value) 
+            and new_signal == SignalType.SHORT
         )
