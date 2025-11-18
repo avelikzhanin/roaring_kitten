@@ -58,6 +58,40 @@ section h3 {
     margin-bottom: 15px;
 }
 
+/* Фильтры для ленты сделок */
+.feed-filters {
+    display: flex;
+    gap: 20px;
+    align-items: center;
+}
+
+.filter-group {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.filter-group label {
+    font-weight: 600;
+    color: #666;
+    white-space: nowrap;
+}
+
+.filter-group select {
+    padding: 8px 15px;
+    border: 2px solid #667eea;
+    border-radius: 8px;
+    font-size: 1em;
+    cursor: pointer;
+    background: white;
+    color: #333;
+}
+
+.filter-group select:hover {
+    background: #f0f0f0;
+}
+
+
 /* Статистика за месяц */
 .month-stats .section-header {
     display: flex;
