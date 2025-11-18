@@ -55,8 +55,6 @@ async def dashboard(
     month: Optional[int] = None,
     ticker_year: Optional[int] = None,
     ticker_month: Optional[int] = None,
-    feed_year: Optional[int] = None,
-    feed_month: Optional[int] = None,
     feed_type: Optional[str] = None
 ):
     """Главная страница дашборда"""
@@ -85,29 +83,18 @@ async def dashboard(
             ticker_stats_all = await db.get_statistics_by_ticker(username=TARGET_USERNAME)
             ticker_filter_label = "за всё время"
         
-        # Лента сделок с фильтрами
-        if feed_year and feed_month:
-            closed_positions = await db.get_closed_positions_filtered(
+        # Лента сделок - последние 50 с фильтром по типу
+        if feed_type and feed_type != 'all':
+            closed_positions = await db.get_all_closed_positions_web(
+                limit=50, 
                 username=TARGET_USERNAME,
-                year=feed_year,
-                month=feed_month,
-                position_type=feed_type,
-                limit=50
+                position_type=feed_type
             )
-            feed_filter_label = datetime(feed_year, feed_month, 1).strftime("%B %Y")
         else:
-            if feed_type and feed_type != 'all':
-                closed_positions = await db.get_all_closed_positions_web(
-                    limit=50, 
-                    username=TARGET_USERNAME,
-                    position_type=feed_type
-                )
-            else:
-                closed_positions = await db.get_all_closed_positions_web(
-                    limit=50, 
-                    username=TARGET_USERNAME
-                )
-            feed_filter_label = "за всё время"
+            closed_positions = await db.get_all_closed_positions_web(
+                limit=50, 
+                username=TARGET_USERNAME
+            )
         
         best_worst_all = await db.get_best_and_worst_trades(username=TARGET_USERNAME)
         avg_duration_all = await db.get_average_trade_duration(username=TARGET_USERNAME)
@@ -216,13 +203,7 @@ async def dashboard(
                 "ticker_filter_label": ticker_filter_label,
                 "ticker_year": ticker_year,
                 "ticker_month": ticker_month,
-                "feed_filter_label": feed_filter_label,
-                "feed_year": feed_year,
-                "feed_month": feed_month,
-                "feed_type": feed_type or 'all',
-                "best_trade_all": best_worst_all['best'],
-                "worst_trade_all": best_worst_all['worst'],
-                "avg_duration_all": avg_duration_str_all
+                "feed_type": feed_type or 'all'
             }
         )
     
