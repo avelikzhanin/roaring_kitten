@@ -1,4 +1,5 @@
 import logging
+import json
 from datetime import datetime
 from typing import Optional
 
@@ -79,9 +80,19 @@ async def dashboard(
                 month=ticker_month
             )
             ticker_filter_label = datetime(ticker_year, ticker_month, 1).strftime("%B %Y")
+            
+            # Получаем данные для графика за выбранный месяц
+            chart_data_raw = await db.get_cumulative_profit_data(
+                username=TARGET_USERNAME,
+                year=ticker_year,
+                month=ticker_month
+            )
         else:
             ticker_stats_all = await db.get_statistics_by_ticker(username=TARGET_USERNAME)
             ticker_filter_label = "за всё время"
+            
+            # Получаем данные для графика за всё время
+            chart_data_raw = await db.get_cumulative_profit_data(username=TARGET_USERNAME)
         
         # Лента сделок - последние 50 с фильтром по типу
         if feed_type and feed_type != 'all':
@@ -224,6 +235,30 @@ async def dashboard(
             else:
                 temp_date = datetime(temp_date.year, temp_date.month - 1, 1)
         
+        # Формируем данные для графика
+        chart_data = {}
+        
+        # Для всех акций создаем пустые массивы (чтобы показать все акции)
+        for ticker in SUPPORTED_STOCKS.keys():
+            chart_data[ticker] = {
+                'label': f"{SUPPORTED_STOCKS[ticker]['emoji']} {ticker}",
+                'data': []
+            }
+        
+        # Заполняем данными из БД
+        for ticker, points in chart_data_raw.items():
+            if ticker in chart_data:
+                chart_data[ticker]['data'] = [
+                    {
+                        'x': point['date'].strftime('%Y-%m-%d %H:%M:%S'),
+                        'y': round(point['cumulative_profit'], 2)
+                    }
+                    for point in points
+                ]
+        
+        # Конвертируем в JSON для передачи в шаблон
+        chart_data_json = json.dumps(chart_data)
+        
         return templates.TemplateResponse(
             "dashboard.html",
             {
@@ -242,7 +277,8 @@ async def dashboard(
                 "feed_type": feed_type or 'all',
                 "best_trade": best_trade,
                 "worst_trade": worst_trade,
-                "avg_duration_str": avg_duration_str
+                "avg_duration_str": avg_duration_str,
+                "chart_data_json": chart_data_json
             }
         )
     
