@@ -96,21 +96,56 @@ async def dashboard(
                 username=TARGET_USERNAME
             )
         
-        # Для раздела "Дополнительно" показываем общую статистику (без фильтра по username)
-        best_worst_all = await db.get_best_and_worst_trades()
-        avg_duration_all = await db.get_average_trade_duration()
+        # Раздел "Дополнительно" - получаем данные простыми запросами
+        best_trade = None
+        worst_trade = None
+        avg_duration_str = "Н/Д"
         
-        # Форматируем среднюю продолжительность
-        def format_duration(avg_duration):
-            if avg_duration:
-                if avg_duration < 24:
-                    return f"{avg_duration:.1f} часов"
-                else:
-                    return f"{avg_duration / 24:.1f} дней"
-            else:
-                return "Н/Д"
+        try:
+            # Получаем лучшую сделку
+            async with db.pool.acquire() as conn:
+                best_row = await conn.fetchrow("""
+                    SELECT ticker, position_type, profit_percent, exit_time
+                    FROM positions
+                    WHERE is_open = FALSE
+                    ORDER BY profit_percent DESC
+                    LIMIT 1
+                """)
+                if best_row:
+                    best_trade = dict(best_row)
+        except Exception as e:
+            logger.error(f"Error getting best trade: {e}")
         
-        avg_duration_str_all = format_duration(avg_duration_all)
+        try:
+            # Получаем худшую сделку
+            async with db.pool.acquire() as conn:
+                worst_row = await conn.fetchrow("""
+                    SELECT ticker, position_type, profit_percent, exit_time
+                    FROM positions
+                    WHERE is_open = FALSE
+                    ORDER BY profit_percent ASC
+                    LIMIT 1
+                """)
+                if worst_row:
+                    worst_trade = dict(worst_row)
+        except Exception as e:
+            logger.error(f"Error getting worst trade: {e}")
+        
+        try:
+            # Получаем среднюю продолжительность
+            async with db.pool.acquire() as conn:
+                avg_hours = await conn.fetchval("""
+                    SELECT AVG(EXTRACT(EPOCH FROM (exit_time - entry_time)) / 3600)
+                    FROM positions
+                    WHERE is_open = FALSE
+                """)
+                if avg_hours:
+                    if avg_hours < 24:
+                        avg_duration_str = f"{avg_hours:.1f} часов"
+                    else:
+                        avg_duration_str = f"{avg_hours / 24:.1f} дней"
+        except Exception as e:
+            logger.error(f"Error getting avg duration: {e}")
         
         # Добавляем имена и эмодзи к акциям
         for pos in open_positions:
@@ -159,15 +194,15 @@ async def dashboard(
             stat['stock_emoji'] = SUPPORTED_STOCKS.get(ticker, {}).get('emoji', '📊')
         
         # Добавляем имена к лучшей/худшей сделке
-        if best_worst_all['best']:
-            ticker = best_worst_all['best']['ticker']
-            best_worst_all['best']['stock_name'] = SUPPORTED_STOCKS.get(ticker, {}).get('name', ticker)
-            best_worst_all['best']['stock_emoji'] = SUPPORTED_STOCKS.get(ticker, {}).get('emoji', '📊')
+        if best_trade:
+            ticker = best_trade['ticker']
+            best_trade['stock_name'] = SUPPORTED_STOCKS.get(ticker, {}).get('name', ticker)
+            best_trade['stock_emoji'] = SUPPORTED_STOCKS.get(ticker, {}).get('emoji', '📊')
         
-        if best_worst_all['worst']:
-            ticker = best_worst_all['worst']['ticker']
-            best_worst_all['worst']['stock_name'] = SUPPORTED_STOCKS.get(ticker, {}).get('name', ticker)
-            best_worst_all['worst']['stock_emoji'] = SUPPORTED_STOCKS.get(ticker, {}).get('emoji', '📊')
+        if worst_trade:
+            ticker = worst_trade['ticker']
+            worst_trade['stock_name'] = SUPPORTED_STOCKS.get(ticker, {}).get('name', ticker)
+            worst_trade['stock_emoji'] = SUPPORTED_STOCKS.get(ticker, {}).get('emoji', '📊')
         
         # Формируем список месяцев (с октября 2025 до текущего месяца)
         months_list = []
@@ -204,7 +239,10 @@ async def dashboard(
                 "ticker_filter_label": ticker_filter_label,
                 "ticker_year": ticker_year,
                 "ticker_month": ticker_month,
-                "feed_type": feed_type or 'all'
+                "feed_type": feed_type or 'all',
+                "best_trade": best_trade,
+                "worst_trade": worst_trade,
+                "avg_duration_str": avg_duration_str
             }
         )
     
