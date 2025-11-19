@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Ревущий котёнок 🐱 Статистика</title>
     <link rel="stylesheet" href="/static/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
 </head>
 <body>
     <div class="container">
@@ -109,7 +111,7 @@
         </section>
         {% endif %}
 
-        <!-- Блок: Статистика по акциям с фильтром -->
+        <!-- Блок: Статистика по акциям с фильтром и графиком -->
         {% if ticker_stats_all %}
         <section class="ticker-stats">
             <div class="section-header">
@@ -127,6 +129,13 @@
                     </select>
                 </div>
             </div>
+            
+            <!-- График накопленной прибыли -->
+            <div class="chart-container">
+                <canvas id="profitChart"></canvas>
+            </div>
+            
+            <!-- Таблица статистики -->
             <div class="table-wrapper">
                 <table>
                     <thead>
@@ -275,6 +284,132 @@
     </div>
 
     <script>
+        // Данные для графика из backend
+        const chartDataRaw = {{ chart_data_json | safe }};
+        
+        // Цвета для каждой акции
+        const stockColors = {
+            'SBER': 'rgb(34, 139, 34)',      // Зеленый
+            'GAZP': 'rgb(70, 130, 180)',     // Синий
+            'LKOH': 'rgb(220, 20, 60)',      // Красный
+            'VTBR': 'rgb(255, 140, 0)',      // Оранжевый
+            'HEAD': 'rgb(138, 43, 226)'      // Фиолетовый
+        };
+        
+        // Подготавливаем datasets для Chart.js
+        const datasets = Object.keys(chartDataRaw).map(ticker => {
+            const stockData = chartDataRaw[ticker];
+            
+            return {
+                label: stockData.label,
+                data: stockData.data,
+                borderColor: stockColors[ticker] || 'rgb(128, 128, 128)',
+                backgroundColor: stockColors[ticker] ? stockColors[ticker].replace('rgb', 'rgba').replace(')', ', 0.1)') : 'rgba(128, 128, 128, 0.1)',
+                borderWidth: 2,
+                tension: 0.1,
+                pointRadius: 3,
+                pointHoverRadius: 5
+            };
+        });
+        
+        // Создаем график
+        const ctx = document.getElementById('profitChart').getContext('2d');
+        const profitChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                datasets: datasets
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: {
+                    mode: 'index',
+                    intersect: false,
+                },
+                plugins: {
+                    title: {
+                        display: true,
+                        text: 'График накопленной прибыли по акциям',
+                        font: {
+                            size: 18,
+                            weight: 'bold'
+                        },
+                        padding: {
+                            top: 10,
+                            bottom: 20
+                        }
+                    },
+                    legend: {
+                        display: true,
+                        position: 'top',
+                        labels: {
+                            usePointStyle: true,
+                            padding: 15,
+                            font: {
+                                size: 13
+                            }
+                        }
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                let label = context.dataset.label || '';
+                                if (label) {
+                                    label += ': ';
+                                }
+                                if (context.parsed.y !== null) {
+                                    label += context.parsed.y.toFixed(2) + '%';
+                                }
+                                return label;
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        type: 'time',
+                        time: {
+                            unit: 'day',
+                            displayFormats: {
+                                day: 'dd.MM.yyyy'
+                            }
+                        },
+                        title: {
+                            display: true,
+                            text: 'Дата закрытия сделки',
+                            font: {
+                                size: 14,
+                                weight: 'bold'
+                            }
+                        },
+                        grid: {
+                            display: true,
+                            color: 'rgba(0, 0, 0, 0.05)'
+                        }
+                    },
+                    y: {
+                        title: {
+                            display: true,
+                            text: 'Накопленная прибыль (%)',
+                            font: {
+                                size: 14,
+                                weight: 'bold'
+                            }
+                        },
+                        grid: {
+                            display: true,
+                            color: 'rgba(0, 0, 0, 0.05)'
+                        },
+                        ticks: {
+                            callback: function(value) {
+                                return value.toFixed(0) + '%';
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
         function changeMonth(value) {
             const [year, month] = value.split('-');
             const url = new URL(window.location);
