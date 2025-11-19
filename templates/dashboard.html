@@ -330,7 +330,7 @@
             
             // Добавляем dataset для горизонтальной линии на 0%
             datasets.push({
-                label: 'Нулевой уровень',
+                // Не добавляем label, чтобы линия не отображалась в легенде
                 data: [
                     { x: minDate, y: 0 },
                     { x: maxDate, y: 0 }
@@ -381,6 +381,10 @@
                             padding: 15,
                             font: {
                                 size: 13
+                            },
+                            filter: function(item, chart) {
+                                // Скрываем элементы без label (нулевая линия)
+                                return item.text !== undefined && item.text !== '';
                             }
                         }
                     },
