@@ -954,11 +954,18 @@ class Database:
             result = {}
             for row in rows:
                 ticker = row['ticker']
+                
+                # Для первой сделки акции добавляем начальную точку с нулевой прибылью
                 if ticker not in result:
                     result[ticker] = []
+                    # Добавляем начальную точку (0) в момент первой сделки
+                    result[ticker].append({
+                        'date': row['exit_time'],
+                        'cumulative_profit': 0
+                    })
                 
                 # Вычисляем накопленную прибыль
-                previous_cumulative = result[ticker][-1]['cumulative_profit'] if result[ticker] else 0
+                previous_cumulative = result[ticker][-1]['cumulative_profit']
                 cumulative_profit = previous_cumulative + float(row['profit_percent'])
                 
                 result[ticker].append({
