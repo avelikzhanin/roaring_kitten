@@ -7,6 +7,7 @@
     <link rel="stylesheet" href="/static/style.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
 </head>
 <body>
     <div class="container">
@@ -312,6 +313,39 @@
             };
         });
         
+        // Добавляем горизонтальную линию на уровне 0%
+        // Находим все даты для определения диапазона графика
+        let allDates = [];
+        Object.values(chartDataRaw).forEach(stockData => {
+            stockData.data.forEach(point => {
+                allDates.push(point.x);
+            });
+        });
+        
+        if (allDates.length > 0) {
+            // Сортируем даты
+            allDates.sort();
+            const minDate = allDates[0];
+            const maxDate = allDates[allDates.length - 1];
+            
+            // Добавляем dataset для горизонтальной линии на 0%
+            datasets.push({
+                label: 'Нулевой уровень',
+                data: [
+                    { x: minDate, y: 0 },
+                    { x: maxDate, y: 0 }
+                ],
+                borderColor: 'rgba(128, 128, 128, 0.5)',
+                borderWidth: 2,
+                borderDash: [5, 5], // Пунктирная линия
+                pointRadius: 0,
+                pointHoverRadius: 0,
+                tension: 0,
+                fill: false,
+                order: 100 // Рисуем позади остальных линий
+            });
+        }
+        
         // Создаем график
         const ctx = document.getElementById('profitChart').getContext('2d');
         const profitChart = new Chart(ctx, {
@@ -361,6 +395,21 @@
                                     label += context.parsed.y.toFixed(2) + '%';
                                 }
                                 return label;
+                            }
+                        }
+                    },
+                    annotation: {
+                        annotations: {
+                            zeroLine: {
+                                type: 'line',
+                                yMin: 0,
+                                yMax: 0,
+                                borderColor: 'rgba(0, 0, 0, 0.5)',
+                                borderWidth: 2,
+                                borderDash: [6, 6],
+                                label: {
+                                    display: false
+                                }
                             }
                         }
                     }
