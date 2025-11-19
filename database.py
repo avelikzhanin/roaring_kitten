@@ -909,12 +909,14 @@ class Database:
         username: str = None, 
         year: int = None, 
         month: int = None
-    ) -> Dict[str, List[Dict[str, Any]]]:
+    ) -> Dict[str, Any]:
         """
         Получение данных для графика накопленной прибыли по акциям
         
         Returns:
-            Dict с ключами-тикерами, значения - список точек [{date, cumulative_profit}]
+            Dict с ключами:
+            - 'data': Dict с тикерами и списками точек [{date, cumulative_profit}]
+            - 'start_date': самая ранняя дата среди всех сделок
         """
         async with self.pool.acquire() as conn:
             # Формируем WHERE условия
@@ -950,6 +952,11 @@ class Database:
             
             rows = await conn.fetch(query, *params)
             
+            # Находим самую раннюю дату среди всех сделок
+            start_date = None
+            if rows:
+                start_date = min(row['exit_time'] for row in rows)
+            
             # Группируем по тикерам и вычисляем накопленную прибыль
             result = {}
             for row in rows:
@@ -958,11 +965,12 @@ class Database:
                 # Для первой сделки акции добавляем начальную точку с нулевой прибылью
                 if ticker not in result:
                     result[ticker] = []
-                    # Добавляем начальную точку (0) в момент первой сделки
-                    result[ticker].append({
-                        'date': row['exit_time'],
-                        'cumulative_profit': 0
-                    })
+                    # Добавляем начальную точку (0) в начало графика
+                    if start_date:
+                        result[ticker].append({
+                            'date': start_date,
+                            'cumulative_profit': 0
+                        })
                 
                 # Вычисляем накопленную прибыль
                 previous_cumulative = result[ticker][-1]['cumulative_profit']
@@ -973,7 +981,10 @@ class Database:
                     'cumulative_profit': cumulative_profit
                 })
             
-            return result
+            return {
+                'data': result,
+                'start_date': start_date
+            }
 
 
 # Глобальный экземпляр базы данных
