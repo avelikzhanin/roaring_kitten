@@ -428,7 +428,7 @@ class Database:
                 'unprofitable': len(unprofitable),
                 'total_profit': sum(profits)
             }
-    
+
     # ========== WEB DASHBOARD STATISTICS ==========
     
     async def get_all_open_positions_web(self, username: str = None) -> List[Dict[str, Any]]:
@@ -439,14 +439,14 @@ class Database:
                     """
                     SELECT 
                         p.user_id,
-                        u.username,
-                        u.first_name,
+                        COALESCE(u.username, 'unknown') as username,
+                        COALESCE(u.first_name, 'Unknown') as first_name,
                         p.ticker,
                         p.position_type,
                         p.entry_price,
                         p.entry_time
                     FROM positions p
-                    JOIN users u ON p.user_id = u.user_id
+                    LEFT JOIN users u ON p.user_id = u.user_id
                     WHERE p.is_open = TRUE AND u.username = $1
                     ORDER BY p.entry_time DESC
                     """,
@@ -457,14 +457,14 @@ class Database:
                     """
                     SELECT 
                         p.user_id,
-                        u.username,
-                        u.first_name,
+                        COALESCE(u.username, 'unknown') as username,
+                        COALESCE(u.first_name, 'Unknown') as first_name,
                         p.ticker,
                         p.position_type,
                         p.entry_price,
                         p.entry_time
                     FROM positions p
-                    JOIN users u ON p.user_id = u.user_id
+                    LEFT JOIN users u ON p.user_id = u.user_id
                     WHERE p.is_open = TRUE
                     ORDER BY p.entry_time DESC
                     """
@@ -480,8 +480,8 @@ class Database:
                         """
                         SELECT 
                             p.user_id,
-                            u.username,
-                            u.first_name,
+                            COALESCE(u.username, 'unknown') as username,
+                            COALESCE(u.first_name, 'Unknown') as first_name,
                             p.ticker,
                             p.position_type,
                             p.entry_price,
@@ -490,7 +490,7 @@ class Database:
                             p.entry_time,
                             p.exit_time
                         FROM positions p
-                        JOIN users u ON p.user_id = u.user_id
+                        LEFT JOIN users u ON p.user_id = u.user_id
                         WHERE p.is_open = FALSE AND u.username = $1 AND p.position_type = $3
                         ORDER BY p.exit_time DESC
                         LIMIT $2
@@ -502,8 +502,8 @@ class Database:
                         """
                         SELECT 
                             p.user_id,
-                            u.username,
-                            u.first_name,
+                            COALESCE(u.username, 'unknown') as username,
+                            COALESCE(u.first_name, 'Unknown') as first_name,
                             p.ticker,
                             p.position_type,
                             p.entry_price,
@@ -512,7 +512,7 @@ class Database:
                             p.entry_time,
                             p.exit_time
                         FROM positions p
-                        JOIN users u ON p.user_id = u.user_id
+                        LEFT JOIN users u ON p.user_id = u.user_id
                         WHERE p.is_open = FALSE AND u.username = $1
                         ORDER BY p.exit_time DESC
                         LIMIT $2
@@ -525,8 +525,8 @@ class Database:
                         """
                         SELECT 
                             p.user_id,
-                            u.username,
-                            u.first_name,
+                            COALESCE(u.username, 'unknown') as username,
+                            COALESCE(u.first_name, 'Unknown') as first_name,
                             p.ticker,
                             p.position_type,
                             p.entry_price,
@@ -535,7 +535,7 @@ class Database:
                             p.entry_time,
                             p.exit_time
                         FROM positions p
-                        JOIN users u ON p.user_id = u.user_id
+                        LEFT JOIN users u ON p.user_id = u.user_id
                         WHERE p.is_open = FALSE AND p.position_type = $2
                         ORDER BY p.exit_time DESC
                         LIMIT $1
@@ -547,8 +547,8 @@ class Database:
                         """
                         SELECT 
                             p.user_id,
-                            u.username,
-                            u.first_name,
+                            COALESCE(u.username, 'unknown') as username,
+                            COALESCE(u.first_name, 'Unknown') as first_name,
                             p.ticker,
                             p.position_type,
                             p.entry_price,
@@ -557,7 +557,7 @@ class Database:
                             p.entry_time,
                             p.exit_time
                         FROM positions p
-                        JOIN users u ON p.user_id = u.user_id
+                        LEFT JOIN users u ON p.user_id = u.user_id
                         WHERE p.is_open = FALSE
                         ORDER BY p.exit_time DESC
                         LIMIT $1
@@ -589,7 +589,7 @@ class Database:
             query = f"""
                 SELECT profit_percent
                 FROM positions p
-                JOIN users u ON p.user_id = u.user_id
+                LEFT JOIN users u ON p.user_id = u.user_id
                 WHERE {where_clause}
                   AND EXTRACT(YEAR FROM p.exit_time) = $1
                   AND EXTRACT(MONTH FROM p.exit_time) = $2
@@ -650,7 +650,7 @@ class Database:
                     ) as winrate,
                     ROUND(SUM(p.profit_percent)::numeric, 2) as total_profit
                 FROM positions p
-                JOIN users u ON p.user_id = u.user_id
+                LEFT JOIN users u ON p.user_id = u.user_id
                 WHERE {where_clause}
                 GROUP BY p.ticker
                 ORDER BY total_profit DESC
@@ -686,10 +686,10 @@ class Database:
                     p.position_type,
                     p.profit_percent,
                     p.exit_time,
-                    u.username,
-                    u.first_name
+                    COALESCE(u.username, 'unknown') as username,
+                    COALESCE(u.first_name, 'Unknown') as first_name
                 FROM positions p
-                JOIN users u ON p.user_id = u.user_id
+                LEFT JOIN users u ON p.user_id = u.user_id
                 WHERE {where_clause}
                 ORDER BY p.profit_percent DESC
                 LIMIT 1
@@ -704,10 +704,10 @@ class Database:
                     p.position_type,
                     p.profit_percent,
                     p.exit_time,
-                    u.username,
-                    u.first_name
+                    COALESCE(u.username, 'unknown') as username,
+                    COALESCE(u.first_name, 'Unknown') as first_name
                 FROM positions p
-                JOIN users u ON p.user_id = u.user_id
+                LEFT JOIN users u ON p.user_id = u.user_id
                 WHERE {where_clause}
                 ORDER BY p.profit_percent ASC
                 LIMIT 1
@@ -743,7 +743,7 @@ class Database:
             query = f"""
                 SELECT AVG(EXTRACT(EPOCH FROM (p.exit_time - p.entry_time)) / 3600)
                 FROM positions p
-                JOIN users u ON p.user_id = u.user_id
+                LEFT JOIN users u ON p.user_id = u.user_id
                 WHERE {where_clause}
             """
             
@@ -782,10 +782,10 @@ class Database:
                     p.position_type,
                     p.profit_percent,
                     p.exit_time,
-                    u.username,
-                    u.first_name
+                    COALESCE(u.username, 'unknown') as username,
+                    COALESCE(u.first_name, 'Unknown') as first_name
                 FROM positions p
-                JOIN users u ON p.user_id = u.user_id
+                LEFT JOIN users u ON p.user_id = u.user_id
                 WHERE {where_clause}
                 ORDER BY p.profit_percent {order}
                 LIMIT {limit_param}
@@ -834,7 +834,7 @@ class Database:
                     ) as winrate,
                     ROUND(SUM(p.profit_percent)::numeric, 2) as total_profit
                 FROM positions p
-                JOIN users u ON p.user_id = u.user_id
+                LEFT JOIN users u ON p.user_id = u.user_id
                 WHERE {where_clause}
                 GROUP BY p.ticker
                 ORDER BY total_profit DESC
@@ -885,8 +885,8 @@ class Database:
             query = f"""
                 SELECT 
                     p.user_id,
-                    u.username,
-                    u.first_name,
+                    COALESCE(u.username, 'unknown') as username,
+                    COALESCE(u.first_name, 'Unknown') as first_name,
                     p.ticker,
                     p.position_type,
                     p.entry_price,
@@ -895,7 +895,7 @@ class Database:
                     p.entry_time,
                     p.exit_time
                 FROM positions p
-                JOIN users u ON p.user_id = u.user_id
+                LEFT JOIN users u ON p.user_id = u.user_id
                 WHERE {where_clause}
                 ORDER BY p.exit_time DESC
                 LIMIT {limit_param}
