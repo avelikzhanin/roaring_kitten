@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime
 from telegram.ext import ContextTypes
 from telegram import Bot
 
@@ -21,8 +22,30 @@ class SignalMonitor:
         self.signal_detector = SignalDetector()
         self.formatter = MessageFormatter()
     
+    def _is_market_open(self) -> bool:
+        """Проверка работает ли биржа (MOEX: 06:50 - 23:50 МСК)"""
+        now = datetime.now()
+        hour = now.hour
+        minute = now.minute
+        
+        # Биржа закрыта с 23:50 до 06:50
+        if hour == 23 and minute >= 50:
+            return False
+        if 0 <= hour < 6:
+            return False
+        if hour == 6 and minute < 50:
+            return False
+        
+        return True
+    
     async def check_signals(self, context: ContextTypes.DEFAULT_TYPE):
         """Периодическая проверка сигналов для всех подписок"""
+        
+        # Проверяем работает ли биржа
+        if not self._is_market_open():
+            logger.info("⏰ Биржа закрыта (работает 06:50-23:50 МСК), пропускаем проверку сигналов")
+            return
+        
         logger.info("🔍 Starting signal check...")
         
         try:
