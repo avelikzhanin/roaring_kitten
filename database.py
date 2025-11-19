@@ -903,6 +903,70 @@ class Database:
             
             rows = await conn.fetch(query, *params)
             return [dict(row) for row in rows]
+    
+    async def get_cumulative_profit_data(
+        self, 
+        username: str = None, 
+        year: int = None, 
+        month: int = None
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """
+        Получение данных для графика накопленной прибыли по акциям
+        
+        Returns:
+            Dict с ключами-тикерами, значения - список точек [{date, cumulative_profit}]
+        """
+        async with self.pool.acquire() as conn:
+            # Формируем WHERE условия
+            where_conditions = ["p.is_open = FALSE"]
+            params = []
+            param_idx = 1
+            
+            if username:
+                where_conditions.append(f"u.username = ${param_idx}")
+                params.append(username)
+                param_idx += 1
+            
+            if year and month:
+                where_conditions.append(f"EXTRACT(YEAR FROM p.exit_time) = ${param_idx}")
+                params.append(year)
+                param_idx += 1
+                where_conditions.append(f"EXTRACT(MONTH FROM p.exit_time) = ${param_idx}")
+                params.append(month)
+                param_idx += 1
+            
+            where_clause = " AND ".join(where_conditions)
+            
+            query = f"""
+                SELECT 
+                    p.ticker,
+                    p.exit_time,
+                    p.profit_percent
+                FROM positions p
+                LEFT JOIN users u ON p.user_id = u.user_id
+                WHERE {where_clause}
+                ORDER BY p.ticker, p.exit_time ASC
+            """
+            
+            rows = await conn.fetch(query, *params)
+            
+            # Группируем по тикерам и вычисляем накопленную прибыль
+            result = {}
+            for row in rows:
+                ticker = row['ticker']
+                if ticker not in result:
+                    result[ticker] = []
+                
+                # Вычисляем накопленную прибыль
+                previous_cumulative = result[ticker][-1]['cumulative_profit'] if result[ticker] else 0
+                cumulative_profit = previous_cumulative + float(row['profit_percent'])
+                
+                result[ticker].append({
+                    'date': row['exit_time'],
+                    'cumulative_profit': cumulative_profit
+                })
+            
+            return result
 
 
 # Глобальный экземпляр базы данных
