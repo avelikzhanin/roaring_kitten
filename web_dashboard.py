@@ -82,7 +82,7 @@ async def dashboard(
             ticker_filter_label = datetime(ticker_year, ticker_month, 1).strftime("%B %Y")
             
             # Получаем данные для графика за выбранный месяц
-            chart_data_raw = await db.get_cumulative_profit_data(
+            chart_data_response = await db.get_cumulative_profit_data(
                 username=TARGET_USERNAME,
                 year=ticker_year,
                 month=ticker_month
@@ -92,7 +92,11 @@ async def dashboard(
             ticker_filter_label = "за всё время"
             
             # Получаем данные для графика за всё время
-            chart_data_raw = await db.get_cumulative_profit_data(username=TARGET_USERNAME)
+            chart_data_response = await db.get_cumulative_profit_data(username=TARGET_USERNAME)
+        
+        # Извлекаем данные и start_date из ответа
+        chart_data_raw = chart_data_response.get('data', {})
+        start_date = chart_data_response.get('start_date')
         
         # Лента сделок - последние 50 с фильтром по типу
         if feed_type and feed_type != 'all':
