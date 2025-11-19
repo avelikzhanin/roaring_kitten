@@ -1,6 +1,6 @@
 import logging
 from datetime import datetime
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, WebAppInfo
 from telegram.ext import ContextTypes, CommandHandler, CallbackQueryHandler, MessageHandler, filters
 
 from stock_service import StockService
@@ -18,11 +18,14 @@ class TelegramHandlers:
     def __init__(self):
         self.stock_service = StockService()
         self.formatter = MessageFormatter()
+        # URL дашборда для миниаппа
+        self.dashboard_url = "https://roaring-dashboard.up.railway.app"
     
     def _create_main_keyboard(self):
         """Создание главной ReplyKeyboard"""
         keyboard = [
-            ["📊 Сигналы", "💼 Позиции"]
+            ["📊 Сигналы", "💼 Позиции"],
+            ["📈 Дашборд"]
         ]
         return ReplyKeyboardMarkup(
             keyboard,
@@ -57,6 +60,29 @@ class TelegramHandlers:
         elif text == "💼 Позиции":
             # Показываем позиции
             await self._send_positions(update, user_id)
+        
+        elif text == "📈 Дашборд":
+            # Открываем веб-дашборд через Mini App
+            await self._open_dashboard(update)
+    
+    async def _open_dashboard(self, update: Update):
+        """Открыть веб-дашборд через Telegram Mini App"""
+        keyboard = [
+            [InlineKeyboardButton(
+                text="📈 Открыть дашборд",
+                web_app=WebAppInfo(url=self.dashboard_url)
+            )]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        message = "📊 <b>Веб-дашборд статистики</b>\n\n" \
+                  "Нажмите кнопку ниже, чтобы открыть интерактивный дашборд с графиками и детальной статистикой по сделкам."
+        
+        await update.message.reply_text(
+            message,
+            parse_mode='HTML',
+            reply_markup=reply_markup
+        )
     
     async def _send_stocks_list(self, update: Update, user_id: int):
         """Отправить список акций"""
@@ -126,6 +152,10 @@ class TelegramHandlers:
         message = self.formatter.format_monthly_statistics(stats, year, month)
         
         await update.message.reply_text(message, parse_mode='HTML')
+    
+    async def dashboard_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработчик команды /dashboard - открыть веб-дашборд"""
+        await self._open_dashboard(update)
     
     async def button_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработчик нажатий на inline кнопки"""
@@ -350,6 +380,7 @@ class TelegramHandlers:
             CommandHandler("stocks", self.stocks_command),
             CommandHandler("positions", self.positions_command),
             CommandHandler("stats", self.stats_command),
+            CommandHandler("dashboard", self.dashboard_command),
             MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_text_message),
             CallbackQueryHandler(self.button_callback),
         ]
