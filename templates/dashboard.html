@@ -158,34 +158,34 @@
         <section class="additional-stats">
             <h2>💎 Дополнительно (за всё время)</h2>
             <div class="additional-cards">
-                {% if best_trade_all %}
+                {% if best_trade %}
                 <a href="/top-trades?type=best" class="card-link">
                     <div class="additional-card clickable">
                         <div class="card-title">🏆 Лучшая сделка</div>
                         <div class="card-content">
-                            <div class="card-main">{{ best_trade_all.stock_emoji }} {{ best_trade_all.ticker }}</div>
-                            <div class="type-badge {% if best_trade_all.position_type == 'LONG' %}long-badge{% else %}short-badge{% endif %}">
-                                {% if best_trade_all.position_type == 'LONG' %}↗️ LONG{% else %}↘️ SHORT{% endif %}
+                            <div class="card-main">{{ best_trade.stock_emoji }} {{ best_trade.ticker }}</div>
+                            <div class="type-badge {% if best_trade.position_type == 'LONG' %}long-badge{% else %}short-badge{% endif %}">
+                                {% if best_trade.position_type == 'LONG' %}↗️ LONG{% else %}↘️ SHORT{% endif %}
                             </div>
-                            <div class="card-profit positive">+{{ "%.2f"|format(best_trade_all.profit_percent) }}%</div>
-                            <div class="card-date">{{ best_trade_all.exit_time.strftime("%d.%m.%Y") }}</div>
+                            <div class="card-profit positive">+{{ "%.2f"|format(best_trade.profit_percent) }}%</div>
+                            <div class="card-date">{{ best_trade.exit_time.strftime("%d.%m.%Y") }}</div>
                         </div>
                         <div class="card-hint">Нажмите для топ-10 →</div>
                     </div>
                 </a>
                 {% endif %}
 
-                {% if worst_trade_all %}
+                {% if worst_trade %}
                 <a href="/top-trades?type=worst" class="card-link">
                     <div class="additional-card clickable">
                         <div class="card-title">📉 Худшая сделка</div>
                         <div class="card-content">
-                            <div class="card-main">{{ worst_trade_all.stock_emoji }} {{ worst_trade_all.ticker }}</div>
-                            <div class="type-badge {% if worst_trade_all.position_type == 'LONG' %}long-badge{% else %}short-badge{% endif %}">
-                                {% if worst_trade_all.position_type == 'LONG' %}↗️ LONG{% else %}↘️ SHORT{% endif %}
+                            <div class="card-main">{{ worst_trade.stock_emoji }} {{ worst_trade.ticker }}</div>
+                            <div class="type-badge {% if worst_trade.position_type == 'LONG' %}long-badge{% else %}short-badge{% endif %}">
+                                {% if worst_trade.position_type == 'LONG' %}↗️ LONG{% else %}↘️ SHORT{% endif %}
                             </div>
-                            <div class="card-profit negative">{{ "%.2f"|format(worst_trade_all.profit_percent) }}%</div>
-                            <div class="card-date">{{ worst_trade_all.exit_time.strftime("%d.%m.%Y") }}</div>
+                            <div class="card-profit negative">{{ "%.2f"|format(worst_trade.profit_percent) }}%</div>
+                            <div class="card-date">{{ worst_trade.exit_time.strftime("%d.%m.%Y") }}</div>
                         </div>
                         <div class="card-hint">Нажмите для топ-10 →</div>
                     </div>
@@ -195,7 +195,7 @@
                 <div class="additional-card">
                     <div class="card-title">⏱️ Средняя продолжительность</div>
                     <div class="card-content">
-                        <div class="card-main-large">{{ avg_duration_all }}</div>
+                        <div class="card-main-large">{{ avg_duration_str }}</div>
                     </div>
                 </div>
             </div>
