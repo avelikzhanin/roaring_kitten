@@ -96,8 +96,9 @@ async def dashboard(
                 username=TARGET_USERNAME
             )
         
-        best_worst_all = await db.get_best_and_worst_trades(username=TARGET_USERNAME)
-        avg_duration_all = await db.get_average_trade_duration(username=TARGET_USERNAME)
+        # Для раздела "Дополнительно" показываем общую статистику (без фильтра по username)
+        best_worst_all = await db.get_best_and_worst_trades()
+        avg_duration_all = await db.get_average_trade_duration()
         
         # Форматируем среднюю продолжительность
         def format_duration(avg_duration):
