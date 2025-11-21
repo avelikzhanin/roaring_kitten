@@ -23,9 +23,19 @@ class TelegramHandlers:
     
     def _create_main_keyboard(self):
         """Создание главной ReplyKeyboard"""
+        from telegram import KeyboardButton
+        
         keyboard = [
-            ["📊 Сигналы", "💼 Позиции"],
-            ["📈 Дашборд"]
+            [
+                KeyboardButton("📊 Сигналы"),
+                KeyboardButton("💼 Позиции")
+            ],
+            [
+                KeyboardButton(
+                    "📈 Дашборд",
+                    web_app=WebAppInfo(url=self.dashboard_url)
+                )
+            ]
         ]
         return ReplyKeyboardMarkup(
             keyboard,
@@ -60,10 +70,6 @@ class TelegramHandlers:
         elif text == "💼 Позиции":
             # Показываем позиции
             await self._send_positions(update, user_id)
-        
-        elif text == "📈 Дашборд":
-            # Открываем веб-дашборд через Mini App
-            await self._open_dashboard(update)
     
     async def _open_dashboard(self, update: Update):
         """Открыть веб-дашборд через Telegram Mini App"""
