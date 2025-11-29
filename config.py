@@ -36,6 +36,9 @@ MAX_CANDLES = 50
 ADX_THRESHOLD = 25
 DI_PLUS_THRESHOLD = 25
 
+# Stop Loss
+STOP_LOSS_PERCENT = -2.0  # -2% от цены входа
+
 # Мониторинг
 MONITOR_INTERVAL_MINUTES = 20
 
