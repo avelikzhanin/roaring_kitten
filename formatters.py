@@ -25,20 +25,20 @@ class MessageFormatter:
             trend_emoji = "📉"
             trend_text = f"Цена ниже EMA20 ({price_vs_ema_percent:+.2f}%)"
         
-        # Проверяем условия для входа в LONG и SHORT
-        long_conditions_met = data.technical.adx > ADX_THRESHOLD and data.technical.di_plus > ADX_THRESHOLD
-        short_conditions_met = data.technical.adx > ADX_THRESHOLD and data.technical.di_minus > ADX_THRESHOLD
+        # Проверяем условия для входа и выхода LONG
+        long_entry_conditions = data.technical.adx > ADX_THRESHOLD and data.technical.di_minus > ADX_THRESHOLD
+        long_exit_conditions = data.technical.adx > ADX_THRESHOLD and data.technical.di_plus > ADX_THRESHOLD
         
         signal_text = ""
-        if long_conditions_met:
-            signal_text += f"✅ LONG: Условия выполнены!\n"
+        if long_entry_conditions:
+            signal_text += f"✅ ВХОД LONG: ADX > {ADX_THRESHOLD} AND DI- > {ADX_THRESHOLD}\n"
         else:
-            signal_text += f"❌ LONG: ADX > {ADX_THRESHOLD} AND DI+ > {ADX_THRESHOLD}\n"
+            signal_text += f"❌ ВХОД LONG: Условия не выполнены\n"
         
-        if short_conditions_met:
-            signal_text += f"✅ SHORT: Условия выполнены!\n"
+        if long_exit_conditions:
+            signal_text += f"✅ ВЫХОД LONG: ADX > {ADX_THRESHOLD} AND DI+ > {ADX_THRESHOLD}\n"
         else:
-            signal_text += f"❌ SHORT: ADX > {ADX_THRESHOLD} AND DI- > {ADX_THRESHOLD}\n"
+            signal_text += f"❌ ВЫХОД LONG: Условия не выполнены\n"
         
         signal_text += "\nПри подписке получите уведомление"
         
@@ -120,65 +120,6 @@ class MessageFormatter:
         return message
     
     @staticmethod
-    def format_short_open_signal_notification(signal: Signal, stock_name: str, stock_emoji: str, gpt_analysis: str = None) -> str:
-        """Уведомление о сигнале на открытие SHORT"""
-        message = f"""🔻 <b>СИГНАЛ НА SHORT!</b>
-
-{stock_emoji} <b>{signal.ticker} - {stock_name}</b>
-
-💰 <b>Цена входа:</b> {signal.price:.2f} ₽
-
-📉 <b>Индикаторы:</b>
-• ADX: {signal.adx:.2f}
-• DI+: {signal.di_plus:.2f}
-• DI-: {signal.di_minus:.2f}"""
-
-        if gpt_analysis:
-            import html
-            gpt_analysis_escaped = html.escape(gpt_analysis)
-            message += f"\n\n🤖 <b>GPT АНАЛИЗ:</b>\n{gpt_analysis_escaped}"
-        
-        message += "\n\n✅ SHORT позиция открыта! Ждём сигнала на закрытие."
-        
-        return message
-    
-    @staticmethod
-    def format_short_close_signal_notification(
-        signal: Signal, 
-        stock_name: str, 
-        stock_emoji: str,
-        entry_price: float,
-        profit_percent: float,
-        gpt_analysis: str = None
-    ) -> str:
-        """Уведомление о сигнале на закрытие SHORT"""
-        profit_emoji = "📈" if profit_percent > 0 else "📉"
-        profit_sign = "+" if profit_percent > 0 else ""
-        
-        message = f"""🟢 <b>ЗАКРЫТИЕ SHORT!</b>
-
-{stock_emoji} <b>{signal.ticker} - {stock_name}</b>
-
-💰 <b>Цена закрытия:</b> {signal.price:.2f} ₽
-💵 <b>Цена входа:</b> {entry_price:.2f} ₽
-
-{profit_emoji} <b>Прибыль:</b> {profit_sign}{profit_percent:.2f}%
-
-📉 <b>Индикаторы:</b>
-• ADX: {signal.adx:.2f}
-• DI+: {signal.di_plus:.2f}
-• DI-: {signal.di_minus:.2f}"""
-
-        if gpt_analysis:
-            import html
-            gpt_analysis_escaped = html.escape(gpt_analysis)
-            message += f"\n\n🤖 <b>GPT АНАЛИЗ:</b>\n{gpt_analysis_escaped}"
-        
-        message += "\n\n✅ SHORT позиция закрыта!"
-        
-        return message
-    
-    @staticmethod
     def format_welcome_message() -> str:
         """Приветственное сообщение"""
         return """👋 Привет! Я Ревущий котёнок, буду присылать тебе сигналы о трендовых движениях рынка акций 🐱
@@ -186,7 +127,7 @@ class MessageFormatter:
 💡 <b>Как это работает:</b>
 • Выбери акции для анализа
 • Подпишись на уведомления (⭐)
-• Получай автоматические сигналы на вход/выход (LONG и SHORT)
+• Получай автоматические сигналы на вход/выход (LONG)
 • Отслеживай прибыль по сделкам
 
 Выбери действие из меню ниже 👇"""
