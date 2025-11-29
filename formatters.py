@@ -151,6 +151,11 @@ class MessageFormatter:
         return "📈 Выберите акцию для анализа:\n\n⭐ - подписка активна"
     
     @staticmethod
+    def format_loading_message() -> str:
+        """Сообщение о загрузке данных"""
+        return "⏳ Загружаю данные..."
+    
+    @staticmethod
     def format_positions_list(
         open_positions: List[Dict[str, Any]], 
         closed_positions: List[Dict[str, Any]],
