@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import logging
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, WebAppInfo
@@ -212,20 +213,21 @@ class TelegramHandlers:
     
     async def _show_stock_data(self, query, user_id: int, ticker: str):
         """Показать данные акции с кнопками подписки"""
-        await query.edit_message_text(self.formatter.format_loading_message(ticker))
+        # ИСПРАВЛЕНО: убрали передачу ticker в format_loading_message()
+        await query.edit_message_text(self.formatter.format_loading_message())
         
         try:
             stock_data = await self.stock_service.get_stock_data(ticker)
             
             if not stock_data:
                 await query.edit_message_text(
-                    self.formatter.format_error_message("no_data")
+                    self.formatter.format_error_message("Не удалось получить данные")
                 )
                 return
             
             if not stock_data.is_valid():
                 await query.edit_message_text(
-                    self.formatter.format_error_message("insufficient_data")
+                    self.formatter.format_error_message("Недостаточно данных для анализа")
                 )
                 return
             
@@ -233,7 +235,7 @@ class TelegramHandlers:
             is_subscribed = await db.is_subscribed(user_id, ticker)
             
             # Формируем сообщение
-            message = self.formatter.format_stock_message(stock_data, is_subscribed)
+            message = self.formatter.format_stock_message(stock_data)
             
             # Создаем кнопки
             keyboard = []
@@ -283,9 +285,9 @@ class TelegramHandlers:
             )
             
         except Exception as e:
-            logger.error(f"Error getting {ticker} data: {e}")
+            logger.error(f"Error getting {ticker} data: {e}", exc_info=True)
             await query.edit_message_text(
-                self.formatter.format_error_message("general")
+                self.formatter.format_error_message("Произошла ошибка при получении данных")
             )
     
     async def _handle_subscribe(self, query, user_id: int, ticker: str):
@@ -297,7 +299,7 @@ class TelegramHandlers:
         name = stock_info.get('name', ticker)
         
         if success:
-            message = f"⭐ Вы подписались на {emoji} {ticker} - {name}\n\nВы будете получать уведомления о сигналах (LONG и SHORT)!"
+            message = f"⭐ Вы подписались на {emoji} {ticker} - {name}\n\nВы будете получать уведомления о сигналах LONG!"
         else:
             message = "ℹ️ Вы уже подписаны на эту акцию."
         
@@ -334,7 +336,7 @@ class TelegramHandlers:
             
             if not stock_data or not stock_data.is_valid():
                 await query.edit_message_text(
-                    self.formatter.format_error_message("no_data")
+                    self.formatter.format_error_message("Не удалось получить данные")
                 )
                 return
             
@@ -343,7 +345,7 @@ class TelegramHandlers:
             
             if not candles_data:
                 await query.edit_message_text(
-                    self.formatter.format_error_message("no_data")
+                    self.formatter.format_error_message("Не удалось получить исторические данные")
                 )
                 return
             
@@ -356,8 +358,21 @@ class TelegramHandlers:
                 )
                 return
             
-            # Формируем и отправляем сообщение
-            message = self.formatter.format_gpt_analysis_message(stock_data, gpt_analysis)
+            # Формируем сообщение
+            stock_info = SUPPORTED_STOCKS.get(ticker, {})
+            stock_name = stock_info.get('name', ticker)
+            stock_emoji = stock_info.get('emoji', '📊')
+            
+            message = (
+                f"🤖 <b>GPT АНАЛИЗ</b>\n\n"
+                f"{stock_emoji} <b>{ticker} - {stock_name}</b>\n\n"
+                f"💰 <b>Цена:</b> {stock_data.price.current_price:.2f} ₽\n\n"
+                f"📈 <b>Индикаторы:</b>\n"
+                f"• ADX: {stock_data.technical.adx:.2f}\n"
+                f"• DI+: {stock_data.technical.di_plus:.2f}\n"
+                f"• DI-: {stock_data.technical.di_minus:.2f}\n\n"
+                f"📝 <b>Анализ:</b>\n{gpt_analysis}"
+            )
             
             # Кнопка назад
             keyboard = [[InlineKeyboardButton("◀️ Назад к акции", callback_data=f"stock:{ticker}")]]
@@ -370,14 +385,14 @@ class TelegramHandlers:
             )
             
         except Exception as e:
-            logger.error(f"Error in GPT analysis for {ticker}: {e}")
+            logger.error(f"Error in GPT analysis for {ticker}: {e}", exc_info=True)
             await query.edit_message_text(
                 "❌ Произошла ошибка при анализе. Попробуйте позже."
             )
     
     async def error_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработчик ошибок"""
-        logger.error(f"Update {update} caused error {context.error}")
+        logger.error(f"Update {update} caused error {context.error}", exc_info=True)
     
     def get_handlers(self):
         """Возвращает список хендлеров для регистрации в приложении"""
