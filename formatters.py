@@ -120,6 +120,35 @@ class MessageFormatter:
         return message
     
     @staticmethod
+    def format_stop_loss_notification(
+        signal: Signal,
+        stock_name: str,
+        stock_emoji: str,
+        entry_price: float,
+        profit_percent: float,
+        stop_loss_price: float
+    ) -> str:
+        """Уведомление о срабатывании Stop Loss"""
+        message = f"""🛑 <b>STOP LOSS!</b>
+
+{stock_emoji} <b>{signal.ticker} - {stock_name}</b>
+
+💰 <b>Цена выхода:</b> {signal.price:.2f} ₽
+💵 <b>Цена входа:</b> {entry_price:.2f} ₽
+🛑 <b>Stop Loss:</b> {stop_loss_price:.2f} ₽
+
+📉 <b>Убыток:</b> {profit_percent:.2f}%
+
+📈 <b>Индикаторы:</b>
+• ADX: {signal.adx:.2f}
+• DI+: {signal.di_plus:.2f}
+• DI-: {signal.di_minus:.2f}
+
+⚠️ LONG позиция закрыта по Stop Loss</message>
+        
+        return message
+    
+    @staticmethod
     def format_welcome_message() -> str:
         """Приветственное сообщение"""
         return """👋 Привет! Я Ревущий котёнок, буду присылать тебе сигналы о трендовых движениях рынка акций 🐱
