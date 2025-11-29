@@ -12,8 +12,8 @@ class MessageFormatter:
     @staticmethod
     def format_stock_message(stock_data: StockData) -> str:
         """Форматирование информации об акции"""
-        stock_info = SUPPORTED_STOCKS.get(stock_data.ticker, {})
-        stock_name = stock_info.get('name', stock_data.ticker)
+        stock_info = SUPPORTED_STOCKS.get(stock_data.info.ticker, {})
+        stock_name = stock_info.get('name', stock_data.info.ticker)
         stock_emoji = stock_info.get('emoji', '📊')
         
         long_signal = stock_data.signals.get('LONG')
@@ -28,13 +28,12 @@ class MessageFormatter:
         long_text = long_signal.signal_type.value
         
         message = (
-            f"{stock_emoji} <b>{stock_data.ticker} - {stock_name}</b>\n\n"
-            f"💰 <b>Цена:</b> {stock_data.price:.2f} ₽\n"
-            f"📊 <b>Объем:</b> {stock_data.volume:,}\n\n"
+            f"{stock_emoji} <b>{stock_data.info.ticker} - {stock_name}</b>\n\n"
+            f"💰 <b>Цена:</b> {stock_data.price.current_price:.2f} ₽\n\n"
             f"📈 <b>Индикаторы:</b>\n"
-            f"• ADX: {long_signal.adx:.2f}\n"
-            f"• DI+: {long_signal.di_plus:.2f}\n"
-            f"• DI-: {long_signal.di_minus:.2f}\n\n"
+            f"• ADX: {stock_data.technical.adx:.2f}\n"
+            f"• DI+: {stock_data.technical.di_plus:.2f}\n"
+            f"• DI-: {stock_data.technical.di_minus:.2f}\n\n"
             f"🎯 <b>Сигнал LONG:</b> {long_emoji} {long_text}\n\n"
             f"📋 <b>Условия LONG:</b>\n"
             f"✅ ВХОД LONG: ADX > 25 AND DI- > 25\n"
