@@ -17,15 +17,11 @@ class SignalDetector:
         Определение сигналов на основе данных акции
         
         LONG:
-        - BUY:  ADX > 25 AND DI+ > 25
-        - SELL: ADX ≤ 25 OR DI+ ≤ 25
-        
-        SHORT:
-        - SHORT: ADX > 25 AND DI- > 25
-        - COVER: ADX ≤ 25 OR DI- ≤ 25
+        - BUY:  ADX > 25 AND DI- > 25 (вход в позицию)
+        - SELL: ADX > 25 AND DI+ > 25 (выход из позиции)
         
         Returns:
-            Dict с ключами 'LONG' и 'SHORT', содержащими соответствующие Signal объекты
+            Dict с ключом 'LONG', содержащим Signal объект
         """
         adx = stock_data.technical.adx
         di_plus = stock_data.technical.di_plus
@@ -33,9 +29,9 @@ class SignalDetector:
         price = stock_data.price.current_price
         
         # LONG сигнал
-        if adx > ADX_THRESHOLD and di_plus > DI_PLUS_THRESHOLD:
+        if adx > ADX_THRESHOLD and di_minus > DI_PLUS_THRESHOLD:
             long_signal_type = SignalType.BUY
-        elif adx <= ADX_THRESHOLD or di_plus <= DI_PLUS_THRESHOLD:
+        elif adx > ADX_THRESHOLD and di_plus > DI_PLUS_THRESHOLD:
             long_signal_type = SignalType.SELL
         else:
             long_signal_type = SignalType.NONE
@@ -50,33 +46,14 @@ class SignalDetector:
             timestamp=datetime.now()
         )
         
-        # SHORT сигнал
-        if adx > ADX_THRESHOLD and di_minus > DI_PLUS_THRESHOLD:
-            short_signal_type = SignalType.SHORT
-        elif adx <= ADX_THRESHOLD or di_minus <= DI_PLUS_THRESHOLD:
-            short_signal_type = SignalType.COVER
-        else:
-            short_signal_type = SignalType.NONE
-        
-        short_signal = Signal(
-            ticker=stock_data.info.ticker,
-            signal_type=short_signal_type,
-            adx=adx,
-            di_plus=di_plus,
-            di_minus=di_minus,
-            price=price,
-            timestamp=datetime.now()
-        )
-        
         logger.info(
             f"🎯 {stock_data.info.ticker} | "
-            f"LONG: {long_signal_type.value} | SHORT: {short_signal_type.value} | "
+            f"LONG: {long_signal_type.value} | "
             f"ADX: {adx:.2f}, DI+: {di_plus:.2f}, DI-: {di_minus:.2f}, Price: {price:.2f}"
         )
         
         return {
-            'LONG': long_signal,
-            'SHORT': short_signal
+            'LONG': long_signal
         }
     
     @staticmethod
@@ -98,17 +75,4 @@ class SignalDetector:
         return (
             (old_signal == SignalType.SELL.value or old_signal == SignalType.NONE.value) 
             and new_signal == SignalType.BUY
-        )
-    
-    @staticmethod
-    def is_short_to_cover_transition(old_signal: str, new_signal: SignalType) -> bool:
-        """Проверка перехода SHORT → COVER (закрытие SHORT)"""
-        return old_signal == SignalType.SHORT.value and new_signal == SignalType.COVER
-    
-    @staticmethod
-    def is_cover_to_short_transition(old_signal: str, new_signal: SignalType) -> bool:
-        """Проверка перехода COVER → SHORT или NONE → SHORT (открытие SHORT)"""
-        return (
-            (old_signal == SignalType.COVER.value or old_signal == SignalType.NONE.value) 
-            and new_signal == SignalType.SHORT
         )
