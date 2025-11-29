@@ -8,7 +8,7 @@ from stock_service import StockService
 from signals import SignalDetector
 from formatters import MessageFormatter
 from models import SignalType
-from config import SUPPORTED_STOCKS
+from config import SUPPORTED_STOCKS, STOP_LOSS_PERCENT
 from gpt_analyst import gpt_analyst
 
 logger = logging.getLogger(__name__)
@@ -92,6 +92,9 @@ class SignalMonitor:
         previous_state = await db.get_signal_state(ticker, 'LONG')
         previous_signal = previous_state['last_signal'] if previous_state else None
         
+        # Сначала проверяем Stop Loss для всех открытых позиций
+        await self._check_stop_loss(ticker, signal, stock_data, bot)
+        
         # Проверяем изменение сигнала
         if not self.signal_detector.has_signal_changed(previous_signal, signal.signal_type):
             logger.info(f"No LONG signal change for {ticker}")
@@ -134,6 +137,68 @@ class SignalMonitor:
             signal.di_minus,
             signal.price
         )
+    
+    async def _check_stop_loss(self, ticker: str, signal, stock_data, bot: Bot):
+        """Проверка Stop Loss для всех открытых позиций"""
+        try:
+            # Получаем всех подписчиков
+            subscribers = await db.get_ticker_subscribers(ticker)
+            
+            if not subscribers:
+                return
+            
+            current_price = signal.price
+            
+            for user_id in subscribers:
+                # Проверяем, есть ли открытая LONG позиция
+                has_long_position = await db.has_open_position(user_id, ticker, 'LONG')
+                
+                if not has_long_position:
+                    continue
+                
+                # Получаем данные позиции
+                positions = await db.get_open_positions(user_id)
+                position = next((p for p in positions if p['ticker'] == ticker and p['position_type'] == 'LONG'), None)
+                
+                if not position:
+                    continue
+                
+                entry_price = float(position['entry_price'])
+                
+                # Рассчитываем уровень Stop Loss
+                stop_loss_price = entry_price * (1 + STOP_LOSS_PERCENT / 100)
+                
+                # Проверяем, сработал ли Stop Loss
+                if current_price <= stop_loss_price:
+                    profit_percent = ((current_price - entry_price) / entry_price) * 100
+                    
+                    logger.info(f"🛑 STOP LOSS triggered for {ticker} | User: {user_id} | Entry: {entry_price:.2f} | Current: {current_price:.2f} | Loss: {profit_percent:.2f}%")
+                    
+                    # Закрываем позицию
+                    await db.close_position(user_id, ticker, 'LONG', current_price)
+                    
+                    # Формируем сообщение
+                    stock_info = SUPPORTED_STOCKS.get(ticker, {})
+                    stock_name = stock_info.get('name', ticker)
+                    stock_emoji = stock_info.get('emoji', '📊')
+                    
+                    message = self.formatter.format_stop_loss_notification(
+                        signal, stock_name, stock_emoji, entry_price, profit_percent, stop_loss_price
+                    )
+                    
+                    # Отправляем уведомление
+                    try:
+                        await bot.send_message(
+                            chat_id=user_id,
+                            text=message,
+                            parse_mode='HTML'
+                        )
+                        logger.info(f"Sent STOP LOSS notification to user {user_id} for {ticker}")
+                    except Exception as e:
+                        logger.error(f"Error sending STOP LOSS notification to user {user_id}: {e}")
+        
+        except Exception as e:
+            logger.error(f"Error checking stop loss for {ticker}: {e}", exc_info=True)
     
     async def _handle_long_buy_signal(self, ticker: str, signal, stock_data, subscribers: list, bot: Bot):
         """Обработка BUY сигнала (открытие LONG)"""
