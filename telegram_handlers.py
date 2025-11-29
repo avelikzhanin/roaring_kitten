@@ -217,6 +217,8 @@ class TelegramHandlers:
         await query.edit_message_text(self.formatter.format_loading_message())
         
         try:
+            from signals import SignalDetector
+            
             stock_data = await self.stock_service.get_stock_data(ticker)
             
             if not stock_data:
@@ -230,6 +232,13 @@ class TelegramHandlers:
                     self.formatter.format_error_message("Недостаточно данных для анализа")
                 )
                 return
+            
+            # Получаем сигналы
+            signal_detector = SignalDetector()
+            signals = signal_detector.detect_signals(stock_data)
+            
+            # Добавляем сигналы к stock_data
+            stock_data.signals = signals
             
             # Проверяем подписку
             is_subscribed = await db.is_subscribed(user_id, ticker)
