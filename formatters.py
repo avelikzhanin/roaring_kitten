@@ -241,10 +241,11 @@ class MessageFormatter:
                 ticker = pos['ticker']
                 position_type = pos['position_type']
                 entry_price = float(pos['entry_price'])
-                average_price = float(pos['average_price'])
+                # Если average_price None (старая позиция), используем entry_price
+                average_price = float(pos['average_price']) if pos['average_price'] is not None else entry_price
                 entry_time = pos['entry_time']
-                lots = pos['lots']
-                averaging_count = pos['averaging_count']
+                lots = pos.get('lots', 0)
+                averaging_count = pos.get('averaging_count', 0)
                 
                 stock_info = SUPPORTED_STOCKS.get(ticker, {})
                 stock_name = stock_info.get('name', ticker)
@@ -291,12 +292,13 @@ class MessageFormatter:
                 ticker = pos['ticker']
                 position_type = pos['position_type']
                 entry_price = float(pos['entry_price'])
-                average_price = float(pos['average_price'])
+                # Если average_price None (старая позиция), используем entry_price
+                average_price = float(pos['average_price']) if pos['average_price'] is not None else entry_price
                 exit_price = float(pos['exit_price'])
                 profit_percent = float(pos['profit_percent'])
                 exit_time = pos['exit_time']
-                lots = pos['lots']
-                averaging_count = pos['averaging_count']
+                lots = pos.get('lots', 0)
+                averaging_count = pos.get('averaging_count', 0)
                 
                 stock_info = SUPPORTED_STOCKS.get(ticker, {})
                 stock_name = stock_info.get('name', ticker)
