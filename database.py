@@ -69,6 +69,9 @@ class Database:
                     entry_adx DECIMAL(5, 2),
                     entry_di_plus DECIMAL(5, 2),
                     entry_di_minus DECIMAL(5, 2),
+                    lots INTEGER NOT NULL DEFAULT 0,
+                    average_price DECIMAL(10, 2),
+                    averaging_count INTEGER DEFAULT 0,
                     exit_price DECIMAL(10, 2),
                     exit_time TIMESTAMP,
                     profit_percent DECIMAL(10, 2),
@@ -94,6 +97,34 @@ class Database:
                     ADD COLUMN IF NOT EXISTS entry_di_minus DECIMAL(5, 2)
                 """)
                 logger.info("✅ Migration: entry_di_minus column added/verified")
+            except Exception as e:
+                logger.warning(f"Migration warning: {e}")
+            
+            # Миграция: добавляем поля мани-менеджмента
+            try:
+                await conn.execute("""
+                    ALTER TABLE positions 
+                    ADD COLUMN IF NOT EXISTS lots INTEGER NOT NULL DEFAULT 0
+                """)
+                logger.info("✅ Migration: lots column added/verified")
+            except Exception as e:
+                logger.warning(f"Migration warning: {e}")
+            
+            try:
+                await conn.execute("""
+                    ALTER TABLE positions 
+                    ADD COLUMN IF NOT EXISTS average_price DECIMAL(10, 2)
+                """)
+                logger.info("✅ Migration: average_price column added/verified")
+            except Exception as e:
+                logger.warning(f"Migration warning: {e}")
+            
+            try:
+                await conn.execute("""
+                    ALTER TABLE positions 
+                    ADD COLUMN IF NOT EXISTS averaging_count INTEGER DEFAULT 0
+                """)
+                logger.info("✅ Migration: averaging_count column added/verified")
             except Exception as e:
                 logger.warning(f"Migration warning: {e}")
             
@@ -254,30 +285,73 @@ class Database:
         entry_price: float,
         entry_adx: float,
         entry_di_plus: float,
-        entry_di_minus: float
+        entry_di_minus: float,
+        lots: int
     ) -> int:
         """Открытие позиции. Возвращает ID позиции"""
         async with self.pool.acquire() as conn:
             position_id = await conn.fetchval(
                 """
                 INSERT INTO positions 
-                (user_id, ticker, position_type, entry_price, entry_time, entry_adx, entry_di_plus, entry_di_minus)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                (user_id, ticker, position_type, entry_price, entry_time, entry_adx, entry_di_plus, entry_di_minus, lots, average_price, averaging_count)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $4, 0)
                 RETURNING id
                 """,
-                user_id, ticker, position_type, entry_price, datetime.now(), entry_adx, entry_di_plus, entry_di_minus
+                user_id, ticker, position_type, entry_price, datetime.now(), entry_adx, entry_di_plus, entry_di_minus, lots
             )
             return position_id
+    
+    async def add_to_position(self, user_id: int, ticker: str, position_type: str, add_price: float, add_lots: int):
+        """Добавление к позиции (усреднение)"""
+        async with self.pool.acquire() as conn:
+            # Получаем текущие данные позиции
+            position = await conn.fetchrow(
+                """
+                SELECT lots, average_price, averaging_count
+                FROM positions
+                WHERE user_id = $1 AND ticker = $2 AND position_type = $3 AND is_open = TRUE
+                """,
+                user_id, ticker, position_type
+            )
+            
+            if not position:
+                logger.error(f"Position not found for averaging: {user_id}, {ticker}, {position_type}")
+                return
+            
+            current_lots = position['lots']
+            current_avg_price = float(position['average_price'])
+            current_averaging_count = position['averaging_count']
+            
+            # Рассчитываем новую среднюю цену
+            total_cost = (current_lots * current_avg_price) + (add_lots * add_price)
+            new_lots = current_lots + add_lots
+            new_avg_price = total_cost / new_lots
+            new_averaging_count = current_averaging_count + 1
+            
+            # Обновляем позицию
+            await conn.execute(
+                """
+                UPDATE positions
+                SET lots = $4,
+                    average_price = $5,
+                    averaging_count = $6
+                WHERE user_id = $1 AND ticker = $2 AND position_type = $3 AND is_open = TRUE
+                """,
+                user_id, ticker, position_type, new_lots, new_avg_price, new_averaging_count
+            )
+            
+            logger.info(f"✅ Added to position {ticker}: +{add_lots} lots at {add_price:.2f} ₽, new average: {new_avg_price:.2f} ₽")
     
     async def close_position(self, user_id: int, ticker: str, position_type: str, exit_price: float):
         """Закрытие позиции"""
         async with self.pool.acquire() as conn:
-            # Для LONG: (exit - entry) / entry * 100
-            # Для SHORT: (entry - exit) / entry * 100
+            # Для расчета прибыли используем среднюю цену (average_price)
+            # Для LONG: (exit - average) / average * 100
+            # Для SHORT: (average - exit) / average * 100
             if position_type == 'LONG':
-                profit_formula = "(($3 - entry_price) / entry_price * 100)"
+                profit_formula = "(($3 - average_price) / average_price * 100)"
             else:  # SHORT
-                profit_formula = "((entry_price - $3) / entry_price * 100)"
+                profit_formula = "((average_price - $3) / average_price * 100)"
             
             query = f"""
                 UPDATE positions
@@ -298,7 +372,8 @@ class Database:
         async with self.pool.acquire() as conn:
             rows = await conn.fetch(
                 """
-                SELECT id, ticker, position_type, entry_price, entry_time, entry_adx, entry_di_plus, entry_di_minus
+                SELECT id, ticker, position_type, entry_price, entry_time, entry_adx, entry_di_plus, entry_di_minus, 
+                       lots, average_price, averaging_count
                 FROM positions
                 WHERE user_id = $1 AND is_open = TRUE
                 ORDER BY entry_time DESC
@@ -312,7 +387,8 @@ class Database:
         async with self.pool.acquire() as conn:
             rows = await conn.fetch(
                 """
-                SELECT ticker, position_type, entry_price, exit_price, profit_percent, entry_time, exit_time
+                SELECT ticker, position_type, entry_price, exit_price, profit_percent, entry_time, exit_time,
+                       lots, average_price, averaging_count
                 FROM positions
                 WHERE user_id = $1 AND is_open = FALSE
                 ORDER BY exit_time DESC
@@ -444,7 +520,10 @@ class Database:
                         p.ticker,
                         p.position_type,
                         p.entry_price,
-                        p.entry_time
+                        p.entry_time,
+                        p.lots,
+                        p.average_price,
+                        p.averaging_count
                     FROM positions p
                     LEFT JOIN users u ON p.user_id = u.user_id
                     WHERE p.is_open = TRUE AND u.username = $1
@@ -462,7 +541,10 @@ class Database:
                         p.ticker,
                         p.position_type,
                         p.entry_price,
-                        p.entry_time
+                        p.entry_time,
+                        p.lots,
+                        p.average_price,
+                        p.averaging_count
                     FROM positions p
                     LEFT JOIN users u ON p.user_id = u.user_id
                     WHERE p.is_open = TRUE
@@ -488,7 +570,10 @@ class Database:
                             p.exit_price,
                             p.profit_percent,
                             p.entry_time,
-                            p.exit_time
+                            p.exit_time,
+                            p.lots,
+                            p.average_price,
+                            p.averaging_count
                         FROM positions p
                         LEFT JOIN users u ON p.user_id = u.user_id
                         WHERE p.is_open = FALSE AND u.username = $1 AND p.position_type = $3
@@ -510,7 +595,10 @@ class Database:
                             p.exit_price,
                             p.profit_percent,
                             p.entry_time,
-                            p.exit_time
+                            p.exit_time,
+                            p.lots,
+                            p.average_price,
+                            p.averaging_count
                         FROM positions p
                         LEFT JOIN users u ON p.user_id = u.user_id
                         WHERE p.is_open = FALSE AND u.username = $1
@@ -533,7 +621,10 @@ class Database:
                             p.exit_price,
                             p.profit_percent,
                             p.entry_time,
-                            p.exit_time
+                            p.exit_time,
+                            p.lots,
+                            p.average_price,
+                            p.averaging_count
                         FROM positions p
                         LEFT JOIN users u ON p.user_id = u.user_id
                         WHERE p.is_open = FALSE AND p.position_type = $2
@@ -555,7 +646,10 @@ class Database:
                             p.exit_price,
                             p.profit_percent,
                             p.entry_time,
-                            p.exit_time
+                            p.exit_time,
+                            p.lots,
+                            p.average_price,
+                            p.averaging_count
                         FROM positions p
                         LEFT JOIN users u ON p.user_id = u.user_id
                         WHERE p.is_open = FALSE
@@ -893,7 +987,10 @@ class Database:
                     p.exit_price,
                     p.profit_percent,
                     p.entry_time,
-                    p.exit_time
+                    p.exit_time,
+                    p.lots,
+                    p.average_price,
+                    p.averaging_count
                 FROM positions p
                 LEFT JOIN users u ON p.user_id = u.user_id
                 WHERE {where_clause}
