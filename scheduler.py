@@ -8,7 +8,14 @@ from stock_service import StockService
 from signals import SignalDetector
 from formatters import MessageFormatter
 from models import SignalType
-from config import SUPPORTED_STOCKS
+from config import (
+    SUPPORTED_STOCKS, 
+    DEPOSIT, 
+    RISK_PERCENT, 
+    STOP_LOSS_PERCENT,
+    AVERAGING_LEVEL_1,
+    AVERAGING_LEVEL_2
+)
 from gpt_analyst import gpt_analyst
 
 logger = logging.getLogger(__name__)
@@ -37,6 +44,39 @@ class SignalMonitor:
             return False
         
         return True
+    
+    def _calculate_lots(self, ticker: str, entry_price: float) -> int:
+        """
+        Расчет количества лотов на основе риска
+        
+        Формула: Количество лотов = Риск / (Цена входа × Stop Loss % × Размер лота)
+        """
+        stock_info = SUPPORTED_STOCKS.get(ticker, {})
+        lot_size = stock_info.get('lot_size', 1)
+        
+        # Риск на сделку в рублях
+        risk_amount = DEPOSIT * (RISK_PERCENT / 100)
+        
+        # Убыток на 1 акцию при срабатывании Stop Loss
+        loss_per_share = entry_price * (STOP_LOSS_PERCENT / 100)
+        
+        # Количество акций
+        shares_count = risk_amount / loss_per_share
+        
+        # Количество лотов (округляем вниз до целого)
+        lots = int(shares_count / lot_size)
+        
+        logger.info(
+            f"💰 Расчет позиции {ticker}: "
+            f"Цена={entry_price:.2f} ₽, "
+            f"Риск={risk_amount:,.0f} ₽, "
+            f"Убыток на акцию={loss_per_share:.2f} ₽, "
+            f"Акций={shares_count:,.0f}, "
+            f"Размер лота={lot_size}, "
+            f"Лотов={lots:,}"
+        )
+        
+        return lots
     
     async def check_signals(self, context: ContextTypes.DEFAULT_TYPE):
         """Периодическая проверка сигналов для всех подписок"""
@@ -80,11 +120,212 @@ class SignalMonitor:
             signals = self.signal_detector.detect_signals(stock_data)
             long_signal = signals['LONG']
             
+            # Проверяем Stop Loss для всех открытых позиций
+            await self._check_stop_loss(ticker, long_signal, stock_data, bot)
+            
+            # Проверяем доливки для всех открытых позиций
+            await self._check_averaging(ticker, long_signal, stock_data, bot)
+            
             # Проверяем LONG сигналы
             await self._process_long_signals(ticker, long_signal, stock_data, bot)
             
         except Exception as e:
             logger.error(f"Error checking signal for {ticker}: {e}", exc_info=True)
+    
+    async def _check_stop_loss(self, ticker: str, signal, stock_data, bot: Bot):
+        """Проверка Stop Loss для всех открытых позиций"""
+        try:
+            # Получаем всех подписчиков
+            subscribers = await db.get_ticker_subscribers(ticker)
+            
+            if not subscribers:
+                return
+            
+            current_price = signal.price
+            
+            for user_id in subscribers:
+                # Проверяем, есть ли открытая LONG позиция
+                has_long_position = await db.has_open_position(user_id, ticker, 'LONG')
+                
+                if not has_long_position:
+                    continue
+                
+                # Получаем данные позиции
+                positions = await db.get_open_positions(user_id)
+                position = next((p for p in positions if p['ticker'] == ticker and p['position_type'] == 'LONG'), None)
+                
+                if not position:
+                    continue
+                
+                entry_price = float(position['entry_price'])
+                lots = position['lots']
+                average_price = float(position['average_price'])
+                averaging_count = position['averaging_count']
+                
+                # Рассчитываем уровень Stop Loss от первоначальной цены входа
+                stop_loss_price = entry_price * (1 - STOP_LOSS_PERCENT / 100)
+                
+                # Проверяем, сработал ли Stop Loss
+                if current_price <= stop_loss_price:
+                    profit_percent = ((current_price - average_price) / average_price) * 100
+                    
+                    logger.info(
+                        f"🛑 STOP LOSS triggered for {ticker} | "
+                        f"User: {user_id} | "
+                        f"Entry: {entry_price:.2f} | "
+                        f"Average: {average_price:.2f} | "
+                        f"Current: {current_price:.2f} | "
+                        f"SL: {stop_loss_price:.2f} | "
+                        f"Loss: {profit_percent:.2f}% | "
+                        f"Lots: {lots:,} | "
+                        f"Averagings: {averaging_count}"
+                    )
+                    
+                    # Закрываем позицию
+                    await db.close_position(user_id, ticker, 'LONG', current_price)
+                    
+                    # Формируем сообщение
+                    stock_info = SUPPORTED_STOCKS.get(ticker, {})
+                    stock_name = stock_info.get('name', ticker)
+                    stock_emoji = stock_info.get('emoji', '📊')
+                    
+                    message = self.formatter.format_stop_loss_notification(
+                        signal, stock_name, stock_emoji, entry_price, average_price, 
+                        profit_percent, stop_loss_price, lots, averaging_count
+                    )
+                    
+                    # Отправляем уведомление
+                    try:
+                        await bot.send_message(
+                            chat_id=user_id,
+                            text=message,
+                            parse_mode='HTML'
+                        )
+                        logger.info(f"Sent STOP LOSS notification to user {user_id} for {ticker}")
+                    except Exception as e:
+                        logger.error(f"Error sending STOP LOSS notification to user {user_id}: {e}")
+        
+        except Exception as e:
+            logger.error(f"Error checking stop loss for {ticker}: {e}", exc_info=True)
+    
+    async def _check_averaging(self, ticker: str, signal, stock_data, bot: Bot):
+        """Проверка уровней для доливки позиций"""
+        try:
+            # Получаем всех подписчиков
+            subscribers = await db.get_ticker_subscribers(ticker)
+            
+            if not subscribers:
+                return
+            
+            current_price = signal.price
+            
+            for user_id in subscribers:
+                # Проверяем, есть ли открытая LONG позиция
+                has_long_position = await db.has_open_position(user_id, ticker, 'LONG')
+                
+                if not has_long_position:
+                    continue
+                
+                # Получаем данные позиции
+                positions = await db.get_open_positions(user_id)
+                position = next((p for p in positions if p['ticker'] == ticker and p['position_type'] == 'LONG'), None)
+                
+                if not position:
+                    continue
+                
+                entry_price = float(position['entry_price'])
+                averaging_count = position['averaging_count']
+                
+                # Рассчитываем уровни доливки от первоначальной цены входа
+                averaging_price_1 = entry_price * (1 - AVERAGING_LEVEL_1 / 100)
+                averaging_price_2 = entry_price * (1 - AVERAGING_LEVEL_2 / 100)
+                
+                # Проверяем первую доливку (при -2%)
+                if averaging_count == 0 and current_price <= averaging_price_1:
+                    await self._execute_averaging(
+                        user_id, ticker, signal, stock_data, bot, 
+                        entry_price, current_price, 1
+                    )
+                
+                # Проверяем вторую доливку (при -4%)
+                elif averaging_count == 1 and current_price <= averaging_price_2:
+                    await self._execute_averaging(
+                        user_id, ticker, signal, stock_data, bot, 
+                        entry_price, current_price, 2
+                    )
+        
+        except Exception as e:
+            logger.error(f"Error checking averaging for {ticker}: {e}", exc_info=True)
+    
+    async def _execute_averaging(
+        self, 
+        user_id: int, 
+        ticker: str, 
+        signal, 
+        stock_data, 
+        bot: Bot,
+        entry_price: float,
+        current_price: float,
+        averaging_number: int
+    ):
+        """Выполнение доливки"""
+        try:
+            # Рассчитываем количество лотов для доливки (такое же как первоначально)
+            add_lots = self._calculate_lots(ticker, entry_price)
+            
+            if add_lots <= 0:
+                logger.warning(f"Cannot add to position {ticker}: calculated lots = {add_lots}")
+                return
+            
+            # Добавляем к позиции
+            await db.add_to_position(user_id, ticker, 'LONG', current_price, add_lots)
+            
+            # Получаем обновленные данные позиции
+            positions = await db.get_open_positions(user_id)
+            position = next((p for p in positions if p['ticker'] == ticker and p['position_type'] == 'LONG'), None)
+            
+            if not position:
+                return
+            
+            total_lots = position['lots']
+            new_average_price = float(position['average_price'])
+            
+            logger.info(
+                f"📊 AVERAGING #{averaging_number} for {ticker} | "
+                f"User: {user_id} | "
+                f"Entry: {entry_price:.2f} | "
+                f"Add price: {current_price:.2f} | "
+                f"Add lots: {add_lots:,} | "
+                f"Total lots: {total_lots:,} | "
+                f"New average: {new_average_price:.2f}"
+            )
+            
+            # Формируем сообщение
+            stock_info = SUPPORTED_STOCKS.get(ticker, {})
+            stock_name = stock_info.get('name', ticker)
+            stock_emoji = stock_info.get('emoji', '📊')
+            
+            # Получаем GPT анализ
+            gpt_analysis = await self._get_gpt_analysis(ticker, stock_data, f"AVERAGING #{averaging_number}")
+            
+            message = self.formatter.format_averaging_notification(
+                signal, stock_name, stock_emoji, entry_price, current_price,
+                add_lots, total_lots, new_average_price, averaging_number, gpt_analysis
+            )
+            
+            # Отправляем уведомление
+            try:
+                await bot.send_message(
+                    chat_id=user_id,
+                    text=message,
+                    parse_mode='HTML'
+                )
+                logger.info(f"Sent AVERAGING notification to user {user_id} for {ticker}")
+            except Exception as e:
+                logger.error(f"Error sending AVERAGING notification to user {user_id}: {e}")
+        
+        except Exception as e:
+            logger.error(f"Error executing averaging for {ticker}: {e}", exc_info=True)
     
     async def _process_long_signals(self, ticker: str, signal, stock_data, bot: Bot):
         """Обработка LONG сигналов"""
@@ -143,12 +384,19 @@ class SignalMonitor:
         stock_name = stock_info.get('name', ticker)
         stock_emoji = stock_info.get('emoji', '📊')
         
+        # Рассчитываем количество лотов
+        lots = self._calculate_lots(ticker, signal.price)
+        
+        if lots <= 0:
+            logger.warning(f"Cannot open position for {ticker}: calculated lots = {lots}")
+            return
+        
         # Получаем GPT анализ
         gpt_analysis = await self._get_gpt_analysis(ticker, stock_data, "LONG BUY")
         
         # Формируем сообщение с GPT анализом
         message = self.formatter.format_long_buy_signal_notification(
-            signal, stock_name, stock_emoji, gpt_analysis
+            signal, stock_name, stock_emoji, lots, gpt_analysis
         )
         
         # Отправляем уведомления всем подписчикам
@@ -166,7 +414,8 @@ class SignalMonitor:
                         signal.price,
                         signal.adx,
                         signal.di_plus,
-                        signal.di_minus
+                        signal.di_minus,
+                        lots
                     )
                     
                     # Отправляем уведомление
@@ -206,14 +455,19 @@ class SignalMonitor:
                     
                     if position:
                         entry_price = float(position['entry_price'])
-                        profit_percent = ((signal.price - entry_price) / entry_price) * 100
+                        average_price = float(position['average_price'])
+                        lots = position['lots']
+                        averaging_count = position['averaging_count']
+                        
+                        profit_percent = ((signal.price - average_price) / average_price) * 100
                         
                         # Закрываем позицию
                         await db.close_position(user_id, ticker, 'LONG', signal.price)
                         
                         # Формируем и отправляем сообщение
                         message = self.formatter.format_long_sell_signal_notification(
-                            signal, stock_name, stock_emoji, entry_price, profit_percent, gpt_analysis
+                            signal, stock_name, stock_emoji, entry_price, average_price,
+                            profit_percent, lots, averaging_count, gpt_analysis
                         )
                         
                         await bot.send_message(
