@@ -128,6 +128,18 @@ class Database:
             except Exception as e:
                 logger.warning(f"Migration warning: {e}")
             
+            # Миграция данных: заполняем average_price для старых позиций
+            try:
+                # Для позиций где average_price = NULL, устанавливаем = entry_price
+                updated = await conn.execute("""
+                    UPDATE positions 
+                    SET average_price = entry_price 
+                    WHERE average_price IS NULL
+                """)
+                logger.info(f"✅ Migration: updated average_price for old positions ({updated})")
+            except Exception as e:
+                logger.warning(f"Migration warning: {e}")
+            
             # 4. Таблица состояний сигналов (теперь отдельно для LONG и SHORT)
             await conn.execute("""
                 CREATE TABLE IF NOT EXISTS signal_states (
