@@ -37,8 +37,7 @@ class MessageFormatter:
             f"🎯 <b>Сигнал LONG:</b> {long_emoji} {long_text}\n\n"
             f"📋 <b>Условия LONG:</b>\n"
             f"✅ ВХОД LONG: ADX > 25 AND DI- > 25\n"
-            f"✅ ВЫХОД LONG: ADX > 25 AND DI+ > 25\n"
-            f"🛑 STOP LOSS: -2% от цены входа"
+            f"✅ ВЫХОД LONG: ADX > 25 AND DI+ > 25"
         )
         
         return message
@@ -101,32 +100,6 @@ class MessageFormatter:
             message += f"\n\n🤖 <b>GPT АНАЛИЗ:</b>\n{gpt_analysis_escaped}"
         
         message += "\n\n✅ LONG позиция закрыта!"
-        
-        return message
-    
-    @staticmethod
-    def format_stop_loss_notification(
-        signal: Signal,
-        stock_name: str,
-        stock_emoji: str,
-        entry_price: float,
-        profit_percent: float,
-        stop_loss_price: float
-    ) -> str:
-        """Уведомление о срабатывании Stop Loss"""
-        message = (
-            f"🛑 <b>STOP LOSS!</b>\n\n"
-            f"{stock_emoji} <b>{signal.ticker} - {stock_name}</b>\n\n"
-            f"💰 <b>Цена выхода:</b> {signal.price:.2f} ₽\n"
-            f"💵 <b>Цена входа:</b> {entry_price:.2f} ₽\n"
-            f"🛑 <b>Stop Loss:</b> {stop_loss_price:.2f} ₽\n\n"
-            f"📉 <b>Убыток:</b> {profit_percent:.2f}%\n\n"
-            f"📈 <b>Индикаторы:</b>\n"
-            f"• ADX: {signal.adx:.2f}\n"
-            f"• DI+: {signal.di_plus:.2f}\n"
-            f"• DI-: {signal.di_minus:.2f}\n\n"
-            f"⚠️ LONG позиция закрыта по Stop Loss"
-        )
         
         return message
     
@@ -270,8 +243,6 @@ class MessageFormatter:
             "   (входим при сильной коррекции вниз)\n\n"
             "✅ ВЫХОД LONG: ADX > 25 AND DI+ > 25\n"
             "   (выходим при развороте вверх)\n\n"
-            "🛑 STOP LOSS: -2% от цены входа\n"
-            "   (защита от больших убытков)\n\n"
             "📈 <b>Доступные акции:</b>\n"
             "🏦 SBER - Сбербанк\n"
             "🛢️ GAZP - Газпром\n"
