@@ -37,7 +37,9 @@ class MessageFormatter:
             f"🎯 <b>Сигнал LONG:</b> {long_emoji} {long_text}\n\n"
             f"📋 <b>Условия LONG:</b>\n"
             f"✅ ВХОД LONG: ADX > 25 AND DI- > 25\n"
-            f"✅ ВЫХОД LONG: ADX > 25 AND DI+ > 25"
+            f"✅ ВЫХОД LONG: ADX > 25 AND DI+ > 25\n"
+            f"🛑 STOP LOSS: -5% от цены входа\n"
+            f"📊 ДОЛИВКИ: -2% и -4% от цены входа"
         )
         
         return message
@@ -47,13 +49,15 @@ class MessageFormatter:
         signal: Signal,
         stock_name: str,
         stock_emoji: str,
+        lots: int,
         gpt_analysis: str = None
     ) -> str:
         """Уведомление о сигнале на покупку (открытие LONG)"""
         message = (
             f"🟢 <b>СИГНАЛ НА ПОКУПКУ (LONG)!</b>\n\n"
             f"{stock_emoji} <b>{signal.ticker} - {stock_name}</b>\n\n"
-            f"💰 <b>Цена входа:</b> {signal.price:.2f} ₽\n\n"
+            f"💰 <b>Цена входа:</b> {signal.price:.2f} ₽\n"
+            f"📦 <b>Лотов:</b> {lots:,}\n\n"
             f"📈 <b>Индикаторы:</b>\n"
             f"• ADX: {signal.adx:.2f}\n"
             f"• DI+: {signal.di_plus:.2f}\n"
@@ -75,7 +79,10 @@ class MessageFormatter:
         stock_name: str, 
         stock_emoji: str,
         entry_price: float,
+        average_price: float,
         profit_percent: float,
+        lots: int,
+        averaging_count: int,
         gpt_analysis: str = None
     ) -> str:
         """Уведомление о сигнале на продажу (закрытие LONG)"""
@@ -86,8 +93,16 @@ class MessageFormatter:
             f"🔴 <b>СИГНАЛ НА ПРОДАЖУ (LONG)!</b>\n\n"
             f"{stock_emoji} <b>{signal.ticker} - {stock_name}</b>\n\n"
             f"💰 <b>Цена выхода:</b> {signal.price:.2f} ₽\n"
-            f"💵 <b>Цена входа:</b> {entry_price:.2f} ₽\n\n"
-            f"{profit_emoji} <b>Прибыль:</b> {profit_sign}{profit_percent:.2f}%\n\n"
+            f"💵 <b>Цена входа:</b> {entry_price:.2f} ₽\n"
+            f"📊 <b>Средняя цена:</b> {average_price:.2f} ₽\n"
+            f"📦 <b>Лотов:</b> {lots:,}\n"
+        )
+        
+        if averaging_count > 0:
+            message += f"🔄 <b>Доливок:</b> {averaging_count}\n"
+        
+        message += (
+            f"\n{profit_emoji} <b>Прибыль:</b> {profit_sign}{profit_percent:.2f}%\n\n"
             f"📈 <b>Индикаторы:</b>\n"
             f"• ADX: {signal.adx:.2f}\n"
             f"• DI+: {signal.di_plus:.2f}\n"
@@ -104,6 +119,83 @@ class MessageFormatter:
         return message
     
     @staticmethod
+    def format_averaging_notification(
+        signal: Signal,
+        stock_name: str,
+        stock_emoji: str,
+        entry_price: float,
+        current_price: float,
+        add_lots: int,
+        total_lots: int,
+        new_average_price: float,
+        averaging_number: int,
+        gpt_analysis: str = None
+    ) -> str:
+        """Уведомление о доливке позиции"""
+        drop_percent = ((current_price - entry_price) / entry_price) * 100
+        
+        message = (
+            f"🔄 <b>ДОЛИВКА #{averaging_number}!</b>\n\n"
+            f"{stock_emoji} <b>{signal.ticker} - {stock_name}</b>\n\n"
+            f"💰 <b>Цена доливки:</b> {current_price:.2f} ₽\n"
+            f"💵 <b>Цена входа:</b> {entry_price:.2f} ₽\n"
+            f"📉 <b>Просадка:</b> {drop_percent:.2f}%\n\n"
+            f"📦 <b>Добавлено лотов:</b> {add_lots:,}\n"
+            f"📦 <b>Всего лотов:</b> {total_lots:,}\n"
+            f"📊 <b>Новая средняя цена:</b> {new_average_price:.2f} ₽\n\n"
+            f"📈 <b>Индикаторы:</b>\n"
+            f"• ADX: {signal.adx:.2f}\n"
+            f"• DI+: {signal.di_plus:.2f}\n"
+            f"• DI-: {signal.di_minus:.2f}"
+        )
+        
+        if gpt_analysis:
+            import html
+            gpt_analysis_escaped = html.escape(gpt_analysis)
+            message += f"\n\n🤖 <b>GPT АНАЛИЗ:</b>\n{gpt_analysis_escaped}"
+        
+        message += "\n\n✅ Позиция увеличена (усреднение)!"
+        
+        return message
+    
+    @staticmethod
+    def format_stop_loss_notification(
+        signal: Signal,
+        stock_name: str,
+        stock_emoji: str,
+        entry_price: float,
+        average_price: float,
+        profit_percent: float,
+        stop_loss_price: float,
+        lots: int,
+        averaging_count: int
+    ) -> str:
+        """Уведомление о срабатывании Stop Loss"""
+        message = (
+            f"🛑 <b>STOP LOSS!</b>\n\n"
+            f"{stock_emoji} <b>{signal.ticker} - {stock_name}</b>\n\n"
+            f"💰 <b>Цена выхода:</b> {signal.price:.2f} ₽\n"
+            f"💵 <b>Цена входа:</b> {entry_price:.2f} ₽\n"
+            f"📊 <b>Средняя цена:</b> {average_price:.2f} ₽\n"
+            f"🛑 <b>Stop Loss:</b> {stop_loss_price:.2f} ₽\n"
+            f"📦 <b>Лотов:</b> {lots:,}\n"
+        )
+        
+        if averaging_count > 0:
+            message += f"🔄 <b>Доливок было:</b> {averaging_count}\n"
+        
+        message += (
+            f"\n📉 <b>Убыток:</b> {profit_percent:.2f}%\n\n"
+            f"📈 <b>Индикаторы:</b>\n"
+            f"• ADX: {signal.adx:.2f}\n"
+            f"• DI+: {signal.di_plus:.2f}\n"
+            f"• DI-: {signal.di_minus:.2f}\n\n"
+            f"⚠️ LONG позиция закрыта по Stop Loss"
+        )
+        
+        return message
+    
+    @staticmethod
     def format_welcome_message() -> str:
         """Приветственное сообщение"""
         message = (
@@ -113,6 +205,10 @@ class MessageFormatter:
             "• Подпишись на уведомления (⭐)\n"
             "• Получай автоматические сигналы на вход/выход (LONG)\n"
             "• Отслеживай прибыль по сделкам\n\n"
+            "💰 <b>Мани-менеджмент:</b>\n"
+            "• Риск на сделку: 5% от депозита\n"
+            "• Stop Loss: -5% от цены входа\n"
+            "• Доливки: -2% и -4% от цены входа\n\n"
             "Выбери действие из меню ниже 👇"
         )
         return message
@@ -145,7 +241,10 @@ class MessageFormatter:
                 ticker = pos['ticker']
                 position_type = pos['position_type']
                 entry_price = float(pos['entry_price'])
+                average_price = float(pos['average_price'])
                 entry_time = pos['entry_time']
+                lots = pos['lots']
+                averaging_count = pos['averaging_count']
                 
                 stock_info = SUPPORTED_STOCKS.get(ticker, {})
                 stock_name = stock_info.get('name', ticker)
@@ -157,9 +256,9 @@ class MessageFormatter:
                 if current_prices and ticker in current_prices:
                     current_price = current_prices[ticker]
                     if position_type == 'LONG':
-                        profit_percent = ((current_price - entry_price) / entry_price) * 100
+                        profit_percent = ((current_price - average_price) / average_price) * 100
                     elif position_type == 'SHORT':
-                        profit_percent = ((entry_price - current_price) / entry_price) * 100
+                        profit_percent = ((average_price - current_price) / average_price) * 100
                 
                 profit_emoji = "📈" if profit_percent > 0 else "📉"
                 profit_sign = "+" if profit_percent > 0 else ""
@@ -169,7 +268,12 @@ class MessageFormatter:
                 message += (
                     f"{stock_emoji} <b>{ticker} - {stock_name}</b> {type_emoji}\n"
                     f"💵 Вход: {entry_price:.2f} ₽\n"
+                    f"📊 Средняя: {average_price:.2f} ₽\n"
+                    f"📦 Лотов: {lots:,}\n"
                 )
+                
+                if averaging_count > 0:
+                    message += f"🔄 Доливок: {averaging_count}\n"
                 
                 if current_price:
                     message += (
@@ -187,9 +291,12 @@ class MessageFormatter:
                 ticker = pos['ticker']
                 position_type = pos['position_type']
                 entry_price = float(pos['entry_price'])
+                average_price = float(pos['average_price'])
                 exit_price = float(pos['exit_price'])
                 profit_percent = float(pos['profit_percent'])
                 exit_time = pos['exit_time']
+                lots = pos['lots']
+                averaging_count = pos['averaging_count']
                 
                 stock_info = SUPPORTED_STOCKS.get(ticker, {})
                 stock_name = stock_info.get('name', ticker)
@@ -203,8 +310,14 @@ class MessageFormatter:
                 message += (
                     f"{stock_emoji} <b>{ticker} - {stock_name}</b> {type_emoji}\n"
                     f"💵 Вход: {entry_price:.2f} ₽ → Выход: {exit_price:.2f} ₽\n"
-                    f"{profit_emoji} P&L: {profit_sign}{profit_percent:.2f}%\n"
+                    f"📊 Средняя: {average_price:.2f} ₽\n"
+                    f"📦 Лотов: {lots:,}\n"
                 )
+                
+                if averaging_count > 0:
+                    message += f"🔄 Доливок: {averaging_count}\n"
+                
+                message += f"{profit_emoji} P&L: {profit_sign}{profit_percent:.2f}%\n"
                 
                 if isinstance(exit_time, str):
                     exit_time = datetime.fromisoformat(exit_time)
@@ -243,12 +356,23 @@ class MessageFormatter:
             "   (входим при сильной коррекции вниз)\n\n"
             "✅ ВЫХОД LONG: ADX > 25 AND DI+ > 25\n"
             "   (выходим при развороте вверх)\n\n"
+            "🛑 STOP LOSS: -5% от цены входа\n"
+            "   (защита от больших убытков)\n\n"
+            "🔄 ДОЛИВКИ:\n"
+            "   • Первая доливка: -2% от цены входа\n"
+            "   • Вторая доливка: -4% от цены входа\n"
+            "   • Объем доливки = объему первоначальной позиции\n\n"
+            "💰 <b>Мани-менеджмент:</b>\n"
+            "   • Депозит: 10,000,000 ₽\n"
+            "   • Риск на сделку: 5% (500,000 ₽)\n"
+            "   • Размер позиции рассчитывается так,\n"
+            "     чтобы при Stop Loss потеря = 500,000 ₽\n\n"
             "📈 <b>Доступные акции:</b>\n"
-            "🏦 SBER - Сбербанк\n"
-            "🛢️ GAZP - Газпром\n"
-            "⛽ LKOH - ЛУКОЙЛ\n"
-            "🏛️ VTBR - ВТБ\n"
-            "🧑‍💼 HEAD - Headhunter\n\n"
+            "🏦 SBER - Сбербанк (лот = 10 акций)\n"
+            "🛢️ GAZP - Газпром (лот = 10 акций)\n"
+            "⛽ LKOH - ЛУКОЙЛ (лот = 1 акция)\n"
+            "🏛️ VTBR - ВТБ (лот = 100 акций)\n"
+            "🧑‍💼 HEAD - Headhunter (лот = 1 акция)\n\n"
             "💡 <b>Как использовать:</b>\n"
             "1. Подпишитесь на интересующие акции\n"
             "2. Получайте автоматические уведомления о сигналах\n"
