@@ -6,12 +6,13 @@ from typing import Optional
 from fastapi import FastAPI, Request
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 import uvicorn
 
 from database import db
 from config import SUPPORTED_STOCKS
 from stock_service import StockService
+from fear_greed_index import fear_greed
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -60,14 +61,13 @@ async def dashboard(
 ):
     """Главная страница дашборда"""
     
-    # Если месяц не указан, берем текущий
     if year is None or month is None:
         now = datetime.now()
         year = now.year
         month = now.month
     
     try:
-        # Получаем общую статистику за месяц (без фильтра по типу)
+        # Получаем общую статистику за месяц
         monthly_stats_all = await db.get_global_monthly_statistics(year, month, username=TARGET_USERNAME)
         
         open_positions = await db.get_all_open_positions_web(username=TARGET_USERNAME)
@@ -81,7 +81,6 @@ async def dashboard(
             )
             ticker_filter_label = datetime(ticker_year, ticker_month, 1).strftime("%B %Y")
             
-            # Получаем данные для графика за выбранный месяц
             chart_data_response = await db.get_cumulative_profit_data(
                 username=TARGET_USERNAME,
                 year=ticker_year,
@@ -91,33 +90,27 @@ async def dashboard(
             ticker_stats_all = await db.get_statistics_by_ticker(username=TARGET_USERNAME)
             ticker_filter_label = "за всё время"
             
-            # Получаем данные для графика за всё время
             chart_data_response = await db.get_cumulative_profit_data(username=TARGET_USERNAME)
         
-        # Извлекаем данные и start_date из ответа
         chart_data_raw = chart_data_response.get('data', {})
         start_date = chart_data_response.get('start_date')
         
-        # Лента сделок - последние 50 с фильтром по типу
+        # Лента сделок
         if feed_type and feed_type != 'all':
             closed_positions = await db.get_all_closed_positions_web(
-                limit=50, 
-                username=TARGET_USERNAME,
-                position_type=feed_type
+                limit=50, username=TARGET_USERNAME, position_type=feed_type
             )
         else:
             closed_positions = await db.get_all_closed_positions_web(
-                limit=50, 
-                username=TARGET_USERNAME
+                limit=50, username=TARGET_USERNAME
             )
         
-        # Раздел "Дополнительно" - получаем данные простыми запросами
+        # Раздел "Дополнительно"
         best_trade = None
         worst_trade = None
         avg_duration_str = "Н/Д"
         
         try:
-            # Получаем лучшую сделку
             async with db.pool.acquire() as conn:
                 best_row = await conn.fetchrow("""
                     SELECT ticker, position_type, profit_percent, exit_time
@@ -132,7 +125,6 @@ async def dashboard(
             logger.error(f"Error getting best trade: {e}")
         
         try:
-            # Получаем худшую сделку
             async with db.pool.acquire() as conn:
                 worst_row = await conn.fetchrow("""
                     SELECT ticker, position_type, profit_percent, exit_time
@@ -147,7 +139,6 @@ async def dashboard(
             logger.error(f"Error getting worst trade: {e}")
         
         try:
-            # Получаем среднюю продолжительность
             async with db.pool.acquire() as conn:
                 avg_hours = await conn.fetchval("""
                     SELECT AVG(EXTRACT(EPOCH FROM (exit_time - entry_time)) / 3600)
@@ -168,18 +159,16 @@ async def dashboard(
             pos['stock_name'] = SUPPORTED_STOCKS.get(ticker, {}).get('name', ticker)
             pos['stock_emoji'] = SUPPORTED_STOCKS.get(ticker, {}).get('emoji', '📊')
             
-            # Получаем текущую цену
             try:
                 stock_data = await stock_service.get_stock_data(ticker)
                 if stock_data:
                     pos['current_price'] = stock_data.price.current_price
-                    # Рассчитываем текущую прибыль с учетом типа позиции
                     entry_price = float(pos['entry_price'])
                     position_type = pos['position_type']
                     
                     if position_type == 'LONG':
                         current_profit = ((pos['current_price'] - entry_price) / entry_price) * 100
-                    else:  # SHORT
+                    else:
                         current_profit = ((entry_price - pos['current_price']) / entry_price) * 100
                     
                     pos['current_profit'] = current_profit
@@ -195,7 +184,6 @@ async def dashboard(
             ticker = pos['ticker']
             pos['stock_name'] = SUPPORTED_STOCKS.get(ticker, {}).get('name', ticker)
             pos['stock_emoji'] = SUPPORTED_STOCKS.get(ticker, {}).get('emoji', '📊')
-            # Вычисляем продолжительность сделки
             duration = pos['exit_time'] - pos['entry_time']
             duration_hours = duration.total_seconds() / 3600
             if duration_hours < 24:
@@ -208,7 +196,6 @@ async def dashboard(
             stat['stock_name'] = SUPPORTED_STOCKS.get(ticker, {}).get('name', ticker)
             stat['stock_emoji'] = SUPPORTED_STOCKS.get(ticker, {}).get('emoji', '📊')
         
-        # Добавляем имена к лучшей/худшей сделке
         if best_trade:
             ticker = best_trade['ticker']
             best_trade['stock_name'] = SUPPORTED_STOCKS.get(ticker, {}).get('name', ticker)
@@ -219,11 +206,9 @@ async def dashboard(
             worst_trade['stock_name'] = SUPPORTED_STOCKS.get(ticker, {}).get('name', ticker)
             worst_trade['stock_emoji'] = SUPPORTED_STOCKS.get(ticker, {}).get('emoji', '📊')
         
-        # Формируем список месяцев (с октября 2025 до текущего месяца)
+        # Формируем список месяцев
         months_list = []
         current_date = datetime.now()
-        
-        # Начинаем с текущего месяца и идём назад до октября 2025
         temp_date = datetime(current_date.year, current_date.month, 1)
         
         while temp_date >= TRADING_START_DATE:
@@ -233,23 +218,19 @@ async def dashboard(
                 'label': temp_date.strftime("%B %Y")
             })
             
-            # Переходим к предыдущему месяцу
             if temp_date.month == 1:
                 temp_date = datetime(temp_date.year - 1, 12, 1)
             else:
                 temp_date = datetime(temp_date.year, temp_date.month - 1, 1)
         
-        # Формируем данные для графика
+        # Формируем данные для графика прибыли
         chart_data = {}
-        
-        # Для всех акций создаем пустые массивы (чтобы показать все акции)
         for ticker in SUPPORTED_STOCKS.keys():
             chart_data[ticker] = {
                 'label': f"{SUPPORTED_STOCKS[ticker]['emoji']} {ticker}",
                 'data': []
             }
         
-        # Заполняем данными из БД
         for ticker, points in chart_data_raw.items():
             if ticker in chart_data:
                 chart_data[ticker]['data'] = [
@@ -260,8 +241,16 @@ async def dashboard(
                     for point in points
                 ]
         
-        # Конвертируем в JSON для передачи в шаблон
         chart_data_json = json.dumps(chart_data)
+        
+        # Fear & Greed Index
+        fg_latest = await db.get_fear_greed_latest()
+        fg_history = await db.get_fear_greed_history(days=90)
+        
+        fg_chart_data = json.dumps([
+            {'date': row['date'].strftime('%Y-%m-%d'), 'value': row['value']}
+            for row in fg_history
+        ])
         
         return templates.TemplateResponse(
             "dashboard.html",
@@ -282,7 +271,9 @@ async def dashboard(
                 "best_trade": best_trade,
                 "worst_trade": worst_trade,
                 "avg_duration_str": avg_duration_str,
-                "chart_data_json": chart_data_json
+                "chart_data_json": chart_data_json,
+                "fg_latest": fg_latest,
+                "fg_chart_data": fg_chart_data,
             }
         )
     
@@ -295,6 +286,22 @@ async def dashboard(
                 "error": str(e)
             }
         )
+
+
+@app.post("/api/fear-greed/refresh")
+async def refresh_fear_greed():
+    """Пересчитать индекс страха и жадности прямо сейчас"""
+    try:
+        result = await fear_greed.calculate()
+        if result:
+            await db.save_fear_greed(result)
+            logger.info(f"✅ Fear & Greed Index refreshed: {result['value']} ({result['label']})")
+        else:
+            logger.warning("⚠️ Failed to calculate Fear & Greed Index on refresh")
+    except Exception as e:
+        logger.error(f"❌ Error refreshing Fear & Greed Index: {e}", exc_info=True)
+    
+    return RedirectResponse(url="/", status_code=303)
 
 
 @app.get("/health")
@@ -310,13 +317,11 @@ async def top_trades(request: Request, type: str = "best", position_type: str = 
         is_best = type == "best"
         trades = await db.get_top_trades(username=TARGET_USERNAME, limit=10, best=is_best, position_type=position_type)
         
-        # Добавляем имена и эмодзи
         for trade in trades:
             ticker = trade['ticker']
             trade['stock_name'] = SUPPORTED_STOCKS.get(ticker, {}).get('name', ticker)
             trade['stock_emoji'] = SUPPORTED_STOCKS.get(ticker, {}).get('emoji', '📊')
         
-        # Формируем заголовок
         if position_type == 'LONG':
             title_suffix = " (LONG)"
         elif position_type == 'SHORT':
