@@ -50,6 +50,22 @@ async def shutdown():
     logger.info("👋 Web Dashboard stopped")
 
 
+@app.post("/api/fear-greed/refresh")
+async def refresh_fear_greed():
+    """Пересчитать индекс страха и жадности прямо сейчас"""
+    try:
+        result = await fear_greed.calculate()
+        if result:
+            await db.save_fear_greed(result)
+            logger.info(f"✅ Fear & Greed refreshed: {result['value']} ({result['label']})")
+            return {"status": "ok", "value": result['value'], "label": result['label']}
+        else:
+            return {"status": "error", "message": "Не удалось рассчитать индекс"}
+    except Exception as e:
+        logger.error(f"Error refreshing Fear & Greed: {e}", exc_info=True)
+        return {"status": "error", "message": str(e)}
+
+
 @app.get("/", response_class=HTMLResponse)
 async def dashboard(
     request: Request, 
@@ -223,7 +239,7 @@ async def dashboard(
             else:
                 temp_date = datetime(temp_date.year, temp_date.month - 1, 1)
         
-        # Формируем данные для графика прибыли
+        # Данные для графика прибыли
         chart_data = {}
         for ticker in SUPPORTED_STOCKS.keys():
             chart_data[ticker] = {
@@ -253,9 +269,9 @@ async def dashboard(
         ])
         
         return templates.TemplateResponse(
+            request,
             "dashboard.html",
             {
-                "request": request,
                 "year": year,
                 "month": month,
                 "month_name": datetime(year, month, 1).strftime("%B %Y"),
@@ -280,28 +296,12 @@ async def dashboard(
     except Exception as e:
         logger.error(f"Error loading dashboard: {e}", exc_info=True)
         return templates.TemplateResponse(
+            request,
             "error.html",
             {
-                "request": request,
                 "error": str(e)
             }
         )
-
-
-@app.post("/api/fear-greed/refresh")
-async def refresh_fear_greed():
-    """Пересчитать индекс страха и жадности прямо сейчас"""
-    try:
-        result = await fear_greed.calculate()
-        if result:
-            await db.save_fear_greed(result)
-            logger.info(f"✅ Fear & Greed Index refreshed: {result['value']} ({result['label']})")
-        else:
-            logger.warning("⚠️ Failed to calculate Fear & Greed Index on refresh")
-    except Exception as e:
-        logger.error(f"❌ Error refreshing Fear & Greed Index: {e}", exc_info=True)
-    
-    return RedirectResponse(url="/", status_code=303)
 
 
 @app.get("/health")
@@ -332,9 +332,9 @@ async def top_trades(request: Request, type: str = "best", position_type: str = 
         title = f"🏆 Топ-10 лучших сделок{title_suffix}" if is_best else f"📉 Топ-10 худших сделок{title_suffix}"
         
         return templates.TemplateResponse(
+            request,
             "top_trades.html",
             {
-                "request": request,
                 "title": title,
                 "trades": trades,
                 "is_best": is_best
@@ -344,9 +344,9 @@ async def top_trades(request: Request, type: str = "best", position_type: str = 
     except Exception as e:
         logger.error(f"Error loading top trades: {e}", exc_info=True)
         return templates.TemplateResponse(
+            request,
             "error.html",
             {
-                "request": request,
                 "error": str(e)
             }
         )
