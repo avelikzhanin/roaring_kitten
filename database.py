@@ -467,6 +467,58 @@ class Database:
                 ticker, signal_type, signal, adx, di_plus, di_minus, price, datetime.now()
             )
     
+    # ========== FEAR & GREED INDEX ==========
+    
+    async def save_fear_greed(self, data: Dict[str, Any]):
+        """Сохранение значения индекса страха и жадности"""
+        async with self.pool.acquire() as conn:
+            components = data['components']
+            await conn.execute(
+                """
+                INSERT INTO fear_greed_history 
+                (date, value, volatility_score, momentum_score, sma_deviation_score,
+                 breadth_score, safe_haven_score, rsi_score, label)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                ON CONFLICT (date) DO UPDATE
+                SET value = $2, volatility_score = $3, momentum_score = $4,
+                    sma_deviation_score = $5, breadth_score = $6, safe_haven_score = $7,
+                    rsi_score = $8, label = $9
+                """,
+                datetime.now().date(),
+                data['value'],
+                components['volatility'],
+                components['momentum'],
+                components['sma_deviation'],
+                components['breadth'],
+                components['safe_haven'],
+                components['rsi'],
+                data['label'],
+            )
+            logger.info(f"✅ Saved Fear & Greed Index: {data['value']} ({data['label']})")
+    
+    async def get_fear_greed_latest(self) -> Optional[Dict[str, Any]]:
+        """Получение последнего значения индекса"""
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT * FROM fear_greed_history ORDER BY date DESC LIMIT 1"
+            )
+            return dict(row) if row else None
+    
+    async def get_fear_greed_history(self, days: int = 90) -> List[Dict[str, Any]]:
+        """Получение истории индекса за N дней"""
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT date, value, label, volatility_score, momentum_score,
+                       sma_deviation_score, breadth_score, safe_haven_score, rsi_score
+                FROM fear_greed_history
+                WHERE date >= CURRENT_DATE - ($1 || ' days')::interval
+                ORDER BY date ASC
+                """,
+                days,
+            )
+            return [dict(row) for row in rows]
+    
     # ========== STATISTICS ==========
     
     async def get_monthly_statistics(self, user_id: int, year: int, month: int, position_type: str = None) -> Dict[str, Any]:
@@ -531,13 +583,8 @@ class Database:
                         p.user_id,
                         COALESCE(u.username, 'unknown') as username,
                         COALESCE(u.first_name, 'Unknown') as first_name,
-                        p.ticker,
-                        p.position_type,
-                        p.entry_price,
-                        p.entry_time,
-                        p.lots,
-                        p.average_price,
-                        p.averaging_count
+                        p.ticker, p.position_type, p.entry_price, p.entry_time,
+                        p.lots, p.average_price, p.averaging_count
                     FROM positions p
                     LEFT JOIN users u ON p.user_id = u.user_id
                     WHERE p.is_open = TRUE AND u.username = $1
@@ -552,13 +599,8 @@ class Database:
                         p.user_id,
                         COALESCE(u.username, 'unknown') as username,
                         COALESCE(u.first_name, 'Unknown') as first_name,
-                        p.ticker,
-                        p.position_type,
-                        p.entry_price,
-                        p.entry_time,
-                        p.lots,
-                        p.average_price,
-                        p.averaging_count
+                        p.ticker, p.position_type, p.entry_price, p.entry_time,
+                        p.lots, p.average_price, p.averaging_count
                     FROM positions p
                     LEFT JOIN users u ON p.user_id = u.user_id
                     WHERE p.is_open = TRUE
@@ -570,80 +612,41 @@ class Database:
     async def get_all_closed_positions_web(self, limit: int = 50, username: str = None, position_type: str = None) -> List[Dict[str, Any]]:
         """Получение всех закрытых позиций для веб-дашборда"""
         async with self.pool.acquire() as conn:
+            where_conditions = ["p.is_open = FALSE"]
+            params = []
+            param_idx = 1
+            
             if username:
-                if position_type:
-                    rows = await conn.fetch(
-                        """
-                        SELECT 
-                            p.user_id,
-                            COALESCE(u.username, 'unknown') as username,
-                            COALESCE(u.first_name, 'Unknown') as first_name,
-                            p.ticker, p.position_type, p.entry_price, p.exit_price,
-                            p.profit_percent, p.entry_time, p.exit_time,
-                            p.lots, p.average_price, p.averaging_count
-                        FROM positions p
-                        LEFT JOIN users u ON p.user_id = u.user_id
-                        WHERE p.is_open = FALSE AND u.username = $1 AND p.position_type = $3
-                        ORDER BY p.exit_time DESC
-                        LIMIT $2
-                        """,
-                        username, limit, position_type
-                    )
-                else:
-                    rows = await conn.fetch(
-                        """
-                        SELECT 
-                            p.user_id,
-                            COALESCE(u.username, 'unknown') as username,
-                            COALESCE(u.first_name, 'Unknown') as first_name,
-                            p.ticker, p.position_type, p.entry_price, p.exit_price,
-                            p.profit_percent, p.entry_time, p.exit_time,
-                            p.lots, p.average_price, p.averaging_count
-                        FROM positions p
-                        LEFT JOIN users u ON p.user_id = u.user_id
-                        WHERE p.is_open = FALSE AND u.username = $1
-                        ORDER BY p.exit_time DESC
-                        LIMIT $2
-                        """,
-                        username, limit
-                    )
-            else:
-                if position_type:
-                    rows = await conn.fetch(
-                        """
-                        SELECT 
-                            p.user_id,
-                            COALESCE(u.username, 'unknown') as username,
-                            COALESCE(u.first_name, 'Unknown') as first_name,
-                            p.ticker, p.position_type, p.entry_price, p.exit_price,
-                            p.profit_percent, p.entry_time, p.exit_time,
-                            p.lots, p.average_price, p.averaging_count
-                        FROM positions p
-                        LEFT JOIN users u ON p.user_id = u.user_id
-                        WHERE p.is_open = FALSE AND p.position_type = $2
-                        ORDER BY p.exit_time DESC
-                        LIMIT $1
-                        """,
-                        limit, position_type
-                    )
-                else:
-                    rows = await conn.fetch(
-                        """
-                        SELECT 
-                            p.user_id,
-                            COALESCE(u.username, 'unknown') as username,
-                            COALESCE(u.first_name, 'Unknown') as first_name,
-                            p.ticker, p.position_type, p.entry_price, p.exit_price,
-                            p.profit_percent, p.entry_time, p.exit_time,
-                            p.lots, p.average_price, p.averaging_count
-                        FROM positions p
-                        LEFT JOIN users u ON p.user_id = u.user_id
-                        WHERE p.is_open = FALSE
-                        ORDER BY p.exit_time DESC
-                        LIMIT $1
-                        """,
-                        limit
-                    )
+                where_conditions.append(f"u.username = ${param_idx}")
+                params.append(username)
+                param_idx += 1
+            
+            if position_type:
+                where_conditions.append(f"p.position_type = ${param_idx}")
+                params.append(position_type)
+                param_idx += 1
+            
+            params.append(limit)
+            limit_param = f"${param_idx}"
+            
+            where_clause = " AND ".join(where_conditions)
+            
+            query = f"""
+                SELECT 
+                    p.user_id,
+                    COALESCE(u.username, 'unknown') as username,
+                    COALESCE(u.first_name, 'Unknown') as first_name,
+                    p.ticker, p.position_type, p.entry_price, p.exit_price,
+                    p.profit_percent, p.entry_time, p.exit_time,
+                    p.lots, p.average_price, p.averaging_count
+                FROM positions p
+                LEFT JOIN users u ON p.user_id = u.user_id
+                WHERE {where_clause}
+                ORDER BY p.exit_time DESC
+                LIMIT {limit_param}
+            """
+            
+            rows = await conn.fetch(query, *params)
             return [dict(row) for row in rows]
     
     async def get_global_monthly_statistics(self, year: int, month: int, username: str = None, position_type: str = None) -> Dict[str, Any]:
@@ -758,8 +761,8 @@ class Database:
             
             best_query = f"""
                 SELECT p.ticker, p.position_type, p.profit_percent, p.exit_time,
-                    COALESCE(u.username, 'unknown') as username,
-                    COALESCE(u.first_name, 'Unknown') as first_name
+                       COALESCE(u.username, 'unknown') as username,
+                       COALESCE(u.first_name, 'Unknown') as first_name
                 FROM positions p
                 LEFT JOIN users u ON p.user_id = u.user_id
                 WHERE {where_clause}
@@ -769,8 +772,8 @@ class Database:
             
             worst_query = f"""
                 SELECT p.ticker, p.position_type, p.profit_percent, p.exit_time,
-                    COALESCE(u.username, 'unknown') as username,
-                    COALESCE(u.first_name, 'Unknown') as first_name
+                       COALESCE(u.username, 'unknown') as username,
+                       COALESCE(u.first_name, 'Unknown') as first_name
                 FROM positions p
                 LEFT JOIN users u ON p.user_id = u.user_id
                 WHERE {where_clause}
@@ -838,8 +841,8 @@ class Database:
             
             query = f"""
                 SELECT p.ticker, p.position_type, p.profit_percent, p.exit_time,
-                    COALESCE(u.username, 'unknown') as username,
-                    COALESCE(u.first_name, 'Unknown') as first_name
+                       COALESCE(u.username, 'unknown') as username,
+                       COALESCE(u.first_name, 'Unknown') as first_name
                 FROM positions p
                 LEFT JOIN users u ON p.user_id = u.user_id
                 WHERE {where_clause}
@@ -1017,58 +1020,6 @@ class Database:
                 'data': result,
                 'start_date': start_date
             }
-
-    # ========== FEAR & GREED INDEX ==========
-
-    async def save_fear_greed(self, data: Dict[str, Any]):
-        """Сохранение значения индекса страха и жадности"""
-        async with self.pool.acquire() as conn:
-            components = data['components']
-            await conn.execute(
-                """
-                INSERT INTO fear_greed_history 
-                (date, value, volatility_score, momentum_score, sma_deviation_score,
-                 breadth_score, safe_haven_score, rsi_score, label)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-                ON CONFLICT (date) DO UPDATE
-                SET value = $2, volatility_score = $3, momentum_score = $4,
-                    sma_deviation_score = $5, breadth_score = $6, safe_haven_score = $7,
-                    rsi_score = $8, label = $9
-                """,
-                datetime.now().date(),
-                data['value'],
-                components['volatility'],
-                components['momentum'],
-                components['sma_deviation'],
-                components['breadth'],
-                components['safe_haven'],
-                components['rsi'],
-                data['label'],
-            )
-            logger.info(f"✅ Saved Fear & Greed Index: {data['value']} ({data['label']})")
-
-    async def get_fear_greed_latest(self) -> Optional[Dict[str, Any]]:
-        """Получение последнего значения индекса"""
-        async with self.pool.acquire() as conn:
-            row = await conn.fetchrow(
-                "SELECT * FROM fear_greed_history ORDER BY date DESC LIMIT 1"
-            )
-            return dict(row) if row else None
-
-    async def get_fear_greed_history(self, days: int = 90) -> List[Dict[str, Any]]:
-        """Получение истории индекса за N дней"""
-        async with self.pool.acquire() as conn:
-            rows = await conn.fetch(
-                """
-                SELECT date, value, label, volatility_score, momentum_score,
-                       sma_deviation_score, breadth_score, safe_haven_score, rsi_score
-                FROM fear_greed_history
-                WHERE date >= CURRENT_DATE - $1
-                ORDER BY date ASC
-                """,
-                days,
-            )
-            return [dict(row) for row in rows]
 
 
 # Глобальный экземпляр базы данных
