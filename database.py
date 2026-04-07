@@ -515,7 +515,7 @@ class Database:
                 WHERE date >= CURRENT_DATE - ($1 || ' days')::interval
                 ORDER BY date ASC
                 """,
-                days,
+                str(days),
             )
             return [dict(row) for row in rows]
     
