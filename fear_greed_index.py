@@ -46,7 +46,6 @@ class FearGreedIndex:
             - components: dict со скорами каждого компонента
         """
         try:
-            # Загружаем все данные
             imoex_candles = await self._get_imoex_daily_candles(days=200)
             usdrub_candles = await self._get_usdrub_daily_candles(days=30)
             breadth_data = await self._get_market_breadth()
@@ -58,25 +57,13 @@ class FearGreedIndex:
                 )
                 return None
 
-            # 1. Волатильность (25%)
             volatility_score = self._calc_volatility_score(imoex_candles)
-
-            # 2. Моментум / объёмы (25%)
             momentum_score = self._calc_momentum_score(imoex_candles)
-
-            # 3. Отклонение от SMA-125 (15%)
             sma_score = self._calc_sma_deviation_score(imoex_candles)
-
-            # 4. Breadth — ширина рынка (15%)
             breadth_score = self._calc_breadth_score(breadth_data)
-
-            # 5. Safe Haven — USD/RUB (10%)
             safe_haven_score = self._calc_safe_haven_score(usdrub_candles)
-
-            # 6. RSI индекса IMOEX (10%)
             rsi_score = self._calc_rsi_score(imoex_candles)
 
-            # Взвешенная сумма
             value = (
                 volatility_score * WEIGHTS['volatility']
                 + momentum_score * WEIGHTS['momentum']
@@ -214,8 +201,6 @@ class FearGreedIndex:
             url = f"{self.base_url}/engines/stock/markets/shares/boards/TQBR/securities.json"
             params = {
                 'iss.meta': 'off',
-                'iss.only': 'marketdata',
-                'marketdata.columns': 'SECID,LASTCHANGEPRC',
             }
 
             async with httpx.AsyncClient() as client:
@@ -224,17 +209,44 @@ class FearGreedIndex:
                 data = response.json()
 
             if 'marketdata' not in data or not data['marketdata']['data']:
+                logger.warning("No marketdata in breadth response")
+                return None
+
+            columns = data['marketdata']['columns']
+
+            # Ищем колонку с тикером
+            secid_idx = None
+            for name in ('SECID',):
+                if name in columns:
+                    secid_idx = columns.index(name)
+                    break
+
+            # Ищем колонку с % изменения за день (пробуем разные варианты)
+            change_idx = None
+            for name in ('LASTTOPREVPRICE', 'LASTCHANGEPRCNT', 'LASTCHANGEPRC', 'CHANGE'):
+                if name in columns:
+                    change_idx = columns.index(name)
+                    break
+
+            if secid_idx is None or change_idx is None:
+                logger.warning(
+                    f"Breadth: required columns not found. "
+                    f"Available: {columns[:20]}..."
+                )
                 return None
 
             result = {}
             for row in data['marketdata']['data']:
-                secid = row[0]
-                change_prc = row[1]
-                if secid in IMOEX_TICKERS and change_prc is not None:
-                    result[secid] = float(change_prc)
+                try:
+                    secid = row[secid_idx]
+                    change_prc = row[change_idx]
+                    if secid in IMOEX_TICKERS and change_prc is not None:
+                        result[secid] = float(change_prc)
+                except (IndexError, ValueError, TypeError):
+                    continue
 
             logger.info(f"Breadth: got data for {len(result)}/{len(IMOEX_TICKERS)} stocks")
-            return result
+            return result if result else None
 
         except Exception as e:
             logger.error(f"Error fetching breadth data: {e}")
@@ -290,11 +302,8 @@ class FearGreedIndex:
 
         vol_ratio = avg_vol_5 / avg_vol_90
 
-        # 5-дневная доходность
         price_return = (closes[-1] - closes[-6]) / closes[-6]
 
-        # Комбинируем направление цены с объёмом
-        # price_return ±2% при нормальном объёме → ±50 от нейтрали
         score = 50 + price_return * 500 * min(vol_ratio, 2.0)
         return max(0.0, min(100.0, score))
 
@@ -359,7 +368,6 @@ class FearGreedIndex:
         if len(closes) < 15:
             return 50.0
 
-        # Дневные изменения
         gains = []
         losses = []
         for i in range(1, len(closes)):
@@ -371,7 +379,6 @@ class FearGreedIndex:
         if len(gains) < period:
             return 50.0
 
-        # Wilder's smoothing
         avg_gain = sum(gains[:period]) / period
         avg_loss = sum(losses[:period]) / period
 
@@ -385,7 +392,6 @@ class FearGreedIndex:
             rs = avg_gain / avg_loss
             rsi = 100 - (100 / (1 + rs))
 
-        # Маппинг RSI → score
         if rsi <= 30:
             return 0.0
         elif rsi >= 70:
