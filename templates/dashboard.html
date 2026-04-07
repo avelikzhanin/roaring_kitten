@@ -9,35 +9,37 @@
     <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
     <style>
-        /* Fear & Greed секция */
+        /* Fear & Greed секция - компактная */
+        .fear-greed {
+            margin-bottom: 30px;
+        }
         .fg-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 20px;
+            margin-bottom: 16px;
         }
         .fg-header h2 {
             margin-bottom: 0;
             border-bottom: none;
             padding-bottom: 0;
+            font-size: 1.5em;
         }
         .fg-refresh-btn {
             display: inline-flex;
             align-items: center;
             gap: 8px;
-            padding: 10px 20px;
+            padding: 8px 16px;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
             border: none;
-            border-radius: 10px;
-            font-size: 0.95em;
+            border-radius: 8px;
+            font-size: 0.85em;
             font-weight: 600;
             cursor: pointer;
             transition: transform 0.2s ease, opacity 0.2s ease;
         }
-        .fg-refresh-btn:hover {
-            transform: scale(1.05);
-        }
+        .fg-refresh-btn:hover { transform: scale(1.05); }
         .fg-refresh-btn:disabled {
             opacity: 0.6;
             cursor: not-allowed;
@@ -45,85 +47,111 @@
         }
         .fg-refresh-btn .spinner {
             display: none;
-            width: 16px;
-            height: 16px;
+            width: 14px;
+            height: 14px;
             border: 2px solid rgba(255,255,255,0.3);
             border-top-color: white;
             border-radius: 50%;
             animation: spin 0.8s linear infinite;
         }
-        .fg-refresh-btn.loading .spinner {
-            display: inline-block;
-        }
-        .fg-refresh-btn.loading .btn-text {
-            display: none;
-        }
-        @keyframes spin {
-            to { transform: rotate(360deg); }
-        }
-        .fg-gauge-container {
+        .fg-refresh-btn.loading .spinner { display: inline-block; }
+        .fg-refresh-btn.loading .btn-text { display: none; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* Главный блок: gauge слева, компоненты справа */
+        .fg-main {
             display: flex;
-            justify-content: center;
-            margin-bottom: 30px;
+            gap: 16px;
+            align-items: stretch;
+            margin-bottom: 16px;
         }
         .fg-gauge {
+            flex: 0 0 180px;
             text-align: center;
-            padding: 30px 50px;
-            border-radius: 20px;
-            min-width: 250px;
+            padding: 18px 12px;
+            border-radius: 14px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
         }
         .fg-gauge .fg-value {
-            font-size: 4em;
+            font-size: 3em;
             font-weight: bold;
             color: white;
             line-height: 1;
         }
         .fg-gauge .fg-label {
-            font-size: 1.2em;
-            color: rgba(255,255,255,0.9);
-            margin-top: 10px;
+            font-size: 0.95em;
+            color: rgba(255,255,255,0.95);
+            margin-top: 6px;
+            font-weight: 600;
         }
         .fg-gauge .fg-date {
-            font-size: 0.85em;
-            color: rgba(255,255,255,0.7);
-            margin-top: 8px;
+            font-size: 0.75em;
+            color: rgba(255,255,255,0.75);
+            margin-top: 4px;
         }
         .fg-components {
+            flex: 1;
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-            gap: 15px;
-            margin-bottom: 30px;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 10px;
         }
         .fg-component {
             background: white;
-            border: 2px solid #eee;
-            border-radius: 12px;
-            padding: 15px;
+            border: 1px solid #eee;
+            border-radius: 10px;
+            padding: 10px 8px;
             text-align: center;
             transition: transform 0.2s ease;
         }
-        .fg-component:hover {
-            transform: translateY(-3px);
-        }
+        .fg-component:hover { transform: translateY(-2px); }
         .fg-component .comp-value {
-            font-size: 1.8em;
+            font-size: 1.4em;
             font-weight: bold;
             color: #333;
+            line-height: 1;
         }
         .fg-component .comp-label {
-            font-size: 0.85em;
+            font-size: 0.75em;
             color: #666;
-            margin-top: 5px;
+            margin-top: 4px;
         }
         .fg-component .comp-weight {
-            font-size: 0.75em;
+            font-size: 0.65em;
             color: #999;
+            margin-top: 2px;
         }
+
+        /* Компактный график */
+        .fg-chart-container {
+            position: relative;
+            height: 260px;
+            padding: 12px;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+        }
+
         .fg-no-data {
             text-align: center;
-            padding: 40px;
+            padding: 30px;
             color: #999;
-            font-size: 1.1em;
+            font-size: 1em;
+        }
+
+        /* Mobile */
+        @media (max-width: 768px) {
+            .fg-main {
+                flex-direction: column;
+            }
+            .fg-gauge {
+                flex: none;
+                padding: 14px;
+            }
+            .fg-components {
+                grid-template-columns: repeat(3, 1fr);
+            }
         }
     </style>
 </head>
@@ -145,7 +173,7 @@
             </div>
 
             {% if fg_latest %}
-            <div class="fg-gauge-container">
+            <div class="fg-main">
                 <div class="fg-gauge" id="fgGauge" style="background: linear-gradient(135deg,
                     {% if fg_latest.value <= 24 %}#c62828, #e53935
                     {% elif fg_latest.value <= 44 %}#e65100, #fb8c00
@@ -153,47 +181,47 @@
                     {% elif fg_latest.value <= 74 %}#2e7d32, #43a047
                     {% else %}#1b5e20, #2e7d32
                     {% endif %});">
-                    <div class="fg-value" id="fgValue">{{ fg_latest.value }}</div>
-                    <div class="fg-label" id="fgLabel">{{ fg_latest.label }}</div>
-                    <div class="fg-date" id="fgDate">{{ fg_latest.date.strftime("%d.%m.%Y") }}</div>
+                    <div class="fg-value">{{ fg_latest.value }}</div>
+                    <div class="fg-label">{{ fg_latest.label }}</div>
+                    <div class="fg-date">{{ fg_latest.date.strftime("%d.%m.%Y") }}</div>
                 </div>
-            </div>
 
-            <div class="fg-components">
-                <div class="fg-component">
-                    <div class="comp-value">{{ "%.0f"|format(fg_latest.volatility_score) }}</div>
-                    <div class="comp-label">Волатильность</div>
-                    <div class="comp-weight">25%</div>
-                </div>
-                <div class="fg-component">
-                    <div class="comp-value">{{ "%.0f"|format(fg_latest.momentum_score) }}</div>
-                    <div class="comp-label">Моментум</div>
-                    <div class="comp-weight">25%</div>
-                </div>
-                <div class="fg-component">
-                    <div class="comp-value">{{ "%.0f"|format(fg_latest.sma_deviation_score) }}</div>
-                    <div class="comp-label">SMA-125</div>
-                    <div class="comp-weight">15%</div>
-                </div>
-                <div class="fg-component">
-                    <div class="comp-value">{{ "%.0f"|format(fg_latest.breadth_score) }}</div>
-                    <div class="comp-label">Breadth</div>
-                    <div class="comp-weight">15%</div>
-                </div>
-                <div class="fg-component">
-                    <div class="comp-value">{{ "%.0f"|format(fg_latest.safe_haven_score) }}</div>
-                    <div class="comp-label">USD/RUB</div>
-                    <div class="comp-weight">10%</div>
-                </div>
-                <div class="fg-component">
-                    <div class="comp-value">{{ "%.0f"|format(fg_latest.rsi_score) }}</div>
-                    <div class="comp-label">RSI</div>
-                    <div class="comp-weight">10%</div>
+                <div class="fg-components">
+                    <div class="fg-component">
+                        <div class="comp-value">{{ "%.0f"|format(fg_latest.volatility_score) }}</div>
+                        <div class="comp-label">Волатильность</div>
+                        <div class="comp-weight">25%</div>
+                    </div>
+                    <div class="fg-component">
+                        <div class="comp-value">{{ "%.0f"|format(fg_latest.momentum_score) }}</div>
+                        <div class="comp-label">Моментум</div>
+                        <div class="comp-weight">25%</div>
+                    </div>
+                    <div class="fg-component">
+                        <div class="comp-value">{{ "%.0f"|format(fg_latest.sma_deviation_score) }}</div>
+                        <div class="comp-label">SMA-125</div>
+                        <div class="comp-weight">15%</div>
+                    </div>
+                    <div class="fg-component">
+                        <div class="comp-value">{{ "%.0f"|format(fg_latest.breadth_score) }}</div>
+                        <div class="comp-label">Breadth</div>
+                        <div class="comp-weight">15%</div>
+                    </div>
+                    <div class="fg-component">
+                        <div class="comp-value">{{ "%.0f"|format(fg_latest.safe_haven_score) }}</div>
+                        <div class="comp-label">USD/RUB</div>
+                        <div class="comp-weight">10%</div>
+                    </div>
+                    <div class="fg-component">
+                        <div class="comp-value">{{ "%.0f"|format(fg_latest.rsi_score) }}</div>
+                        <div class="comp-label">RSI</div>
+                        <div class="comp-weight">10%</div>
+                    </div>
                 </div>
             </div>
 
             <!-- График истории F&G -->
-            <div class="chart-container">
+            <div class="fg-chart-container">
                 <canvas id="fgChart"></canvas>
             </div>
             {% else %}
