@@ -9,10 +9,7 @@
     <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
     <style>
-        /* Fear & Greed Index */
-        .fg-section {
-            margin-bottom: 40px;
-        }
+        /* Fear & Greed секция */
         .fg-header {
             display: flex;
             justify-content: space-between;
@@ -25,107 +22,108 @@
             padding-bottom: 0;
         }
         .fg-refresh-btn {
-            display: inline-block;
-            padding: 8px 18px;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 20px;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
             border: none;
-            border-radius: 8px;
-            font-size: 0.9em;
+            border-radius: 10px;
+            font-size: 0.95em;
             font-weight: 600;
             cursor: pointer;
-            text-decoration: none;
             transition: transform 0.2s ease, opacity 0.2s ease;
         }
         .fg-refresh-btn:hover {
             transform: scale(1.05);
         }
-        .fg-refresh-btn:active {
-            opacity: 0.8;
-        }
-        .fg-refresh-btn.loading {
+        .fg-refresh-btn:disabled {
             opacity: 0.6;
-            pointer-events: none;
+            cursor: not-allowed;
+            transform: none;
         }
-        .fg-gauge-row {
+        .fg-refresh-btn .spinner {
+            display: none;
+            width: 16px;
+            height: 16px;
+            border: 2px solid rgba(255,255,255,0.3);
+            border-top-color: white;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+        .fg-refresh-btn.loading .spinner {
+            display: inline-block;
+        }
+        .fg-refresh-btn.loading .btn-text {
+            display: none;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        .fg-gauge-container {
             display: flex;
-            gap: 20px;
-            margin-bottom: 20px;
-            align-items: stretch;
+            justify-content: center;
+            margin-bottom: 30px;
         }
-        .fg-gauge-card {
-            flex: 0 0 220px;
-            border-radius: 15px;
-            padding: 30px 25px;
+        .fg-gauge {
             text-align: center;
-            color: white;
-            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.15);
+            padding: 30px 50px;
+            border-radius: 20px;
+            min-width: 250px;
         }
-        .fg-gauge-value {
+        .fg-gauge .fg-value {
             font-size: 4em;
             font-weight: bold;
+            color: white;
             line-height: 1;
-            margin-bottom: 10px;
         }
-        .fg-gauge-label {
-            font-size: 1.1em;
-            opacity: 0.95;
+        .fg-gauge .fg-label {
+            font-size: 1.2em;
+            color: rgba(255,255,255,0.9);
+            margin-top: 10px;
         }
-        .fg-gauge-date {
-            font-size: 0.8em;
-            opacity: 0.7;
+        .fg-gauge .fg-date {
+            font-size: 0.85em;
+            color: rgba(255,255,255,0.7);
             margin-top: 8px;
         }
-        .fg-components-grid {
-            flex: 1;
+        .fg-components {
             display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 12px;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+            margin-bottom: 30px;
         }
         .fg-component {
             background: white;
             border: 2px solid #eee;
-            border-radius: 10px;
+            border-radius: 12px;
             padding: 15px;
             text-align: center;
+            transition: transform 0.2s ease;
         }
-        .fg-component-value {
+        .fg-component:hover {
+            transform: translateY(-3px);
+        }
+        .fg-component .comp-value {
             font-size: 1.8em;
             font-weight: bold;
             color: #333;
         }
-        .fg-component-label {
-            font-size: 0.8em;
-            color: #888;
-            margin-top: 4px;
+        .fg-component .comp-label {
+            font-size: 0.85em;
+            color: #666;
+            margin-top: 5px;
         }
-        .fg-component-weight {
-            font-size: 0.7em;
-            color: #aaa;
+        .fg-component .comp-weight {
+            font-size: 0.75em;
+            color: #999;
         }
         .fg-no-data {
             text-align: center;
             padding: 40px;
             color: #999;
-        }
-        .fg-no-data .fg-refresh-btn {
-            margin-top: 15px;
-        }
-        @media (max-width: 768px) {
-            .fg-gauge-row {
-                flex-direction: column;
-            }
-            .fg-gauge-card {
-                flex: none;
-            }
-            .fg-components-grid {
-                grid-template-columns: repeat(2, 1fr);
-            }
-            .fg-header {
-                flex-direction: column;
-                align-items: flex-start;
-                gap: 10px;
-            }
+            font-size: 1.1em;
         }
     </style>
 </head>
@@ -137,63 +135,60 @@
         </header>
 
         <!-- Fear & Greed Index -->
-        <section class="fg-section">
+        <section class="fear-greed">
             <div class="fg-header">
                 <h2>📊 Индекс страха и жадности MOEX</h2>
-                <form action="/api/fear-greed/refresh" method="post" id="fg-refresh-form">
-                    <button type="submit" class="fg-refresh-btn" id="fg-refresh-btn" title="Пересчитать индекс">
-                        🔄 Обновить сейчас
-                    </button>
-                </form>
+                <button type="button" class="fg-refresh-btn" id="fgRefreshBtn">
+                    <span class="btn-text">🔄 Обновить сейчас</span>
+                    <span class="spinner"></span>
+                </button>
             </div>
 
             {% if fg_latest %}
-            <div class="fg-gauge-row">
-                <!-- Главный индикатор -->
-                <div class="fg-gauge-card" style="background: linear-gradient(135deg,
+            <div class="fg-gauge-container">
+                <div class="fg-gauge" id="fgGauge" style="background: linear-gradient(135deg,
                     {% if fg_latest.value <= 24 %}#c62828, #e53935
                     {% elif fg_latest.value <= 44 %}#e65100, #fb8c00
-                    {% elif fg_latest.value <= 55 %}#455a64, #78909c
+                    {% elif fg_latest.value <= 55 %}#546e7a, #78909c
                     {% elif fg_latest.value <= 74 %}#2e7d32, #43a047
                     {% else %}#1b5e20, #2e7d32
                     {% endif %});">
-                    <div class="fg-gauge-value">{{ fg_latest.value }}</div>
-                    <div class="fg-gauge-label">{{ fg_latest.label }}</div>
-                    <div class="fg-gauge-date">{{ fg_latest.date.strftime('%d.%m.%Y') }}</div>
+                    <div class="fg-value" id="fgValue">{{ fg_latest.value }}</div>
+                    <div class="fg-label" id="fgLabel">{{ fg_latest.label }}</div>
+                    <div class="fg-date" id="fgDate">{{ fg_latest.date.strftime("%d.%m.%Y") }}</div>
                 </div>
+            </div>
 
-                <!-- Компоненты -->
-                <div class="fg-components-grid">
-                    <div class="fg-component">
-                        <div class="fg-component-value">{{ "%.0f"|format(fg_latest.volatility_score) }}</div>
-                        <div class="fg-component-label">Волатильность</div>
-                        <div class="fg-component-weight">25%</div>
-                    </div>
-                    <div class="fg-component">
-                        <div class="fg-component-value">{{ "%.0f"|format(fg_latest.momentum_score) }}</div>
-                        <div class="fg-component-label">Моментум</div>
-                        <div class="fg-component-weight">25%</div>
-                    </div>
-                    <div class="fg-component">
-                        <div class="fg-component-value">{{ "%.0f"|format(fg_latest.sma_deviation_score) }}</div>
-                        <div class="fg-component-label">SMA-125</div>
-                        <div class="fg-component-weight">15%</div>
-                    </div>
-                    <div class="fg-component">
-                        <div class="fg-component-value">{{ "%.0f"|format(fg_latest.breadth_score) }}</div>
-                        <div class="fg-component-label">Breadth</div>
-                        <div class="fg-component-weight">15%</div>
-                    </div>
-                    <div class="fg-component">
-                        <div class="fg-component-value">{{ "%.0f"|format(fg_latest.safe_haven_score) }}</div>
-                        <div class="fg-component-label">USD/RUB</div>
-                        <div class="fg-component-weight">10%</div>
-                    </div>
-                    <div class="fg-component">
-                        <div class="fg-component-value">{{ "%.0f"|format(fg_latest.rsi_score) }}</div>
-                        <div class="fg-component-label">RSI</div>
-                        <div class="fg-component-weight">10%</div>
-                    </div>
+            <div class="fg-components">
+                <div class="fg-component">
+                    <div class="comp-value">{{ "%.0f"|format(fg_latest.volatility_score) }}</div>
+                    <div class="comp-label">Волатильность</div>
+                    <div class="comp-weight">25%</div>
+                </div>
+                <div class="fg-component">
+                    <div class="comp-value">{{ "%.0f"|format(fg_latest.momentum_score) }}</div>
+                    <div class="comp-label">Моментум</div>
+                    <div class="comp-weight">25%</div>
+                </div>
+                <div class="fg-component">
+                    <div class="comp-value">{{ "%.0f"|format(fg_latest.sma_deviation_score) }}</div>
+                    <div class="comp-label">SMA-125</div>
+                    <div class="comp-weight">15%</div>
+                </div>
+                <div class="fg-component">
+                    <div class="comp-value">{{ "%.0f"|format(fg_latest.breadth_score) }}</div>
+                    <div class="comp-label">Breadth</div>
+                    <div class="comp-weight">15%</div>
+                </div>
+                <div class="fg-component">
+                    <div class="comp-value">{{ "%.0f"|format(fg_latest.safe_haven_score) }}</div>
+                    <div class="comp-label">USD/RUB</div>
+                    <div class="comp-weight">10%</div>
+                </div>
+                <div class="fg-component">
+                    <div class="comp-value">{{ "%.0f"|format(fg_latest.rsi_score) }}</div>
+                    <div class="comp-label">RSI</div>
+                    <div class="comp-weight">10%</div>
                 </div>
             </div>
 
@@ -203,7 +198,7 @@
             </div>
             {% else %}
             <div class="fg-no-data">
-                <p>Данных пока нет. Нажмите кнопку, чтобы рассчитать индекс.</p>
+                <p>Данных пока нет. Нажмите «Обновить сейчас» для первого расчёта.</p>
             </div>
             {% endif %}
         </section>
@@ -403,7 +398,7 @@
             </div>
         </section>
 
-        <!-- Блок: Последние 50 сделок с фильтром по типу -->
+        <!-- Блок: Последние 50 сделок -->
         {% if closed_positions %}
         <section class="trades-feed">
             <div class="section-header">
@@ -477,6 +472,39 @@
     </div>
 
     <script>
+        // ========== Fear & Greed Refresh ==========
+        document.addEventListener('DOMContentLoaded', function() {
+            const btn = document.getElementById('fgRefreshBtn');
+            if (!btn) return;
+            btn.addEventListener('click', async function(event) {
+                event.preventDefault();
+                event.stopPropagation();
+                btn.classList.add('loading');
+                btn.disabled = true;
+
+                try {
+                    const response = await fetch('/api/fear-greed/refresh', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' }
+                    });
+                    const data = await response.json();
+
+                    if (data.status === 'ok') {
+                        window.location.reload();
+                    } else {
+                        alert('Ошибка: ' + (data.message || 'неизвестная ошибка'));
+                        btn.classList.remove('loading');
+                        btn.disabled = false;
+                    }
+                } catch (err) {
+                    alert('Ошибка сети: ' + err.message);
+                    btn.classList.remove('loading');
+                    btn.disabled = false;
+                }
+                return false;
+            });
+        });
+
         // ========== Fear & Greed Chart ==========
         const fgData = {{ fg_chart_data | safe }};
 
@@ -490,18 +518,17 @@
                         data: fgData.map(d => ({ x: d.date, y: d.value })),
                         borderColor: 'rgb(102, 126, 234)',
                         backgroundColor: 'rgba(102, 126, 234, 0.1)',
-                        borderWidth: 2,
+                        borderWidth: 2.5,
                         fill: true,
                         tension: 0.3,
                         pointRadius: 4,
-                        pointHoverRadius: 6,
-                        pointBackgroundColor: function(ctx) {
-                            const v = ctx.raw ? ctx.raw.y : 50;
-                            if (v <= 24) return '#e53935';
-                            if (v <= 44) return '#fb8c00';
-                            if (v <= 55) return '#78909c';
-                            if (v <= 74) return '#43a047';
-                            return '#2e7d32';
+                        pointBackgroundColor: function(context) {
+                            const value = context.parsed ? context.parsed.y : 50;
+                            if (value <= 24) return '#c62828';
+                            if (value <= 44) return '#e65100';
+                            if (value <= 55) return '#546e7a';
+                            if (value <= 74) return '#2e7d32';
+                            return '#1b5e20';
                         },
                     }]
                 },
@@ -512,16 +539,12 @@
                         title: {
                             display: true,
                             text: 'История индекса страха и жадности MOEX',
-                            font: { size: 18, weight: 'bold' },
-                            padding: { top: 10, bottom: 20 }
-                        },
-                        legend: {
-                            display: false
+                            font: { size: 18, weight: 'bold' }
                         },
                         tooltip: {
                             callbacks: {
-                                label: function(ctx) {
-                                    const v = ctx.parsed.y;
+                                label: function(context) {
+                                    const v = context.parsed.y;
                                     let label = '';
                                     if (v <= 24) label = 'Экстремальный страх';
                                     else if (v <= 44) label = 'Страх';
@@ -536,17 +559,20 @@
                             annotations: {
                                 fearZone: {
                                     type: 'box', yMin: 0, yMax: 25,
-                                    backgroundColor: 'rgba(229, 57, 53, 0.06)', borderWidth: 0,
-                                    label: { display: true, content: 'Экстремальный страх', position: 'start', font: { size: 10 }, color: 'rgba(229,57,53,0.5)' }
+                                    backgroundColor: 'rgba(198,40,40,0.06)',
+                                    borderWidth: 0,
+                                    label: { display: true, content: 'Экстремальный страх', position: 'start', color: '#c62828', font: { size: 11 } }
                                 },
                                 greedZone: {
                                     type: 'box', yMin: 75, yMax: 100,
-                                    backgroundColor: 'rgba(46, 125, 50, 0.06)', borderWidth: 0,
-                                    label: { display: true, content: 'Экстремальная жадность', position: 'start', font: { size: 10 }, color: 'rgba(46,125,50,0.5)' }
+                                    backgroundColor: 'rgba(27,94,32,0.06)',
+                                    borderWidth: 0,
+                                    label: { display: true, content: 'Экстремальная жадность', position: 'start', color: '#1b5e20', font: { size: 11 } }
                                 },
                                 neutralLine: {
                                     type: 'line', yMin: 50, yMax: 50,
-                                    borderColor: 'rgba(0,0,0,0.15)', borderWidth: 1, borderDash: [5, 5]
+                                    borderColor: 'rgba(0,0,0,0.15)',
+                                    borderWidth: 1, borderDash: [5, 5]
                                 },
                             }
                         }
@@ -555,25 +581,16 @@
                         x: {
                             type: 'time',
                             time: { unit: 'day', displayFormats: { day: 'dd.MM' } },
-                            title: { display: true, text: 'Дата', font: { size: 13 } },
-                            grid: { color: 'rgba(0,0,0,0.04)' }
+                            title: { display: true, text: 'Дата', font: { size: 13, weight: 'bold' } }
                         },
                         y: {
                             min: 0, max: 100,
-                            title: { display: true, text: 'Индекс', font: { size: 13 } },
-                            grid: { color: 'rgba(0,0,0,0.04)' }
+                            title: { display: true, text: 'Индекс (0-100)', font: { size: 13, weight: 'bold' } }
                         }
                     }
                 }
             });
         }
-
-        // Кнопка «Обновить сейчас» — показываем loading
-        document.getElementById('fg-refresh-form').addEventListener('submit', function() {
-            const btn = document.getElementById('fg-refresh-btn');
-            btn.classList.add('loading');
-            btn.textContent = '⏳ Считаем...';
-        });
 
         // ========== Profit Chart ==========
         const chartDataRaw = {{ chart_data_json | safe }};
@@ -602,20 +619,15 @@
         
         let allDates = [];
         Object.values(chartDataRaw).forEach(stockData => {
-            stockData.data.forEach(point => {
-                allDates.push(point.x);
-            });
+            stockData.data.forEach(point => { allDates.push(point.x); });
         });
         
         if (allDates.length > 0) {
             allDates.sort();
-            const minDate = allDates[0];
-            const maxDate = allDates[allDates.length - 1];
-            
             datasets.push({
                 data: [
-                    { x: minDate, y: 0 },
-                    { x: maxDate, y: 0 }
+                    { x: allDates[0], y: 0 },
+                    { x: allDates[allDates.length - 1], y: 0 }
                 ],
                 borderColor: 'rgba(128, 128, 128, 0.5)',
                 borderWidth: 2,
@@ -631,16 +643,11 @@
         const ctx = document.getElementById('profitChart').getContext('2d');
         const profitChart = new Chart(ctx, {
             type: 'line',
-            data: {
-                datasets: datasets
-            },
+            data: { datasets: datasets },
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
-                interaction: {
-                    mode: 'index',
-                    intersect: false,
-                },
+                interaction: { mode: 'index', intersect: false },
                 plugins: {
                     title: {
                         display: true,
@@ -649,25 +656,19 @@
                         padding: { top: 10, bottom: 20 }
                     },
                     legend: {
-                        display: true,
-                        position: 'top',
+                        display: true, position: 'top',
                         labels: {
-                            usePointStyle: true,
-                            padding: 15,
+                            usePointStyle: true, padding: 15,
                             font: { size: 13 },
-                            filter: function(item, chart) {
-                                return item.text !== undefined && item.text !== '';
-                            }
+                            filter: function(item) { return item.text !== undefined && item.text !== ''; }
                         }
                     },
                     tooltip: {
                         callbacks: {
                             label: function(context) {
                                 let label = context.dataset.label || '';
-                                if (label) { label += ': '; }
-                                if (context.parsed.y !== null) {
-                                    label += context.parsed.y.toFixed(2) + '%';
-                                }
+                                if (label) label += ': ';
+                                if (context.parsed.y !== null) label += context.parsed.y.toFixed(2) + '%';
                                 return label;
                             }
                         }
@@ -675,12 +676,9 @@
                     annotation: {
                         annotations: {
                             zeroLine: {
-                                type: 'line',
-                                yMin: 0, yMax: 0,
+                                type: 'line', yMin: 0, yMax: 0,
                                 borderColor: 'rgba(0, 0, 0, 0.5)',
-                                borderWidth: 2,
-                                borderDash: [6, 6],
-                                label: { display: false }
+                                borderWidth: 2, borderDash: [6, 6]
                             }
                         }
                     }
@@ -701,7 +699,7 @@
             }
         });
 
-        // ========== Navigation ==========
+        // ========== Навигация ==========
         function changeMonth(value) {
             const [year, month] = value.split('-');
             const url = new URL(window.location);
