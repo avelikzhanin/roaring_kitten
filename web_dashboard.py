@@ -1,5 +1,6 @@
 import logging
 import json
+from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Optional
 
@@ -20,7 +21,18 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Revushiy Kotenok Dashboard")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifespan handler: подключение к БД при старте, отключение при остановке"""
+    await db.connect()
+    logger.info("✅ Web Dashboard started")
+    yield
+    await db.disconnect()
+    logger.info("👋 Web Dashboard stopped")
+
+
+app = FastAPI(title="Revushiy Kotenok Dashboard", lifespan=lifespan)
 
 # Фильтр по пользователю
 TARGET_USERNAME = 'matve1ch'
@@ -34,20 +46,6 @@ stock_service = StockService()
 # Подключаем статические файлы и шаблоны
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
-
-
-@app.on_event("startup")
-async def startup():
-    """Подключение к БД при старте"""
-    await db.connect()
-    logger.info("✅ Web Dashboard started")
-
-
-@app.on_event("shutdown")
-async def shutdown():
-    """Отключение от БД при остановке"""
-    await db.disconnect()
-    logger.info("👋 Web Dashboard stopped")
 
 
 @app.post("/api/fear-greed/refresh")
