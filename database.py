@@ -469,8 +469,16 @@ class Database:
     
     # ========== FEAR & GREED INDEX ==========
     
-    async def save_fear_greed(self, data: Dict[str, Any]):
-        """Сохранение значения индекса страха и жадности"""
+    async def save_fear_greed(self, data: Dict[str, Any], target_date=None):
+        """Сохранение значения индекса страха и жадности.
+        
+        target_date: date object. Если None - используется сегодняшняя дата.
+        """
+        if target_date is None:
+            target_date = datetime.now().date()
+        elif isinstance(target_date, str):
+            target_date = datetime.strptime(target_date, '%Y-%m-%d').date()
+        
         async with self.pool.acquire() as conn:
             components = data['components']
             await conn.execute(
@@ -484,7 +492,7 @@ class Database:
                     sma_deviation_score = $5, breadth_score = $6, safe_haven_score = $7,
                     rsi_score = $8, label = $9
                 """,
-                datetime.now().date(),
+                target_date,
                 data['value'],
                 components['volatility'],
                 components['momentum'],
@@ -494,7 +502,79 @@ class Database:
                 components['rsi'],
                 data['label'],
             )
-            logger.info(f"✅ Saved Fear & Greed Index: {data['value']} ({data['label']})")
+    
+    async def save_fear_greed_batch(self, items: List[Dict[str, Any]]):
+        """Пакетное сохранение исторических значений индекса (для бэкфила).
+        
+        Каждый item должен содержать 'date' (str YYYY-MM-DD), 'value', 'label', 'components'.
+        Существующие записи НЕ перезаписываются - чтобы не затереть «честные» значения с реальным breadth.
+        """
+        if not items:
+            return
+        
+        async with self.pool.acquire() as conn:
+            async with conn.transaction():
+                for item in items:
+                    target_date = item['date']
+                    if isinstance(target_date, str):
+                        target_date = datetime.strptime(target_date, '%Y-%m-%d').date()
+                    
+                    components = item['components']
+                    await conn.execute(
+                        """
+                        INSERT INTO fear_greed_history 
+                        (date, value, volatility_score, momentum_score, sma_deviation_score,
+                         breadth_score, safe_haven_score, rsi_score, label)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                        ON CONFLICT (date) DO NOTHING
+                        """,
+                        target_date,
+                        item['value'],
+                        components['volatility'],
+                        components['momentum'],
+                        components['sma_deviation'],
+                        components['breadth'],
+                        components['safe_haven'],
+                        components['rsi'],
+                        item['label'],
+                    )
+        logger.info(f"✅ Batch saved {len(items)} historical F&G values")
+    
+    async def get_fear_greed_count(self) -> int:
+        """Сколько всего записей индекса в истории"""
+        async with self.pool.acquire() as conn:
+            return await conn.fetchval("SELECT COUNT(*) FROM fear_greed_history")
+    
+    async def get_fear_greed_year_extremes(self) -> Dict[str, Any]:
+        """Максимум и минимум индекса за текущий год"""
+        async with self.pool.acquire() as conn:
+            max_row = await conn.fetchrow("""
+                SELECT date, value, label FROM fear_greed_history
+                WHERE EXTRACT(YEAR FROM date) = EXTRACT(YEAR FROM CURRENT_DATE)
+                ORDER BY value DESC, date DESC LIMIT 1
+            """)
+            min_row = await conn.fetchrow("""
+                SELECT date, value, label FROM fear_greed_history
+                WHERE EXTRACT(YEAR FROM date) = EXTRACT(YEAR FROM CURRENT_DATE)
+                ORDER BY value ASC, date DESC LIMIT 1
+            """)
+            return {
+                'max': dict(max_row) if max_row else None,
+                'min': dict(min_row) if min_row else None,
+            }
+    
+    async def get_fear_greed_by_offset(self, days_ago: int) -> Optional[Dict[str, Any]]:
+        """Получить значение индекса за N дней назад (берём ближайшую запись не позже этой даты)"""
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT date, value, label FROM fear_greed_history
+                WHERE date <= CURRENT_DATE - ($1 || ' days')::interval
+                ORDER BY date DESC LIMIT 1
+                """,
+                str(days_ago),
+            )
+            return dict(row) if row else None
     
     async def get_fear_greed_latest(self) -> Optional[Dict[str, Any]]:
         """Получение последнего значения индекса"""
