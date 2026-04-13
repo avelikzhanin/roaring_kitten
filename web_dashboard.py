@@ -272,6 +272,22 @@ async def dashboard(
             for row in fg_history
         ])
         
+        # IMOEX candles for chart overlay (price + volume)
+        imoex_chart_data = "[]"
+        try:
+            imoex_candles = await fear_greed._get_imoex_daily_candles(days=200)
+            if imoex_candles:
+                imoex_chart_data = json.dumps([
+                    {
+                        'date': c['date'],
+                        'close': c['close'],
+                        'volume': c['volume'],
+                    }
+                    for c in imoex_candles[-180:]
+                ])
+        except Exception as e:
+            logger.error(f"Error loading IMOEX candles for chart: {e}")
+        
         return templates.TemplateResponse(
             request,
             "dashboard.html",
@@ -298,6 +314,7 @@ async def dashboard(
                 "fg_last_week": fg_last_week,
                 "fg_last_month": fg_last_month,
                 "fg_extremes": fg_extremes,
+                "imoex_chart_data": imoex_chart_data,
             }
         )
     
