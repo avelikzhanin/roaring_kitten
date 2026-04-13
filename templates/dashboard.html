@@ -646,6 +646,16 @@
                 });
             }
 
+            // Считаем max для оси объёмов заранее (Chart.js не вызывает функции в scales.max)
+            let volumeMax = 1;
+            if (imoexData && imoexData.length > 0) {
+                const volumes = imoexData.map(d => d.volume).filter(v => v != null && v > 0);
+                if (volumes.length > 0) {
+                    // Умножаем на 5 чтобы столбики занимали только нижние ~20% графика
+                    volumeMax = Math.max(...volumes) * 5;
+                }
+            }
+
             new Chart(fgCtx, {
                 data: { datasets: datasets },
                 options: {
@@ -783,15 +793,7 @@
                             display: false,
                             position: 'left',
                             min: 0,
-                            // максимум в 5 раз больше реального — чтобы столбики занимали только ~20% высоты
-                            max: function(context) {
-                                const values = context.chart.data.datasets
-                                    .filter(d => d.yAxisID === 'yVolume')
-                                    .flatMap(d => d.data.map(p => p.y))
-                                    .filter(v => v != null);
-                                if (!values.length) return 1;
-                                return Math.max(...values) * 5;
-                            },
+                            max: volumeMax,
                         }
                     }
                 }
