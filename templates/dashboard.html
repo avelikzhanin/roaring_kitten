@@ -572,62 +572,101 @@
     <script>
         // ========== Fear & Greed Chart ==========
         const fgData = {{ fg_chart_data | safe }};
+        const imoexData = {{ imoex_chart_data | safe }};
 
         if (fgData && fgData.length > 0) {
             const fgCtx = document.getElementById('fgChart').getContext('2d');
 
-            // Вертикальный градиент: красный (страх) -> оранжевый -> серый -> зелёный -> тёмно-зелёный (жадность)
-            // Создаётся при первом draw — нужны размеры canvas
+            // Вертикальный градиент для F&G линии: красный -> оранжевый -> серый -> зелёный
             function makeGradient(ctx, chartArea) {
                 const gradient = ctx.createLinearGradient(0, chartArea.bottom, 0, chartArea.top);
-                gradient.addColorStop(0.00, '#c62828');  // 0   — экстремальный страх
-                gradient.addColorStop(0.25, '#e65100');  // 25  — страх
-                gradient.addColorStop(0.50, '#9e9e9e');  // 50  — нейтрально
-                gradient.addColorStop(0.75, '#43a047');  // 75  — жадность
-                gradient.addColorStop(1.00, '#1b5e20');  // 100 — экстремальная жадность
+                gradient.addColorStop(0.00, '#c62828');
+                gradient.addColorStop(0.25, '#e65100');
+                gradient.addColorStop(0.50, '#9e9e9e');
+                gradient.addColorStop(0.75, '#43a047');
+                gradient.addColorStop(1.00, '#1b5e20');
                 return gradient;
             }
 
+            const datasets = [
+                {
+                    label: 'Индекс страха и жадности MOEX',
+                    data: fgData.map(d => ({ x: d.date, y: d.value })),
+                    yAxisID: 'yFG',
+                    borderColor: function(context) {
+                        const { ctx, chartArea } = context.chart;
+                        if (!chartArea) return '#9e9e9e';
+                        return makeGradient(ctx, chartArea);
+                    },
+                    backgroundColor: 'transparent',
+                    borderWidth: 3,
+                    fill: false,
+                    tension: 0.4,
+                    cubicInterpolationMode: 'monotone',
+                    pointRadius: 0,
+                    pointHoverRadius: 5,
+                    pointHoverBackgroundColor: '#fff',
+                    pointHoverBorderWidth: 2,
+                    order: 1,
+                }
+            ];
+
+            // IMOEX линия
+            if (imoexData && imoexData.length > 0) {
+                datasets.push({
+                    label: 'Индекс MOEX',
+                    data: imoexData.map(d => ({ x: d.date, y: d.close })),
+                    yAxisID: 'yImoex',
+                    borderColor: 'rgba(120, 120, 130, 0.7)',
+                    backgroundColor: 'transparent',
+                    borderWidth: 1.5,
+                    fill: false,
+                    tension: 0.3,
+                    cubicInterpolationMode: 'monotone',
+                    pointRadius: 0,
+                    pointHoverRadius: 4,
+                    pointHoverBackgroundColor: '#fff',
+                    pointHoverBorderColor: 'rgba(120, 120, 130, 1)',
+                    pointHoverBorderWidth: 2,
+                    order: 2,
+                });
+
+                // Объёмы — столбики
+                datasets.push({
+                    type: 'bar',
+                    label: 'Объём торгов',
+                    data: imoexData.map(d => ({ x: d.date, y: d.volume })),
+                    yAxisID: 'yVolume',
+                    backgroundColor: 'rgba(170, 170, 180, 0.25)',
+                    borderColor: 'transparent',
+                    borderWidth: 0,
+                    barThickness: 'flex',
+                    maxBarThickness: 6,
+                    order: 3,
+                });
+            }
+
             new Chart(fgCtx, {
-                type: 'line',
-                data: {
-                    datasets: [{
-                        label: 'F&G Index',
-                        data: fgData.map(d => ({ x: d.date, y: d.value })),
-                        borderColor: function(context) {
-                            const chart = context.chart;
-                            const { ctx, chartArea } = chart;
-                            if (!chartArea) return '#9e9e9e';
-                            return makeGradient(ctx, chartArea);
-                        },
-                        backgroundColor: function(context) {
-                            const chart = context.chart;
-                            const { ctx, chartArea } = chart;
-                            if (!chartArea) return 'rgba(158,158,158,0.1)';
-                            const gradient = ctx.createLinearGradient(0, chartArea.bottom, 0, chartArea.top);
-                            gradient.addColorStop(0.00, 'rgba(198,40,40,0.15)');
-                            gradient.addColorStop(0.25, 'rgba(230,81,0,0.12)');
-                            gradient.addColorStop(0.50, 'rgba(158,158,158,0.08)');
-                            gradient.addColorStop(0.75, 'rgba(67,160,71,0.12)');
-                            gradient.addColorStop(1.00, 'rgba(27,94,32,0.15)');
-                            return gradient;
-                        },
-                        borderWidth: 3,
-                        fill: true,
-                        tension: 0.4,
-                        cubicInterpolationMode: 'monotone',
-                        pointRadius: 0,
-                        pointHoverRadius: 5,
-                        pointHoverBackgroundColor: '#fff',
-                        pointHoverBorderWidth: 2,
-                    }]
-                },
+                data: { datasets: datasets },
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
                     interaction: { mode: 'index', intersect: false },
                     plugins: {
-                        legend: { display: false },
+                        legend: {
+                            display: true,
+                            position: 'top',
+                            align: 'start',
+                            labels: {
+                                usePointStyle: true,
+                                pointStyle: 'circle',
+                                padding: 14,
+                                font: { size: 12 },
+                                color: '#666',
+                                boxWidth: 8,
+                                boxHeight: 8,
+                            }
+                        },
                         title: { display: false },
                         tooltip: {
                             backgroundColor: 'rgba(33, 33, 33, 0.92)',
@@ -635,9 +674,10 @@
                             bodyColor: '#fff',
                             padding: 12,
                             cornerRadius: 8,
-                            displayColors: false,
+                            displayColors: true,
+                            usePointStyle: true,
                             titleFont: { size: 12, weight: 'normal' },
-                            bodyFont: { size: 14, weight: 'bold' },
+                            bodyFont: { size: 13 },
                             callbacks: {
                                 title: function(items) {
                                     if (!items.length) return '';
@@ -646,30 +686,46 @@
                                 },
                                 label: function(context) {
                                     const v = context.parsed.y;
-                                    let label = '';
-                                    if (v <= 24) label = 'Экстремальный страх';
-                                    else if (v <= 44) label = 'Страх';
-                                    else if (v <= 55) label = 'Нейтрально';
-                                    else if (v <= 74) label = 'Жадность';
-                                    else label = 'Экстремальная жадность';
-                                    return `${v} — ${label}`;
+                                    if (context.dataset.yAxisID === 'yFG') {
+                                        let label = '';
+                                        if (v <= 24) label = 'Экстремальный страх';
+                                        else if (v <= 44) label = 'Страх';
+                                        else if (v <= 55) label = 'Нейтрально';
+                                        else if (v <= 74) label = 'Жадность';
+                                        else label = 'Экстремальная жадность';
+                                        return `F&G: ${v} — ${label}`;
+                                    }
+                                    if (context.dataset.yAxisID === 'yImoex') {
+                                        return `IMOEX: ${v.toLocaleString('ru-RU', { maximumFractionDigits: 0 })}`;
+                                    }
+                                    if (context.dataset.yAxisID === 'yVolume') {
+                                        const vol = v / 1e9;
+                                        return `Объём: ${vol.toFixed(2)} млрд ₽`;
+                                    }
+                                    return `${context.dataset.label}: ${v}`;
                                 }
                             }
                         },
                         annotation: {
                             annotations: {
                                 fearZone: {
-                                    type: 'box', yMin: 0, yMax: 25,
+                                    type: 'box',
+                                    yScaleID: 'yFG',
+                                    yMin: 0, yMax: 25,
                                     backgroundColor: 'rgba(198,40,40,0.08)',
                                     borderWidth: 0,
                                 },
                                 greedZone: {
-                                    type: 'box', yMin: 75, yMax: 100,
+                                    type: 'box',
+                                    yScaleID: 'yFG',
+                                    yMin: 75, yMax: 100,
                                     backgroundColor: 'rgba(27,94,32,0.08)',
                                     borderWidth: 0,
                                 },
                                 neutralLine: {
-                                    type: 'line', yMin: 50, yMax: 50,
+                                    type: 'line',
+                                    yScaleID: 'yFG',
+                                    yMin: 50, yMax: 50,
                                     borderColor: 'rgba(0,0,0,0.08)',
                                     borderWidth: 1, borderDash: [4, 4]
                                 },
@@ -693,17 +749,49 @@
                                 autoSkipPadding: 20
                             }
                         },
-                        y: {
-                            min: 0, max: 100,
-                            position: 'right',
+                        // Левая ось: цена IMOEX
+                        yImoex: {
+                            type: 'linear',
+                            position: 'left',
                             grid: { color: 'rgba(0,0,0,0.04)' },
                             border: { display: false },
                             ticks: {
                                 color: '#999',
                                 font: { size: 11 },
-                                stepSize: 25,
-                                callback: function(value) { return value; }
+                                callback: function(value) {
+                                    if (value >= 1000) return (value / 1000).toFixed(1) + 'k';
+                                    return value;
+                                }
                             }
+                        },
+                        // Правая ось: F&G 0-100
+                        yFG: {
+                            type: 'linear',
+                            position: 'right',
+                            min: 0, max: 100,
+                            grid: { display: false },
+                            border: { display: false },
+                            ticks: {
+                                color: '#999',
+                                font: { size: 11 },
+                                stepSize: 25,
+                            }
+                        },
+                        // Скрытая ось для объёмов — занимает нижние ~20% графика
+                        yVolume: {
+                            type: 'linear',
+                            display: false,
+                            position: 'left',
+                            min: 0,
+                            // максимум в 5 раз больше реального — чтобы столбики занимали только ~20% высоты
+                            max: function(context) {
+                                const values = context.chart.data.datasets
+                                    .filter(d => d.yAxisID === 'yVolume')
+                                    .flatMap(d => d.data.map(p => p.y))
+                                    .filter(v => v != null);
+                                if (!values.length) return 1;
+                                return Math.max(...values) * 5;
+                            },
                         }
                     }
                 }
