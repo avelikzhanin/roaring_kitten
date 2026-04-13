@@ -624,10 +624,7 @@
                     tension: 0.3,
                     cubicInterpolationMode: 'monotone',
                     pointRadius: 0,
-                    pointHoverRadius: 4,
-                    pointHoverBackgroundColor: '#fff',
-                    pointHoverBorderColor: 'rgba(120, 120, 130, 1)',
-                    pointHoverBorderWidth: 2,
+                    pointHoverRadius: 0,
                     order: 2,
                 });
 
@@ -656,9 +653,31 @@
                 }
             }
 
+            // Плагин: вертикальная линия под курсором
+            const verticalLinePlugin = {
+                id: 'verticalLine',
+                afterDraw: function(chart) {
+                    if (chart.tooltip && chart.tooltip.opacity > 0 && chart.tooltip.caretX) {
+                        const ctx = chart.ctx;
+                        const x = chart.tooltip.caretX;
+                        const topY = chart.chartArea.top;
+                        const bottomY = chart.chartArea.bottom;
+                        ctx.save();
+                        ctx.beginPath();
+                        ctx.moveTo(x, topY);
+                        ctx.lineTo(x, bottomY);
+                        ctx.lineWidth = 1;
+                        ctx.strokeStyle = 'rgba(120, 120, 130, 0.4)';
+                        ctx.stroke();
+                        ctx.restore();
+                    }
+                }
+            };
+
             new Chart(fgCtx, {
                 type: 'line',
                 data: { datasets: datasets },
+                plugins: [verticalLinePlugin],
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
