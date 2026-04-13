@@ -24,9 +24,27 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Lifespan handler: подключение к БД при старте, отключение при остановке"""
+    """Lifespan handler: подключение к БД при старте, отключение при остановке.
+    
+    Также делает one-shot бэкфил истории Fear & Greed если её ещё нет в БД.
+    """
     await db.connect()
     logger.info("✅ Web Dashboard started")
+    
+    # One-shot бэкфил истории F&G при первом запуске
+    try:
+        fg_count = await db.get_fear_greed_count()
+        if fg_count < 30:
+            logger.info(f"📊 F&G history has {fg_count} entries, running one-time backfill...")
+            historical = await fear_greed.backfill_history(days=180)
+            if historical:
+                await db.save_fear_greed_batch(historical)
+                logger.info(f"✅ Backfilled {len(historical)} historical F&G values")
+        else:
+            logger.info(f"📊 F&G history already populated ({fg_count} entries), skip backfill")
+    except Exception as e:
+        logger.error(f"❌ Backfill on startup failed: {e}", exc_info=True)
+    
     yield
     await db.disconnect()
     logger.info("👋 Web Dashboard stopped")
@@ -46,22 +64,6 @@ stock_service = StockService()
 # Подключаем статические файлы и шаблоны
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
-
-
-@app.post("/api/fear-greed/refresh")
-async def refresh_fear_greed():
-    """Пересчитать индекс страха и жадности прямо сейчас"""
-    try:
-        result = await fear_greed.calculate()
-        if result:
-            await db.save_fear_greed(result)
-            logger.info(f"✅ Fear & Greed refreshed: {result['value']} ({result['label']})")
-            return {"status": "ok", "value": result['value'], "label": result['label']}
-        else:
-            return {"status": "error", "message": "Не удалось рассчитать индекс"}
-    except Exception as e:
-        logger.error(f"Error refreshing Fear & Greed: {e}", exc_info=True)
-        return {"status": "error", "message": str(e)}
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -259,7 +261,11 @@ async def dashboard(
         
         # Fear & Greed Index
         fg_latest = await db.get_fear_greed_latest()
-        fg_history = await db.get_fear_greed_history(days=90)
+        fg_history = await db.get_fear_greed_history(days=180)
+        fg_yesterday = await db.get_fear_greed_by_offset(1)
+        fg_last_week = await db.get_fear_greed_by_offset(7)
+        fg_last_month = await db.get_fear_greed_by_offset(30)
+        fg_extremes = await db.get_fear_greed_year_extremes()
         
         fg_chart_data = json.dumps([
             {'date': row['date'].strftime('%Y-%m-%d'), 'value': row['value']}
@@ -288,6 +294,10 @@ async def dashboard(
                 "chart_data_json": chart_data_json,
                 "fg_latest": fg_latest,
                 "fg_chart_data": fg_chart_data,
+                "fg_yesterday": fg_yesterday,
+                "fg_last_week": fg_last_week,
+                "fg_last_month": fg_last_month,
+                "fg_extremes": fg_extremes,
             }
         )
     
