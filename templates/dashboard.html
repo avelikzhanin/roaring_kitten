@@ -575,39 +575,75 @@
 
         if (fgData && fgData.length > 0) {
             const fgCtx = document.getElementById('fgChart').getContext('2d');
+
+            // Вертикальный градиент: красный (страх) -> оранжевый -> серый -> зелёный -> тёмно-зелёный (жадность)
+            // Создаётся при первом draw — нужны размеры canvas
+            function makeGradient(ctx, chartArea) {
+                const gradient = ctx.createLinearGradient(0, chartArea.bottom, 0, chartArea.top);
+                gradient.addColorStop(0.00, '#c62828');  // 0   — экстремальный страх
+                gradient.addColorStop(0.25, '#e65100');  // 25  — страх
+                gradient.addColorStop(0.50, '#9e9e9e');  // 50  — нейтрально
+                gradient.addColorStop(0.75, '#43a047');  // 75  — жадность
+                gradient.addColorStop(1.00, '#1b5e20');  // 100 — экстремальная жадность
+                return gradient;
+            }
+
             new Chart(fgCtx, {
                 type: 'line',
                 data: {
                     datasets: [{
-                        label: 'Fear & Greed Index',
+                        label: 'F&G Index',
                         data: fgData.map(d => ({ x: d.date, y: d.value })),
-                        borderColor: 'rgb(102, 126, 234)',
-                        backgroundColor: 'rgba(102, 126, 234, 0.1)',
-                        borderWidth: 2.5,
-                        fill: true,
-                        tension: 0.3,
-                        pointRadius: 4,
-                        pointBackgroundColor: function(context) {
-                            const value = context.parsed ? context.parsed.y : 50;
-                            if (value <= 24) return '#c62828';
-                            if (value <= 44) return '#e65100';
-                            if (value <= 55) return '#546e7a';
-                            if (value <= 74) return '#2e7d32';
-                            return '#1b5e20';
+                        borderColor: function(context) {
+                            const chart = context.chart;
+                            const { ctx, chartArea } = chart;
+                            if (!chartArea) return '#9e9e9e';
+                            return makeGradient(ctx, chartArea);
                         },
+                        backgroundColor: function(context) {
+                            const chart = context.chart;
+                            const { ctx, chartArea } = chart;
+                            if (!chartArea) return 'rgba(158,158,158,0.1)';
+                            const gradient = ctx.createLinearGradient(0, chartArea.bottom, 0, chartArea.top);
+                            gradient.addColorStop(0.00, 'rgba(198,40,40,0.15)');
+                            gradient.addColorStop(0.25, 'rgba(230,81,0,0.12)');
+                            gradient.addColorStop(0.50, 'rgba(158,158,158,0.08)');
+                            gradient.addColorStop(0.75, 'rgba(67,160,71,0.12)');
+                            gradient.addColorStop(1.00, 'rgba(27,94,32,0.15)');
+                            return gradient;
+                        },
+                        borderWidth: 3,
+                        fill: true,
+                        tension: 0.4,
+                        cubicInterpolationMode: 'monotone',
+                        pointRadius: 0,
+                        pointHoverRadius: 5,
+                        pointHoverBackgroundColor: '#fff',
+                        pointHoverBorderWidth: 2,
                     }]
                 },
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
+                    interaction: { mode: 'index', intersect: false },
                     plugins: {
-                        title: {
-                            display: true,
-                            text: 'История индекса страха и жадности MOEX',
-                            font: { size: 18, weight: 'bold' }
-                        },
+                        legend: { display: false },
+                        title: { display: false },
                         tooltip: {
+                            backgroundColor: 'rgba(33, 33, 33, 0.92)',
+                            titleColor: '#fff',
+                            bodyColor: '#fff',
+                            padding: 12,
+                            cornerRadius: 8,
+                            displayColors: false,
+                            titleFont: { size: 12, weight: 'normal' },
+                            bodyFont: { size: 14, weight: 'bold' },
                             callbacks: {
+                                title: function(items) {
+                                    if (!items.length) return '';
+                                    const d = new Date(items[0].parsed.x);
+                                    return d.toLocaleDateString('ru-RU', { day: '2-digit', month: 'long', year: 'numeric' });
+                                },
                                 label: function(context) {
                                     const v = context.parsed.y;
                                     let label = '';
@@ -622,22 +658,10 @@
                         },
                         annotation: {
                             annotations: {
-                                fearZone: {
-                                    type: 'box', yMin: 0, yMax: 25,
-                                    backgroundColor: 'rgba(198,40,40,0.06)',
-                                    borderWidth: 0,
-                                    label: { display: true, content: 'Экстремальный страх', position: 'start', color: '#c62828', font: { size: 11 } }
-                                },
-                                greedZone: {
-                                    type: 'box', yMin: 75, yMax: 100,
-                                    backgroundColor: 'rgba(27,94,32,0.06)',
-                                    borderWidth: 0,
-                                    label: { display: true, content: 'Экстремальная жадность', position: 'start', color: '#1b5e20', font: { size: 11 } }
-                                },
                                 neutralLine: {
                                     type: 'line', yMin: 50, yMax: 50,
-                                    borderColor: 'rgba(0,0,0,0.15)',
-                                    borderWidth: 1, borderDash: [5, 5]
+                                    borderColor: 'rgba(0,0,0,0.08)',
+                                    borderWidth: 1, borderDash: [4, 4]
                                 },
                             }
                         }
@@ -645,12 +669,31 @@
                     scales: {
                         x: {
                             type: 'time',
-                            time: { unit: 'day', displayFormats: { day: 'dd.MM' } },
-                            title: { display: true, text: 'Дата', font: { size: 13, weight: 'bold' } }
+                            time: {
+                                unit: 'month',
+                                displayFormats: { month: 'MMM yy', day: 'dd.MM' }
+                            },
+                            grid: { display: false },
+                            border: { display: false },
+                            ticks: {
+                                color: '#999',
+                                font: { size: 11 },
+                                maxRotation: 0,
+                                autoSkip: true,
+                                autoSkipPadding: 20
+                            }
                         },
                         y: {
                             min: 0, max: 100,
-                            title: { display: true, text: 'Индекс (0-100)', font: { size: 13, weight: 'bold' } }
+                            position: 'right',
+                            grid: { color: 'rgba(0,0,0,0.04)' },
+                            border: { display: false },
+                            ticks: {
+                                color: '#999',
+                                font: { size: 11 },
+                                stepSize: 25,
+                                callback: function(value) { return value; }
+                            }
                         }
                     }
                 }
