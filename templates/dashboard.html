@@ -9,10 +9,9 @@
     <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
     <style>
-        /* Fear & Greed секция - компактная */
-        .fear-greed {
-            margin-bottom: 30px;
-        }
+        /* ========== Fear & Greed - CMC style ========== */
+        .fear-greed { margin-bottom: 30px; }
+
         .fg-header {
             display: flex;
             justify-content: space-between;
@@ -25,6 +24,7 @@
             padding-bottom: 0;
             font-size: 1.5em;
         }
+
         .fg-refresh-btn {
             display: inline-flex;
             align-items: center;
@@ -40,15 +40,10 @@
             transition: transform 0.2s ease, opacity 0.2s ease;
         }
         .fg-refresh-btn:hover { transform: scale(1.05); }
-        .fg-refresh-btn:disabled {
-            opacity: 0.6;
-            cursor: not-allowed;
-            transform: none;
-        }
+        .fg-refresh-btn:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
         .fg-refresh-btn .spinner {
             display: none;
-            width: 14px;
-            height: 14px;
+            width: 14px; height: 14px;
             border: 2px solid rgba(255,255,255,0.3);
             border-top-color: white;
             border-radius: 50%;
@@ -58,43 +53,96 @@
         .fg-refresh-btn.loading .btn-text { display: none; }
         @keyframes spin { to { transform: rotate(360deg); } }
 
-        /* Главный блок: gauge слева, компоненты справа */
-        .fg-main {
-            display: flex;
+        /* Двухколоночный layout: левый sidebar + большой график */
+        .fg-layout {
+            display: grid;
+            grid-template-columns: 280px 1fr;
             gap: 16px;
-            align-items: stretch;
             margin-bottom: 16px;
         }
-        .fg-gauge {
-            flex: 0 0 180px;
-            text-align: center;
-            padding: 18px 12px;
-            border-radius: 14px;
+
+        .fg-sidebar {
             display: flex;
             flex-direction: column;
-            justify-content: center;
+            gap: 12px;
         }
-        .fg-gauge .fg-value {
-            font-size: 3em;
-            font-weight: bold;
+
+        .fg-card {
+            background: white;
+            border: 1px solid #eee;
+            border-radius: 12px;
+            padding: 16px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+        }
+
+        .fg-card-title {
+            font-size: 0.85em;
+            font-weight: 700;
+            color: #333;
+            margin-bottom: 12px;
+            text-transform: none;
+        }
+
+        /* Главная карточка с gauge */
+        .fg-gauge-card {
+            text-align: center;
+            border-radius: 12px;
             color: white;
+            padding: 18px 16px;
+        }
+        .fg-gauge-card .fg-card-title { color: rgba(255,255,255,0.9); margin-bottom: 8px; }
+        .fg-gauge-card .fg-value {
+            font-size: 3.5em;
+            font-weight: bold;
             line-height: 1;
         }
-        .fg-gauge .fg-label {
-            font-size: 0.95em;
-            color: rgba(255,255,255,0.95);
+        .fg-gauge-card .fg-label {
+            font-size: 1em;
             margin-top: 6px;
             font-weight: 600;
         }
-        .fg-gauge .fg-date {
+        .fg-gauge-card .fg-date {
             font-size: 0.75em;
-            color: rgba(255,255,255,0.75);
             margin-top: 4px;
+            opacity: 0.85;
         }
+
+        /* Историческая карточка */
+        .fg-history-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 6px 0;
+            font-size: 0.85em;
+        }
+        .fg-history-row:not(:last-child) { border-bottom: 1px solid #f0f0f0; }
+        .fg-history-row .fg-history-label { color: #666; }
+        .fg-pill {
+            display: inline-block;
+            padding: 3px 10px;
+            border-radius: 12px;
+            font-size: 0.85em;
+            font-weight: 600;
+            color: white;
+        }
+
+        /* Большой график */
+        .fg-chart-card {
+            background: white;
+            border: 1px solid #eee;
+            border-radius: 12px;
+            padding: 16px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+        }
+        .fg-chart-container {
+            position: relative;
+            height: 320px;
+        }
+
+        /* Компоненты — компактная строка под layout */
         .fg-components {
-            flex: 1;
             display: grid;
-            grid-template-columns: repeat(3, 1fr);
+            grid-template-columns: repeat(6, 1fr);
             gap: 10px;
         }
         .fg-component {
@@ -123,16 +171,6 @@
             margin-top: 2px;
         }
 
-        /* Компактный график */
-        .fg-chart-container {
-            position: relative;
-            height: 260px;
-            padding: 12px;
-            background: white;
-            border-radius: 12px;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
-        }
-
         .fg-no-data {
             text-align: center;
             padding: 30px;
@@ -141,17 +179,9 @@
         }
 
         /* Mobile */
-        @media (max-width: 768px) {
-            .fg-main {
-                flex-direction: column;
-            }
-            .fg-gauge {
-                flex: none;
-                padding: 14px;
-            }
-            .fg-components {
-                grid-template-columns: repeat(3, 1fr);
-            }
+        @media (max-width: 900px) {
+            .fg-layout { grid-template-columns: 1fr; }
+            .fg-components { grid-template-columns: repeat(3, 1fr); }
         }
     </style>
 </head>
@@ -166,63 +196,103 @@
         <section class="fear-greed">
             <div class="fg-header">
                 <h2>📊 Индекс страха и жадности MOEX</h2>
-                <button type="button" class="fg-refresh-btn" id="fgRefreshBtn">
-                    <span class="btn-text">🔄 Обновить сейчас</span>
-                    <span class="spinner"></span>
-                </button>
             </div>
 
             {% if fg_latest %}
-            <div class="fg-main">
-                <div class="fg-gauge" id="fgGauge" style="background: linear-gradient(135deg,
-                    {% if fg_latest.value <= 24 %}#c62828, #e53935
-                    {% elif fg_latest.value <= 44 %}#e65100, #fb8c00
-                    {% elif fg_latest.value <= 55 %}#546e7a, #78909c
-                    {% elif fg_latest.value <= 74 %}#2e7d32, #43a047
-                    {% else %}#1b5e20, #2e7d32
-                    {% endif %});">
-                    <div class="fg-value">{{ fg_latest.value }}</div>
-                    <div class="fg-label">{{ fg_latest.label }}</div>
-                    <div class="fg-date">{{ fg_latest.date.strftime("%d.%m.%Y") }}</div>
+            {% set fg_color = '#c62828' if fg_latest.value <= 24 else ('#e65100' if fg_latest.value <= 44 else ('#546e7a' if fg_latest.value <= 55 else ('#2e7d32' if fg_latest.value <= 74 else '#1b5e20'))) %}
+            {% set fg_color2 = '#e53935' if fg_latest.value <= 24 else ('#fb8c00' if fg_latest.value <= 44 else ('#78909c' if fg_latest.value <= 55 else ('#43a047' if fg_latest.value <= 74 else '#2e7d32'))) %}
+
+            <div class="fg-layout">
+                <!-- Левая колонка -->
+                <div class="fg-sidebar">
+                    <!-- Gauge card -->
+                    <div class="fg-card fg-gauge-card" style="background: linear-gradient(135deg, {{ fg_color }}, {{ fg_color2 }});">
+                        <div class="fg-card-title">Индекс страха и жадности MOEX</div>
+                        <div class="fg-value">{{ fg_latest.value }}</div>
+                        <div class="fg-label">{{ fg_latest.label }}</div>
+                        <div class="fg-date">{{ fg_latest.date.strftime("%d.%m.%Y") }}</div>
+                    </div>
+
+                    <!-- Исторические значения -->
+                    <div class="fg-card">
+                        <div class="fg-card-title">Исторические значения</div>
+                        {% set hist_pairs = [('Вчера', fg_yesterday), ('Прошлая неделя', fg_last_week), ('Прошлый месяц', fg_last_month)] %}
+                        {% for label, item in hist_pairs %}
+                        <div class="fg-history-row">
+                            <span class="fg-history-label">{{ label }}</span>
+                            {% if item %}
+                                {% set c = '#c62828' if item.value <= 24 else ('#e65100' if item.value <= 44 else ('#546e7a' if item.value <= 55 else ('#2e7d32' if item.value <= 74 else '#1b5e20'))) %}
+                                <span class="fg-pill" style="background: {{ c }};">{{ item.label }} — {{ item.value }}</span>
+                            {% else %}
+                                <span style="color: #bbb; font-size: 0.85em;">нет данных</span>
+                            {% endif %}
+                        </div>
+                        {% endfor %}
+                    </div>
+
+                    <!-- Максимум и минимум года -->
+                    <div class="fg-card">
+                        <div class="fg-card-title">Максимум и минимум года</div>
+                        {% if fg_extremes.max %}
+                        {% set cmax = '#c62828' if fg_extremes.max.value <= 24 else ('#e65100' if fg_extremes.max.value <= 44 else ('#546e7a' if fg_extremes.max.value <= 55 else ('#2e7d32' if fg_extremes.max.value <= 74 else '#1b5e20'))) %}
+                        <div class="fg-history-row">
+                            <span class="fg-history-label">Максимум ({{ fg_extremes.max.date.strftime("%d.%m.%Y") }})</span>
+                            <span class="fg-pill" style="background: {{ cmax }};">{{ fg_extremes.max.label }} — {{ fg_extremes.max.value }}</span>
+                        </div>
+                        {% endif %}
+                        {% if fg_extremes.min %}
+                        {% set cmin = '#c62828' if fg_extremes.min.value <= 24 else ('#e65100' if fg_extremes.min.value <= 44 else ('#546e7a' if fg_extremes.min.value <= 55 else ('#2e7d32' if fg_extremes.min.value <= 74 else '#1b5e20'))) %}
+                        <div class="fg-history-row">
+                            <span class="fg-history-label">Минимум ({{ fg_extremes.min.date.strftime("%d.%m.%Y") }})</span>
+                            <span class="fg-pill" style="background: {{ cmin }};">{{ fg_extremes.min.label }} — {{ fg_extremes.min.value }}</span>
+                        </div>
+                        {% endif %}
+                        {% if not fg_extremes.max and not fg_extremes.min %}
+                        <div style="color: #bbb; font-size: 0.85em; text-align: center;">нет данных</div>
+                        {% endif %}
+                    </div>
                 </div>
 
-                <div class="fg-components">
-                    <div class="fg-component">
-                        <div class="comp-value">{{ "%.0f"|format(fg_latest.volatility_score) }}</div>
-                        <div class="comp-label">Волатильность</div>
-                        <div class="comp-weight">25%</div>
-                    </div>
-                    <div class="fg-component">
-                        <div class="comp-value">{{ "%.0f"|format(fg_latest.momentum_score) }}</div>
-                        <div class="comp-label">Моментум</div>
-                        <div class="comp-weight">25%</div>
-                    </div>
-                    <div class="fg-component">
-                        <div class="comp-value">{{ "%.0f"|format(fg_latest.sma_deviation_score) }}</div>
-                        <div class="comp-label">SMA-125</div>
-                        <div class="comp-weight">15%</div>
-                    </div>
-                    <div class="fg-component">
-                        <div class="comp-value">{{ "%.0f"|format(fg_latest.breadth_score) }}</div>
-                        <div class="comp-label">Breadth</div>
-                        <div class="comp-weight">15%</div>
-                    </div>
-                    <div class="fg-component">
-                        <div class="comp-value">{{ "%.0f"|format(fg_latest.safe_haven_score) }}</div>
-                        <div class="comp-label">USD/RUB</div>
-                        <div class="comp-weight">10%</div>
-                    </div>
-                    <div class="fg-component">
-                        <div class="comp-value">{{ "%.0f"|format(fg_latest.rsi_score) }}</div>
-                        <div class="comp-label">RSI</div>
-                        <div class="comp-weight">10%</div>
+                <!-- Правая колонка: график -->
+                <div class="fg-chart-card">
+                    <div class="fg-chart-container">
+                        <canvas id="fgChart"></canvas>
                     </div>
                 </div>
             </div>
 
-            <!-- График истории F&G -->
-            <div class="fg-chart-container">
-                <canvas id="fgChart"></canvas>
+            <!-- Компоненты -->
+            <div class="fg-components">
+                <div class="fg-component">
+                    <div class="comp-value">{{ "%.0f"|format(fg_latest.volatility_score) }}</div>
+                    <div class="comp-label">Волатильность</div>
+                    <div class="comp-weight">25%</div>
+                </div>
+                <div class="fg-component">
+                    <div class="comp-value">{{ "%.0f"|format(fg_latest.momentum_score) }}</div>
+                    <div class="comp-label">Моментум</div>
+                    <div class="comp-weight">25%</div>
+                </div>
+                <div class="fg-component">
+                    <div class="comp-value">{{ "%.0f"|format(fg_latest.sma_deviation_score) }}</div>
+                    <div class="comp-label">SMA-125</div>
+                    <div class="comp-weight">15%</div>
+                </div>
+                <div class="fg-component">
+                    <div class="comp-value">{{ "%.0f"|format(fg_latest.breadth_score) }}</div>
+                    <div class="comp-label">Breadth</div>
+                    <div class="comp-weight">15%</div>
+                </div>
+                <div class="fg-component">
+                    <div class="comp-value">{{ "%.0f"|format(fg_latest.safe_haven_score) }}</div>
+                    <div class="comp-label">USD/RUB</div>
+                    <div class="comp-weight">10%</div>
+                </div>
+                <div class="fg-component">
+                    <div class="comp-value">{{ "%.0f"|format(fg_latest.rsi_score) }}</div>
+                    <div class="comp-label">RSI</div>
+                    <div class="comp-weight">10%</div>
+                </div>
             </div>
             {% else %}
             <div class="fg-no-data">
@@ -500,39 +570,6 @@
     </div>
 
     <script>
-        // ========== Fear & Greed Refresh ==========
-        document.addEventListener('DOMContentLoaded', function() {
-            const btn = document.getElementById('fgRefreshBtn');
-            if (!btn) return;
-            btn.addEventListener('click', async function(event) {
-                event.preventDefault();
-                event.stopPropagation();
-                btn.classList.add('loading');
-                btn.disabled = true;
-
-                try {
-                    const response = await fetch('/api/fear-greed/refresh', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' }
-                    });
-                    const data = await response.json();
-
-                    if (data.status === 'ok') {
-                        window.location.reload();
-                    } else {
-                        alert('Ошибка: ' + (data.message || 'неизвестная ошибка'));
-                        btn.classList.remove('loading');
-                        btn.disabled = false;
-                    }
-                } catch (err) {
-                    alert('Ошибка сети: ' + err.message);
-                    btn.classList.remove('loading');
-                    btn.disabled = false;
-                }
-                return false;
-            });
-        });
-
         // ========== Fear & Greed Chart ==========
         const fgData = {{ fg_chart_data | safe }};
 
