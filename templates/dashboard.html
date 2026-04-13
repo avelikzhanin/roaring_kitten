@@ -691,31 +691,129 @@
                 }
             }
 
-            // Плагин: вертикальная линия под курсором
-            const verticalLinePlugin = {
-                id: 'verticalLine',
-                afterDraw: function(chart) {
-                    if (chart.tooltip && chart.tooltip.opacity > 0 && chart.tooltip.caretX) {
-                        const ctx = chart.ctx;
-                        const x = chart.tooltip.caretX;
-                        const topY = chart.chartArea.top;
-                        const bottomY = chart.chartArea.bottom;
-                        ctx.save();
-                        ctx.beginPath();
-                        ctx.moveTo(x, topY);
-                        ctx.lineTo(x, bottomY);
-                        ctx.lineWidth = 1;
-                        ctx.strokeStyle = 'rgba(120, 120, 130, 0.4)';
-                        ctx.stroke();
-                        ctx.restore();
+            // Функция обновления тултипа по реальной X-координате мыши
+            function updateFgTooltip(chart) {
+                const tooltipEl = document.getElementById('fgTooltip');
+                if (!tooltipEl) return;
+                
+                const mouseX = chart._mouseX;
+                if (mouseX == null || mouseX < chart.chartArea.left || mouseX > chart.chartArea.right) {
+                    tooltipEl.style.opacity = 0;
+                    return;
+                }
+                
+                const xScale = chart.scales.x;
+                const timestamp = xScale.getValueForPixel(mouseX);
+                if (!timestamp) {
+                    tooltipEl.style.opacity = 0;
+                    return;
+                }
+                
+                function findNearest(data) {
+                    if (!data || data.length === 0) return null;
+                    let nearest = null;
+                    let minDiff = Infinity;
+                    for (const point of data) {
+                        const t = new Date(point.x).getTime();
+                        const diff = Math.abs(t - timestamp);
+                        if (diff < minDiff) {
+                            minDiff = diff;
+                            nearest = point;
+                        }
                     }
+                    return nearest;
+                }
+                
+                let fgVal = null, imoexVal = null, volVal = null, tooltipDate = null;
+                chart.data.datasets.forEach(ds => {
+                    const point = findNearest(ds.data);
+                    if (!point) return;
+                    if (!tooltipDate) tooltipDate = new Date(point.x);
+                    if (ds.yAxisID === 'yFG') fgVal = point.y;
+                    else if (ds.yAxisID === 'yImoex') imoexVal = point.y;
+                    else if (ds.yAxisID === 'yVolume') volVal = point.y;
+                });
+                
+                if (!tooltipDate) {
+                    tooltipEl.style.opacity = 0;
+                    return;
+                }
+                
+                const dateStr = tooltipDate.toLocaleDateString('ru-RU', { day: '2-digit', month: 'long', year: 'numeric' });
+                
+                let fgLabel = '';
+                if (fgVal != null) {
+                    if (fgVal <= 24) fgLabel = 'Экстремальный страх';
+                    else if (fgVal <= 44) fgLabel = 'Страх';
+                    else if (fgVal <= 55) fgLabel = 'Нейтрально';
+                    else if (fgVal <= 74) fgLabel = 'Жадность';
+                    else fgLabel = 'Экстремальная жадность';
+                }
+                
+                let html = `<div class="fg-tt-date">${dateStr}</div>`;
+                if (fgVal != null) {
+                    html += `<div class="fg-tt-row"><span class="fg-tt-dot" style="background: #667eea;"></span>F&G: <b>${fgVal} — ${fgLabel}</b></div>`;
+                }
+                if (imoexVal != null) {
+                    html += `<div class="fg-tt-row"><span class="fg-tt-dot" style="background: #9e9e9e;"></span>IMOEX: <b>${imoexVal.toLocaleString('ru-RU', { maximumFractionDigits: 0 })}</b></div>`;
+                }
+                if (volVal != null) {
+                    html += `<div class="fg-tt-row"><span class="fg-tt-dot" style="background: #bbb;"></span>Объём: <b>${(volVal / 1e9).toFixed(2)} млрд ₽</b></div>`;
+                }
+                tooltipEl.innerHTML = html;
+                
+                const chartWidth = chart.chartArea.right - chart.chartArea.left;
+                const midpoint = chart.chartArea.left + chartWidth / 2;
+                
+                tooltipEl.style.opacity = 1;
+                tooltipEl.style.top = (chart.chartArea.top + 10) + 'px';
+                if (mouseX > midpoint) {
+                    tooltipEl.style.left = (chart.chartArea.left + 15) + 'px';
+                    tooltipEl.style.right = 'auto';
+                } else {
+                    tooltipEl.style.left = 'auto';
+                    tooltipEl.style.right = '15px';
+                }
+            }
+
+            // Плагин: рисует вертикальную линию по реальной X-координате курсора мыши
+            const crosshairPlugin = {
+                id: 'crosshair',
+                afterInit: function(chart) {
+                    chart._mouseX = null;
+                    chart.canvas.addEventListener('mousemove', function(e) {
+                        const rect = chart.canvas.getBoundingClientRect();
+                        chart._mouseX = e.clientX - rect.left;
+                        updateFgTooltip(chart);
+                        chart.draw();
+                    });
+                    chart.canvas.addEventListener('mouseleave', function() {
+                        chart._mouseX = null;
+                        updateFgTooltip(chart);
+                        chart.draw();
+                    });
+                },
+                afterDatasetsDraw: function(chart) {
+                    const x = chart._mouseX;
+                    if (x == null) return;
+                    const { top, bottom, left, right } = chart.chartArea;
+                    if (x < left || x > right) return;
+                    const ctx = chart.ctx;
+                    ctx.save();
+                    ctx.beginPath();
+                    ctx.moveTo(x, top);
+                    ctx.lineTo(x, bottom);
+                    ctx.lineWidth = 1;
+                    ctx.strokeStyle = 'rgba(120, 120, 130, 0.5)';
+                    ctx.stroke();
+                    ctx.restore();
                 }
             };
 
             new Chart(fgCtx, {
                 type: 'line',
                 data: { datasets: datasets },
-                plugins: [verticalLinePlugin],
+                plugins: [crosshairPlugin],
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
@@ -741,71 +839,7 @@
                         },
                         title: { display: false },
                         tooltip: {
-                            enabled: false,
-                            external: function(context) {
-                                const tooltipEl = document.getElementById('fgTooltip');
-                                if (!tooltipEl) return;
-                                
-                                const tooltipModel = context.tooltip;
-                                if (tooltipModel.opacity === 0) {
-                                    tooltipEl.style.opacity = 0;
-                                    return;
-                                }
-                                
-                                if (tooltipModel.body) {
-                                    const dataPoints = tooltipModel.dataPoints || [];
-                                    if (dataPoints.length === 0) return;
-                                    
-                                    const d = new Date(dataPoints[0].parsed.x);
-                                    const dateStr = d.toLocaleDateString('ru-RU', { day: '2-digit', month: 'long', year: 'numeric' });
-                                    
-                                    let fgVal = null, imoexVal = null, volVal = null;
-                                    dataPoints.forEach(p => {
-                                        if (p.dataset.yAxisID === 'yFG') fgVal = p.parsed.y;
-                                        else if (p.dataset.yAxisID === 'yImoex') imoexVal = p.parsed.y;
-                                        else if (p.dataset.yAxisID === 'yVolume') volVal = p.parsed.y;
-                                    });
-                                    
-                                    let fgLabel = '';
-                                    if (fgVal != null) {
-                                        if (fgVal <= 24) fgLabel = 'Экстремальный страх';
-                                        else if (fgVal <= 44) fgLabel = 'Страх';
-                                        else if (fgVal <= 55) fgLabel = 'Нейтрально';
-                                        else if (fgVal <= 74) fgLabel = 'Жадность';
-                                        else fgLabel = 'Экстремальная жадность';
-                                    }
-                                    
-                                    let html = `<div class="fg-tt-date">${dateStr}</div>`;
-                                    if (fgVal != null) {
-                                        html += `<div class="fg-tt-row"><span class="fg-tt-dot" style="background: #667eea;"></span>F&G: <b>${fgVal} — ${fgLabel}</b></div>`;
-                                    }
-                                    if (imoexVal != null) {
-                                        html += `<div class="fg-tt-row"><span class="fg-tt-dot" style="background: #9e9e9e;"></span>IMOEX: <b>${imoexVal.toLocaleString('ru-RU', { maximumFractionDigits: 0 })}</b></div>`;
-                                    }
-                                    if (volVal != null) {
-                                        html += `<div class="fg-tt-row"><span class="fg-tt-dot" style="background: #bbb;"></span>Объём: <b>${(volVal / 1e9).toFixed(2)} млрд ₽</b></div>`;
-                                    }
-                                    tooltipEl.innerHTML = html;
-                                }
-                                
-                                // Позиция: фиксированно в правом верхнем углу графика
-                                // Если курсор в правой половине — прилипает слева
-                                const chart = context.chart;
-                                const chartRect = chart.canvas.getBoundingClientRect();
-                                const caretX = tooltipModel.caretX;
-                                const chartWidth = chart.chartArea.right - chart.chartArea.left;
-                                const midpoint = chart.chartArea.left + chartWidth / 2;
-                                
-                                tooltipEl.style.opacity = 1;
-                                tooltipEl.style.top = (chart.chartArea.top + 10) + 'px';
-                                if (caretX > midpoint) {
-                                    tooltipEl.style.left = (chart.chartArea.left + 15) + 'px';
-                                    tooltipEl.style.right = 'auto';
-                                } else {
-                                    tooltipEl.style.left = 'auto';
-                                    tooltipEl.style.right = '15px';
-                                }
-                            }
+                            enabled: false
                         },
                         annotation: {
                             annotations: {
