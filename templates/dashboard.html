@@ -139,6 +139,45 @@
             height: 320px;
         }
 
+        /* Кастомный тултип, закреплённый в углу графика */
+        .fg-tooltip {
+            position: absolute;
+            background: rgba(33, 33, 33, 0.92);
+            color: #fff;
+            padding: 12px 14px;
+            border-radius: 8px;
+            font-size: 13px;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.15s ease;
+            z-index: 10;
+            min-width: 200px;
+        }
+        .fg-tt-date {
+            font-size: 12px;
+            opacity: 0.85;
+            margin-bottom: 6px;
+            font-weight: 600;
+        }
+        .fg-tt-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 3px 0;
+            font-size: 12px;
+        }
+        .fg-tt-row b {
+            margin-left: auto;
+            font-weight: 600;
+        }
+        .fg-tt-dot {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+
         /* Компоненты — компактная строка под layout */
         .fg-components {
             display: grid;
@@ -257,6 +296,7 @@
                 <div class="fg-chart-card">
                     <div class="fg-chart-container">
                         <canvas id="fgChart"></canvas>
+                        <div id="fgTooltip" class="fg-tooltip"></div>
                     </div>
                 </div>
             </div>
@@ -681,7 +721,11 @@
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
-                    interaction: { mode: 'index', intersect: false },
+                    interaction: {
+                        mode: 'index',
+                        intersect: false,
+                        axis: 'x'
+                    },
                     plugins: {
                         legend: {
                             display: true,
@@ -699,43 +743,69 @@
                         },
                         title: { display: false },
                         tooltip: {
-                            position: 'nearest',
-                            yAlign: 'bottom',
-                            caretPadding: 12,
-                            backgroundColor: 'rgba(33, 33, 33, 0.92)',
-                            titleColor: '#fff',
-                            bodyColor: '#fff',
-                            padding: 12,
-                            cornerRadius: 8,
-                            displayColors: true,
-                            usePointStyle: true,
-                            titleFont: { size: 12, weight: 'normal' },
-                            bodyFont: { size: 13 },
-                            callbacks: {
-                                title: function(items) {
-                                    if (!items.length) return '';
-                                    const d = new Date(items[0].parsed.x);
-                                    return d.toLocaleDateString('ru-RU', { day: '2-digit', month: 'long', year: 'numeric' });
-                                },
-                                label: function(context) {
-                                    const v = context.parsed.y;
-                                    if (context.dataset.yAxisID === 'yFG') {
-                                        let label = '';
-                                        if (v <= 24) label = 'Экстремальный страх';
-                                        else if (v <= 44) label = 'Страх';
-                                        else if (v <= 55) label = 'Нейтрально';
-                                        else if (v <= 74) label = 'Жадность';
-                                        else label = 'Экстремальная жадность';
-                                        return `F&G: ${v} — ${label}`;
+                            enabled: false,
+                            external: function(context) {
+                                const tooltipEl = document.getElementById('fgTooltip');
+                                if (!tooltipEl) return;
+                                
+                                const tooltipModel = context.tooltip;
+                                if (tooltipModel.opacity === 0) {
+                                    tooltipEl.style.opacity = 0;
+                                    return;
+                                }
+                                
+                                if (tooltipModel.body) {
+                                    const dataPoints = tooltipModel.dataPoints || [];
+                                    if (dataPoints.length === 0) return;
+                                    
+                                    const d = new Date(dataPoints[0].parsed.x);
+                                    const dateStr = d.toLocaleDateString('ru-RU', { day: '2-digit', month: 'long', year: 'numeric' });
+                                    
+                                    let fgVal = null, imoexVal = null, volVal = null;
+                                    dataPoints.forEach(p => {
+                                        if (p.dataset.yAxisID === 'yFG') fgVal = p.parsed.y;
+                                        else if (p.dataset.yAxisID === 'yImoex') imoexVal = p.parsed.y;
+                                        else if (p.dataset.yAxisID === 'yVolume') volVal = p.parsed.y;
+                                    });
+                                    
+                                    let fgLabel = '';
+                                    if (fgVal != null) {
+                                        if (fgVal <= 24) fgLabel = 'Экстремальный страх';
+                                        else if (fgVal <= 44) fgLabel = 'Страх';
+                                        else if (fgVal <= 55) fgLabel = 'Нейтрально';
+                                        else if (fgVal <= 74) fgLabel = 'Жадность';
+                                        else fgLabel = 'Экстремальная жадность';
                                     }
-                                    if (context.dataset.yAxisID === 'yImoex') {
-                                        return `IMOEX: ${v.toLocaleString('ru-RU', { maximumFractionDigits: 0 })}`;
+                                    
+                                    let html = `<div class="fg-tt-date">${dateStr}</div>`;
+                                    if (fgVal != null) {
+                                        html += `<div class="fg-tt-row"><span class="fg-tt-dot" style="background: #667eea;"></span>F&G: <b>${fgVal} — ${fgLabel}</b></div>`;
                                     }
-                                    if (context.dataset.yAxisID === 'yVolume') {
-                                        const vol = v / 1e9;
-                                        return `Объём: ${vol.toFixed(2)} млрд ₽`;
+                                    if (imoexVal != null) {
+                                        html += `<div class="fg-tt-row"><span class="fg-tt-dot" style="background: #9e9e9e;"></span>IMOEX: <b>${imoexVal.toLocaleString('ru-RU', { maximumFractionDigits: 0 })}</b></div>`;
                                     }
-                                    return `${context.dataset.label}: ${v}`;
+                                    if (volVal != null) {
+                                        html += `<div class="fg-tt-row"><span class="fg-tt-dot" style="background: #bbb;"></span>Объём: <b>${(volVal / 1e9).toFixed(2)} млрд ₽</b></div>`;
+                                    }
+                                    tooltipEl.innerHTML = html;
+                                }
+                                
+                                // Позиция: фиксированно в правом верхнем углу графика
+                                // Если курсор в правой половине — прилипает слева
+                                const chart = context.chart;
+                                const chartRect = chart.canvas.getBoundingClientRect();
+                                const caretX = tooltipModel.caretX;
+                                const chartWidth = chart.chartArea.right - chart.chartArea.left;
+                                const midpoint = chart.chartArea.left + chartWidth / 2;
+                                
+                                tooltipEl.style.opacity = 1;
+                                tooltipEl.style.top = (chart.chartArea.top + 10) + 'px';
+                                if (caretX > midpoint) {
+                                    tooltipEl.style.left = (chart.chartArea.left + 15) + 'px';
+                                    tooltipEl.style.right = 'auto';
+                                } else {
+                                    tooltipEl.style.left = 'auto';
+                                    tooltipEl.style.right = '15px';
                                 }
                             }
                         },
