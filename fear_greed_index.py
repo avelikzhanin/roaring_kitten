@@ -102,6 +102,77 @@ class FearGreedIndex:
             logger.error(f"Error calculating Fear & Greed Index: {e}", exc_info=True)
             return None
 
+    async def backfill_history(self, days: int = 180) -> List[Dict[str, Any]]:
+        """
+        Бэкфил исторических значений индекса за последние N дней.
+        
+        Использует дневные свечи IMOEX и USD/RUB.
+        Breadth исторически недоступен, подставляется нейтральное 50.
+        """
+        try:
+            # Загружаем побольше свечей чтобы было из чего считать
+            imoex_candles = await self._get_imoex_daily_candles(days=days + 200)
+            usdrub_candles = await self._get_usdrub_daily_candles(days=days + 30)
+
+            if not imoex_candles or len(imoex_candles) < 130:
+                logger.error(
+                    f"Insufficient IMOEX data for backfill: "
+                    f"{len(imoex_candles) if imoex_candles else 0} candles"
+                )
+                return []
+
+            usdrub_candles = usdrub_candles or []
+
+            # Минимум 130 свечей нужно перед каждой точкой расчёта
+            min_candles = 130
+            results = []
+
+            for i in range(min_candles, len(imoex_candles) + 1):
+                slice_candles = imoex_candles[:i]
+                point_date = slice_candles[-1]['date']  # 'YYYY-MM-DD'
+
+                # USD/RUB до этой даты включительно
+                usdrub_slice = [c for c in usdrub_candles if c['date'] <= point_date]
+
+                vol = self._calc_volatility_score(slice_candles)
+                mom = self._calc_momentum_score(slice_candles)
+                sma = self._calc_sma_deviation_score(slice_candles)
+                breadth = 50.0  # исторический breadth недоступен
+                sh = self._calc_safe_haven_score(usdrub_slice)
+                rsi = self._calc_rsi_score(slice_candles)
+
+                value = (
+                    vol * WEIGHTS['volatility']
+                    + mom * WEIGHTS['momentum']
+                    + sma * WEIGHTS['sma_deviation']
+                    + breadth * WEIGHTS['breadth']
+                    + sh * WEIGHTS['safe_haven']
+                    + rsi * WEIGHTS['rsi']
+                )
+                value = max(0, min(100, round(value)))
+
+                results.append({
+                    'date': point_date,
+                    'value': value,
+                    'label': self._get_label(value),
+                    'components': {
+                        'volatility': round(vol, 1),
+                        'momentum': round(mom, 1),
+                        'sma_deviation': round(sma, 1),
+                        'breadth': round(breadth, 1),
+                        'safe_haven': round(sh, 1),
+                        'rsi': round(rsi, 1),
+                    },
+                })
+
+            results = results[-days:]
+            logger.info(f"📊 Backfilled {len(results)} historical F&G values")
+            return results
+
+        except Exception as e:
+            logger.error(f"Error in backfill_history: {e}", exc_info=True)
+            return []
+
     # ========== ЗАГРУЗКА ДАННЫХ ==========
 
     async def _get_imoex_daily_candles(self, days: int = 200) -> Optional[List[Dict]]:
